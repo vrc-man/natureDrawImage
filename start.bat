@@ -47,6 +47,11 @@ echo ========================================
 :loop
 echo.
 echo [%time%] Starting...
+
+REM 如果 .env 未配置，使用回退默认值
+if "%WEB_HOST%"=="" set "WEB_HOST=127.0.0.1"
+if "%WEB_PORT%"=="" set "WEB_PORT=8080"
+
 .venv\Scripts\python.exe -m uvicorn web.app:app --host %WEB_HOST% --port %WEB_PORT% --forwarded-allow-ips 127.0.0.1
 
 echo [%time%] Stopped, restarting in 3s...
