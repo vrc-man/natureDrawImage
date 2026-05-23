@@ -1229,7 +1229,8 @@ async def _auth_middleware(request: Request, call_next):
 
     # 公开路径：无需登录
     public = (
-        path.startswith("/static/")
+        path == "/"
+        or path.startswith("/static/")
         or path.startswith("/auth/")
         or path == "/api/whoami"
         or path.startswith("/ws/")
