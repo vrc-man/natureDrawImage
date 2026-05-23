@@ -5,6 +5,23 @@ ComfyUI 网页版控制台
 """
 
 import os
+from pathlib import Path
+
+def _load_dotenv():
+    """加载项目根目录的 .env 文件到 os.environ（已有环境变量不覆盖）。"""
+    env_file = Path(__file__).parent.parent / ".env"
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key, val = key.strip(), val.strip()
+        if key not in os.environ:
+            os.environ[key] = val
+
+_load_dotenv()
 
 # ========== IP / 端口配置 ==========
 COMFYUI_HOST = os.environ.get("COMFYUI_HOST", "127.0.0.1")
