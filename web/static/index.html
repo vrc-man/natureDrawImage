@@ -29,15 +29,59 @@
   #lb-close { position: absolute; top: 8px; right: 12px; background: transparent; color: #fff; border: 0; font-size: 28px; cursor: pointer; z-index: 1; }
   #lb-title { color: #ddd; font-size: 12px; margin-right: auto; word-break: break-all; }
   /* Tab 布局 */
-  .tab-page { position: fixed; top: 0; left: 0; right: 0; bottom: 52px; overflow-y: auto; display: none; -webkit-overflow-scrolling: touch; }
+  .tab-page { position: fixed; top: 0; left: 0; right: 0; bottom: 52px; overflow-y: auto; display: none; -webkit-overflow-scrolling: touch; padding-top: env(safe-area-inset-top); }
   .tab-page.active { display: block; }
   #tab-bar { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 48rem; height: 52px; z-index: 40; background: #fff; border-top: 1px solid #e5e7eb; display: flex; padding-bottom: env(safe-area-inset-bottom); border-radius: 12px 12px 0 0; box-shadow: 0 -2px 8px rgba(0,0,0,.08); }
   #tab-bar button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 0; background: none; color: #9ca3af; font-size: 10px; cursor: pointer; transition: color .15s; }
   #tab-bar button .tab-icon { font-size: 20px; }
   #tab-bar button.active { color: #3b82f6; }
+  /* 工作流 / 画风卡片 */
+  .wf-card, .style-card {
+    cursor: pointer; border-radius: 12px; overflow: hidden;
+    background: #fff; border: 2px solid transparent;
+    transition: all .2s ease; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+    -webkit-tap-highlight-color: transparent; user-select: none;
+    -webkit-user-select: none;
+  }
+  @media (hover: hover) {
+    .wf-card:hover, .style-card:hover {
+      transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.1);
+      border-color: #93c5fd;
+    }
+  }
+  .wf-card:active, .style-card:active {
+    transform: scale(0.96); transition: transform .1s ease;
+  }
+  .wf-card.selected, .style-card.selected {
+    border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.25);
+    background: #eff6ff;
+  }
+  .wf-card .wf-thumb, .style-card .style-thumb {
+    width: 100%; aspect-ratio: 1; object-fit: cover; background: #f9fafb;
+  }
+  .wf-card .wf-label, .style-card .style-label {
+    padding: 6px 8px; font-size: 10px; font-weight: 500;
+    line-height: 1.3; text-align: center; word-break: break-word;
+    overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2; color: #374151;
+  }
+  /* 工作流选区容器 */
+  .wf-scroll, .style-scroll { max-height: 50vh; overflow-y: auto; }
+  .wf-grid, .style-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+  }
+  @media (min-width: 400px) { .wf-grid, .style-grid { grid-template-columns: repeat(3, 1fr); } }
+  @media (min-width: 640px) { .wf-grid, .style-grid { grid-template-columns: repeat(4, 1fr); } }
+  @media (min-width: 1024px) { .wf-grid, .style-grid { grid-template-columns: repeat(6, 1fr); } }
+  .wf-cat-title { font-size: 11px; font-weight: 600; color: #6b7280; margin: 10px 0 6px; }
+  /* 响应式表单 */
+  .prompt-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  @media (min-width: 640px) { .prompt-grid { grid-template-columns: 1fr 1fr; } }
+  .img2img-row { display: flex; flex-direction: column; gap: 10px; }
+  @media (min-width: 640px) { .img2img-row { flex-direction: row; } }
 </style>
 </head>
-<body class="bg-gray-100">
+<body class="bg-gray-50">
 
 <!-- 灯箱 -->
 <div id="lb-root" role="dialog" aria-modal="true">
@@ -90,117 +134,156 @@
   </div>
 </div>
 
-<!-- 生图成功引流弹窗 -->
-<div id="star-modal" class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 hidden">
-  <div class="bg-white rounded-lg shadow-xl max-w-sm w-full p-5">
-    <h3 class="text-lg font-bold mb-2">🎉 生图成功！</h3>
-    <p class="text-sm text-gray-700 leading-relaxed mb-4">如果你觉得这个工具还行用，欢迎：</p>
-    <div class="flex flex-col gap-2 mb-4">
-      <a href="https://github.com/afoim/natureDrawImage" target="_blank" rel="noopener"
-         class="px-3 py-2 bg-gray-900 text-white rounded text-sm text-center hover:bg-gray-800">⭐ 去 GitHub 点个 Star</a>
-      <a href="https://2x.nz/tg" target="_blank" rel="noopener"
-         class="px-3 py-2 bg-blue-500 text-white rounded text-sm text-center hover:bg-blue-600">💬 加群交流（Telegram）</a>
-    </div>
-    <div class="flex justify-between text-xs">
-      <button id="star-never" class="text-gray-500 hover:text-gray-700">不再提示</button>
-      <button id="star-later" class="text-gray-500 hover:text-gray-700">下次再说</button>
-    </div>
-  </div>
-</div>
-
 <!-- ==================== Tab 1: 生图 ==================== -->
 <div id="page-generate" class="tab-page active">
 
-  <div class="p-2 space-y-1 max-w-3xl mx-auto">
+  <div class="p-3 space-y-3 max-w-3xl mx-auto">
     <!-- 标题 -->
     <div class="flex items-center justify-between">
       <h1 class="text-sm font-bold">🎨 自然语言生图 <span id="online-count" class="font-normal text-[10px] text-gray-400"></span></h1>
       <div class="flex items-center gap-1.5 text-[10px]">
-        <a href="https://space.bilibili.com/325903362" target="_blank" rel="noopener" class="px-1 py-0.5 rounded bg-pink-100 text-pink-700">B站</a>
-        <a href="https://2x.nz/q" target="_blank" rel="noopener" class="px-1 py-0.5 rounded bg-green-100 text-green-700">💬群</a>
-        <a href="https://github.com/afoim/natureDrawImage" target="_blank" rel="noopener" class="px-1 py-0.5 rounded bg-gray-100 text-gray-600">GitHub</a>
+        <span id="user-label" class="px-1 py-0.5 rounded bg-green-100 text-green-700 cursor-pointer" onclick="location.href='/auth/login'">登录</span>
+        <a id="admin-link" href="/admin" class="hidden px-1 py-0.5 rounded bg-red-100 text-red-700">管理</a>
       </div>
     </div>
 
-    <!-- 工作流 + 画风 左右并排 -->
-    <div class="flex gap-1">
-      <!-- 工作流 -->
-      <div class="flex-1 bg-white rounded-lg shadow-sm p-1.5 min-w-0">
-        <div class="relative flex items-center justify-between mb-1">
-          <h2 class="text-xs font-semibold min-w-0 truncate">📋 工作流 <span id="wf-current" class="font-normal text-gray-400 text-[9px]"></span><span id="fork-badge" class="hidden font-normal text-[9px] text-emerald-600"></span></h2>
-          <button id="btn-wf-search" class="text-gray-400 hover:text-gray-600 text-xs">🔍</button>
-          <input id="search" type="text" placeholder="搜索工作流..."
-            class="hidden absolute inset-0 border rounded px-1.5 py-0.5 text-[10px] bg-white z-10" />
-        </div>
-        <div id="wf-list" class="max-h-28 overflow-y-auto"></div>
-      </div>
-      <!-- 画风 -->
-      <div id="style-section" class="flex-1 bg-white rounded-lg shadow-sm p-1.5 hidden min-w-0">
-        <div class="relative flex items-center justify-between mb-1">
-          <h2 class="text-xs font-semibold">🖌️ 画风 <span id="style-current" class="font-normal text-gray-400 text-[9px]"></span></h2>
-          <button id="btn-style-search" class="text-gray-400 hover:text-gray-600 text-xs">🔍</button>
-          <input id="style-search" type="text" placeholder="搜索画风..."
-            class="hidden absolute inset-0 border rounded px-1.5 py-0.5 text-[10px] bg-white z-10" />
-        </div>
-        <div id="style-list" class="max-h-28 overflow-y-auto"></div>
-      </div>
+    <!-- 访问密钥页面（非管理员登录后显示） -->
+    <div id="access-page" class="hidden bg-white rounded-xl shadow-sm p-8 text-center max-w-md mx-auto">
+      <h2 class="text-xl font-bold mb-2">🔑 访问密钥</h2>
+      <p class="text-sm text-gray-500 mb-5">请输入管理员分发的密钥以解锁服务</p>
+      <input id="access-key-input" type="text" placeholder="输入密钥"
+        class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3 text-center focus:border-blue-400 focus:ring-1 focus:ring-blue-400 outline-none" autocomplete="off" />
+      <button id="btn-submit-key" class="w-full bg-blue-500 text-white rounded-xl py-3 text-sm font-semibold hover:bg-blue-600 transition-all shadow-sm shadow-blue-200">
+        提交
+      </button>
+      <p id="access-key-error" class="hidden text-red-500 text-xs mt-2"></p>
+      <p id="access-key-success" class="hidden text-green-500 text-xs mt-2"></p>
     </div>
 
-    <!-- 生图表单 -->
-    <div class="bg-white rounded-lg shadow-sm p-2">
-      <div class="flex gap-2 mb-1.5">
-        <div class="flex-1 min-w-0">
-          <label class="block text-[10px] font-medium mb-0.5">正面提示词</label>
-          <textarea id="direct" rows="3" placeholder="英文 tags，选择工作流后自动填入"
-            class="w-full border rounded px-1.5 py-1 text-[10px] font-mono"></textarea>
-        </div>
-        <div class="flex-1 min-w-0">
-          <label class="block text-[10px] font-medium mb-0.5">负面提示词</label>
-          <textarea id="negative_prompt" rows="3" placeholder="如: worst quality, low quality, blurry"
-            class="w-full border rounded px-1.5 py-1 text-[10px] font-mono"></textarea>
-        </div>
-      </div>
+    <!-- 主要内容区（未验证密钥时隐藏） -->
+    <div id="generate-main">
 
-      <div class="mb-1.5">
-        <label class="block text-[10px] font-medium mb-0.5">自然语言描述 <span class="text-gray-400">(中文/英文，LLM 翻译生成正负提示词)</span></label>
-        <textarea id="nl" rows="2" placeholder="描述你想要的画面，LLM 会自动翻译为 tags"
-          class="w-full border rounded px-1.5 py-1 text-[10px]"></textarea>
-      </div>
-
-      <div class="flex items-center flex-wrap gap-2 mb-1.5">
-        <label class="flex items-center gap-1 text-[10px]">
-          <input type="checkbox" id="rewrite" checked /> 改写
-          <span class="text-gray-400 cursor-pointer" onclick="alert('改写：LLM 基于「直接 Tag」结合「自然语言描述」整体重写 prompt\n\n不勾选：LLM 翻译后追加到原 prompt 后面')">?</span>
-        </label>
-        <div class="flex flex-wrap gap-1" id="res-presets"></div>
-      </div>
-      <input id="width" type="hidden" /><input id="height" type="hidden" />
-
-      <button id="btn-run" class="w-full py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-gray-400 font-medium text-sm">
-        ▶ 开始生成
+    <!-- 生图模式切换 -->
+    <div class="flex gap-1.5">
+      <button id="mode-txt2img" class="flex-1 py-2 text-xs font-semibold rounded-xl transition-all bg-blue-500 text-white shadow-sm shadow-blue-200">
+        📝 文生图
+      </button>
+      <button id="mode-img2img" class="flex-1 py-2 text-xs font-semibold rounded-xl transition-all bg-white text-gray-500 border-2 border-gray-200 hover:border-blue-300">
+        🖼️ 图生图
       </button>
     </div>
 
-    <!-- 进度 -->
-    <div id="progress-box" class="hidden">
-      <div id="progress-bar-wrap" class="w-full bg-gray-200 rounded-full h-2 overflow-hidden hidden">
-        <div id="progress-bar" class="bg-blue-500 h-2 transition-all rounded-full" style="width:0%"></div>
+    <!-- 工作流 -->
+    <div class="bg-white rounded-xl shadow-sm p-3">
+      <div id="wf-header" class="flex items-center justify-between cursor-pointer select-none" title="点击展开/折叠">
+        <h2 class="text-sm font-bold flex items-center gap-1.5 min-w-0 flex-1">
+          <span id="wf-arrow" class="inline-block transition-transform text-gray-400 text-[10px]">▸</span>
+          📋 工作流
+          <span id="wf-current" class="font-normal text-gray-400 text-[11px] truncate"></span>
+          <span id="fork-badge" class="hidden font-normal text-[11px] text-emerald-600"></span>
+        </h2>
+        <button id="btn-wf-search" class="text-gray-400 hover:text-gray-600 text-sm ml-2" onclick="event.stopPropagation()">🔍</button>
+        <input id="search" type="text" placeholder="搜索工作流..."
+          class="hidden absolute inset-0 border rounded-lg px-3 py-1.5 text-xs bg-white z-10" />
       </div>
-      <div id="progress-text" class="text-[10px] text-gray-500 text-center mt-0.5"></div>
-      <div id="llm-box" class="hidden mt-1">
-        <div class="text-[9px] text-gray-400 mb-0.5">🤖 LLM 处理中...</div>
-        <pre id="llm-stream" class="text-[10px] bg-yellow-50 border border-yellow-200 p-1 rounded h-40 overflow-y-auto whitespace-pre-wrap break-words"></pre>
+      <div id="wf-list" class="wf-scroll hidden"></div>
+    </div>
+
+    <!-- 画风 -->
+    <div id="style-section" class="bg-white rounded-xl shadow-sm p-3 hidden">
+      <div class="relative flex items-center justify-between mb-2">
+        <h2 class="text-sm font-bold">🖌️ 画风 <span id="style-current" class="font-normal text-gray-400 text-[11px]"></span></h2>
+        <button id="btn-style-search" class="text-gray-400 hover:text-gray-600 text-sm">🔍</button>
+        <input id="style-search" type="text" placeholder="搜索画风..."
+          class="hidden absolute inset-0 border rounded-lg px-3 py-1.5 text-xs bg-white z-10" />
+      </div>
+      <div id="style-list" class="style-scroll"></div>
+    </div>
+
+    <!-- 生图表单 -->
+    <div class="bg-white rounded-xl shadow-sm p-3 space-y-3">
+      <div class="prompt-grid">
+        <div>
+          <label class="block text-xs font-semibold mb-1 text-gray-600">正面提示词</label>
+          <textarea id="direct" rows="3" placeholder="英文 tags，选择工作流后自动填入"
+            class="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-mono focus:border-blue-400 focus:ring-1 focus:ring-blue-400 outline-none resize-none"></textarea>
+        </div>
+        <div>
+          <label class="block text-xs font-semibold mb-1 text-gray-600">负面提示词</label>
+          <textarea id="negative_prompt" rows="3" placeholder="如: worst quality, low quality, blurry"
+            class="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-mono focus:border-blue-400 focus:ring-1 focus:ring-blue-400 outline-none resize-none"></textarea>
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-xs font-semibold mb-1 text-gray-600">自然语言描述 <span class="text-gray-400 font-normal">(中文/英文，LLM 翻译生成提示词)</span></label>
+        <textarea id="nl" rows="2" placeholder="描述你想要的画面，LLM 会自动翻译为 tags"
+          class="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs focus:border-blue-400 focus:ring-1 focus:ring-blue-400 outline-none resize-none"></textarea>
+      </div>
+
+      <div class="flex items-center flex-wrap gap-3">
+        <label class="flex items-center gap-1.5 text-xs font-medium text-gray-600 cursor-pointer select-none">
+          <input type="checkbox" id="rewrite" checked class="w-3.5 h-3.5" /> 改写
+          <span class="text-gray-400 cursor-pointer" onclick="alert('改写：LLM 基于「直接 Tag」结合「自然语言描述」整体重写 prompt\n\n不勾选：LLM 翻译后追加到原 prompt 后面')">?</span>
+        </label>
+        <div class="flex flex-wrap gap-1.5" id="res-presets"></div>
+      </div>
+      <input id="width" type="hidden" /><input id="height" type="hidden" />
+
+      <!-- 图生图上传 -->
+      <div id="img2img-box" class="hidden">
+        <div class="img2img-row">
+          <div class="flex-1">
+            <label class="block text-xs font-semibold mb-1 text-gray-600">🖼️ 输入图 1 <span class="text-gray-400 font-normal">(可选)</span></label>
+            <input type="file" id="img1" accept="image/*" class="w-full text-xs" />
+          </div>
+          <div class="flex-1">
+            <label class="block text-xs font-semibold mb-1 text-gray-600">🖼️ 输入图 2 <span class="text-gray-400 font-normal">(可选)</span></label>
+            <input type="file" id="img2" accept="image/*" class="w-full text-xs" />
+          </div>
+        </div>
+      </div>
+
+      <button id="btn-run" class="w-full py-2.5 bg-blue-500 text-white rounded-xl hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed font-semibold text-sm shadow-sm shadow-blue-200 transition-all active:scale-[0.98]">
+        ▶ 开始生成
+      </button>
+      <div id="cooldown-timer" class="hidden text-center text-xs text-amber-600 mt-1"></div>
+    </div>
+
+    <!-- 进度 -->
+    <div id="progress-box" class="hidden bg-white rounded-xl shadow-sm p-3">
+      <div id="queue-status" class="hidden text-xs text-amber-600 text-center font-semibold mb-2"></div>
+      <div id="progress-bar-wrap" class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden hidden">
+        <div id="progress-bar" class="bg-blue-500 h-2.5 transition-all rounded-full" style="width:0%"></div>
+      </div>
+      <div class="flex items-center justify-center gap-2 mt-1.5">
+        <div id="progress-text" class="text-xs text-gray-500 text-center"></div>
+      </div>
+      <div id="llm-box" class="hidden mt-2">
+        <div class="text-[11px] text-gray-400 mb-1">🤖 LLM 处理中...</div>
+        <pre id="llm-stream" class="text-xs bg-yellow-50 border border-yellow-200 p-2 rounded-lg h-40 overflow-y-auto whitespace-pre-wrap break-words"></pre>
       </div>
       <pre id="log" class="hidden"></pre>
     </div>
 
     <!-- 结果 -->
-    <div id="result-box" class="bg-white rounded-lg shadow-sm p-2 hidden">
-      <div class="flex items-center justify-between mb-1">
-        <span class="text-xs font-semibold">🖼️ 结果</span>
+    <div id="result-box" class="bg-white rounded-xl shadow-sm p-3 hidden">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-sm font-bold">🖼️ 结果</span>
       </div>
-      <div id="images" class="grid grid-cols-3 md:grid-cols-4 gap-1 justify-items-center"></div>
+      <div id="images" class="grid grid-cols-3 md:grid-cols-4 gap-2 justify-items-center"></div>
     </div>
+
+    <!-- 我的排队状态 -->
+    <div id="my-queue-card" class="hidden bg-white rounded-xl shadow-sm p-3">
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-bold">📋 我的队列</span>
+        <span id="my-queue-status" class="text-xs text-gray-400">空闲</span>
+      </div>
+      <div id="my-queue-items" class="mt-1.5 space-y-1 text-xs"></div>
+    </div>
+
+    </div><!-- /#generate-main -->
   </div>
 </div>
 
@@ -235,7 +318,24 @@
   </div>
 </div>
 
-<!-- ==================== Tab 4: 更多 ==================== -->
+<!-- ==================== Tab 4: 我的作品 ==================== -->
+<div id="page-myworks" class="tab-page">
+  <div class="p-3 space-y-3 max-w-3xl mx-auto">
+    <div class="flex items-center justify-between">
+      <h1 class="text-lg font-bold">📁 我的作品
+        <span class="text-xs text-gray-500 font-normal">(<span id="myworks-shown">0</span>/<span id="myworks-total">0</span>)</span>
+      </h1>
+      <button id="btn-reload-myworks" class="text-[10px] px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="myworks-gallery" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5"></div>
+    <div id="myworks-empty" class="text-center text-gray-400 text-sm py-8 hidden">你还没有生成过图片</div>
+    <div class="text-center">
+      <button id="btn-myworks-more" class="hidden text-xs px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">加载更多</button>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== Tab 5: 更多 ==================== -->
 <div id="page-more" class="tab-page">
   <div class="p-3 space-y-3 max-w-3xl mx-auto">
     <h1 class="text-lg font-bold">⚙️ 更多</h1>
@@ -270,6 +370,11 @@
       <h2 class="text-sm font-semibold mb-2">💬 评论区</h2>
       <div id="giscus-container"></div>
     </div>
+
+    <!-- 来源声明 -->
+    <div class="text-center text-[10px] text-gray-400 py-1">
+      本项目基于 <a href="https://github.com/afoim/natureDrawImage" target="_blank" rel="noopener" class="text-gray-500 hover:text-gray-700 underline">natureDrawImage</a> 二次修改
+    </div>
   </div>
 </div>
 
@@ -279,13 +384,17 @@
     <span class="tab-icon">✨</span>
     <span>生图</span>
   </button>
-  <button data-tab="gallery">
+  <button data-tab="gallery" id="tab-gallery" style="display:none">
     <span class="tab-icon">🖼</span>
     <span>画廊</span>
   </button>
   <button data-tab="featured">
     <span class="tab-icon">⭐</span>
     <span>精选</span>
+  </button>
+  <button data-tab="myworks">
+    <span class="tab-icon">📁</span>
+    <span>我的</span>
   </button>
   <button data-tab="more">
     <span class="tab-icon">⚙️</span>
@@ -300,9 +409,11 @@ let _genNoticeAcked = document.cookie.includes('genNoticeAcked=1');
 let allWorkflows = [];
 let defaultRes = {w: null, h: null};
 const genHistory = [];
+let currentMode = 'txt2img';  // 'txt2img' | 'img2img'
+let _wfDirs = { txt2img: '', img2img: '' };  // 后端配置的目录分类
 
 // ==================== Tab 切换 ====================
-const _tabLoaded = { generate: true, gallery: false, featured: false, more: false };
+const _tabLoaded = { generate: true, gallery: false, featured: false, myworks: false, more: false };
 function switchTab(name) {
   document.querySelectorAll('.tab-page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('#tab-bar button').forEach(b => b.classList.remove('active'));
@@ -310,6 +421,7 @@ function switchTab(name) {
   document.querySelector(`#tab-bar button[data-tab="${name}"]`).classList.add('active');
   if (name === 'gallery' && !_tabLoaded.gallery) { _tabLoaded.gallery = true; loadGallery(true); }
   if (name === 'featured' && !_tabLoaded.featured) { _tabLoaded.featured = true; loadFeatured(); }
+  if (name === 'myworks' && !_tabLoaded.myworks) { _tabLoaded.myworks = true; loadMyWorks(true); }
   if (name === 'more' && !_tabLoaded.more) {
     _tabLoaded.more = true;
     loadAnnouncement();
@@ -341,6 +453,23 @@ document.querySelectorAll('#tab-bar button').forEach(btn => {
   btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
 
+// ==================== 生图模式切换 ====================
+function setMode(mode) {
+  currentMode = mode;
+  const activeCls = 'flex-1 py-2 text-xs font-semibold rounded-xl transition-all bg-blue-500 text-white shadow-sm shadow-blue-200';
+  const inactiveCls = 'flex-1 py-2 text-xs font-semibold rounded-xl transition-all bg-white text-gray-500 border-2 border-gray-200 hover:border-blue-300';
+  $('mode-txt2img').className = mode === 'txt2img' ? activeCls : inactiveCls;
+  $('mode-img2img').className = mode === 'img2img' ? activeCls : inactiveCls;
+  if (mode === 'txt2img') {
+    $('img1').value = '';
+    $('img2').value = '';
+  }
+  loadListForMode();  // 按模式重新加载对应目录的工作流
+  loadCurrent();  // loadCurrent 会根据模式和当前工作流决定是否显示上传控件
+}
+$('mode-txt2img').addEventListener('click', () => setMode('txt2img'));
+$('mode-img2img').addEventListener('click', () => setMode('img2img'));
+
 // ==================== 精选 ====================
 async function loadFeatured() {
   try {
@@ -360,7 +489,7 @@ async function loadFeatured() {
     else { tipEl.classList.add('hidden'); }
     $('featured-gallery').innerHTML = items.map(it => {
       const url = '/api/output/file?path=' + encodeURIComponent(it.path);
-      const safe = it.path.replace(/"/g, '&quot;');
+      const safe = _esc(it.path);
       const mt = it.mtime ? ` data-mtime="${it.mtime}"` : '';
       return `<a href="${url}" data-gallery="featured" data-title="${safe}" data-rel-path="${safe}"${mt} title="${safe}" class="glightbox block">
         <img src="${url}" loading="lazy" decoding="async" class="w-full aspect-square object-cover rounded border bg-gray-50 hover:ring-2 hover:ring-amber-400" />
@@ -370,11 +499,11 @@ async function loadFeatured() {
 }
 
 // ==================== 画廊 ====================
-const galleryState = { total: 0, loaded: 0, pageSize: 15 };
+const galleryState = { total: 0, loaded: 0, initialSize: 10, moreSize: 10 };
 
 function galleryItemHTML(relPath, mtime) {
   const url = '/api/output/file?path=' + encodeURIComponent(relPath);
-  const safe = relPath.replace(/"/g, '&quot;');
+  const safe = _esc(relPath);
   const mt = mtime ? ` data-mtime="${mtime}"` : '';
   return `<a href="${url}" data-gallery="main" data-title="${safe}" data-description="loading-prompt" data-rel-path="${safe}"${mt} title="${safe}" class="glightbox block">
     <img src="${url}" loading="lazy" decoding="async" class="w-full aspect-square object-cover rounded border bg-gray-50 hover:ring-2 hover:ring-blue-400" />
@@ -382,8 +511,9 @@ function galleryItemHTML(relPath, mtime) {
 }
 
 async function loadGallery(reset = true) {
+  const limit = reset ? galleryState.initialSize : galleryState.moreSize;
   if (reset) { galleryState.loaded = 0; $('gallery').innerHTML = ''; }
-  const r = await fetch(`/api/output/list?limit=${galleryState.pageSize}&offset=${galleryState.loaded}`);
+  const r = await fetch(`/api/output/list?limit=${limit}&offset=${galleryState.loaded}`);
   const d = await r.json();
   galleryState.total = d.total || 0;
   $('gallery-total').textContent = galleryState.total;
@@ -414,8 +544,73 @@ function prependGalleryItem(filename) {
 
 function pushHistory(item) {
   genHistory.unshift(item);
+  if (genHistory.length > 100) genHistory.length = 100;
   if (item && item.filename) prependGalleryItem(item.filename);
 }
+
+// ==================== 我的作品 ====================
+const myworksState = { total: 0, loaded: 0, initialSize: 2, moreSize: 5 };
+
+async function loadMyWorks(reset = true) {
+  const limit = reset ? myworksState.initialSize : myworksState.moreSize;
+  if (reset) { myworksState.loaded = 0; $('myworks-gallery').innerHTML = ''; $('myworks-empty').classList.add('hidden'); }
+  try {
+    const r = await fetch(`/api/my-images?limit=${limit}&offset=${myworksState.loaded}`);
+    if (r.status === 401) { $('myworks-empty').classList.remove('hidden'); $('myworks-empty').textContent = '请先登录'; return; }
+    if (!r.ok) { $('myworks-empty').classList.remove('hidden'); $('myworks-empty').textContent = '加载失败，请重试'; return; }
+    const d = await r.json();
+    myworksState.total = d.total || 0;
+    $('myworks-total').textContent = myworksState.total;
+    const items = d.items || [];
+    if (!items.length && reset) {
+      $('myworks-empty').classList.remove('hidden');
+      $('myworks-empty').textContent = '你还没有生成过图片';
+      return;
+    }
+    $('myworks-empty').classList.add('hidden');
+    const frag = document.createDocumentFragment();
+    for (const it of items) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'relative group';
+      const safeTitle = _esc(it.prompt ? it.prompt : it.path);
+      const timeStr = it.time ? new Date(it.time * 1000).toLocaleDateString() : '';
+      const encPath = encodeURIComponent(it.path);
+      wrapper.innerHTML = `<a href="${_esc(it.url)}" data-gallery="myworks" data-title="${safeTitle}" data-rel-path="${_esc(it.path)}" class="glightbox block">
+        <img src="${_esc(it.url)}" loading="lazy" decoding="async" class="w-full aspect-square object-cover rounded border bg-gray-50 hover:ring-2 hover:ring-emerald-400" />
+        ${it.prompt ? `<div class="text-[9px] text-gray-500 truncate mt-0.5 pr-4">${_esc(it.prompt.slice(0, 30))}</div>` : ''}
+      </a>
+      <button data-del-path="${_esc(it.path)}" class="btn-del-mywork absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] leading-none opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700" title="删除">✕</button>`;
+      frag.appendChild(wrapper);
+    }
+    $('myworks-gallery').appendChild(frag);
+    myworksState.loaded += items.length;
+    $('myworks-shown').textContent = myworksState.loaded;
+    $('btn-myworks-more').classList.toggle('hidden', myworksState.loaded >= myworksState.total);
+    refreshLightbox();
+  } catch {}
+}
+
+$('btn-reload-myworks').addEventListener('click', () => { _tabLoaded.myworks = false; loadMyWorks(true); });
+$('btn-myworks-more').addEventListener('click', () => loadMyWorks(false));
+// 委托：删除作品按钮
+$('myworks-gallery').addEventListener('click', async (e) => {
+  const btn = e.target.closest('.btn-del-mywork');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const path = btn.dataset.delPath;
+  if (!confirm('确定要删除这张作品吗？')) return;
+  try {
+    const r = await fetch('/api/my-images', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) });
+    if (!r.ok) { const d = await r.json(); alert(d.detail || d.error || '删除失败'); return; }
+    btn.closest('.relative').remove();
+    myworksState.total--;
+    myworksState.loaded--;
+    $('myworks-total').textContent = myworksState.total;
+    $('myworks-shown').textContent = myworksState.loaded;
+    if (myworksState.loaded <= 0) { $('myworks-empty').classList.remove('hidden'); $('myworks-empty').textContent = '你还没有生成过图片'; }
+  } catch (err) { alert('删除失败: ' + err.message); }
+});
 
 // ==================== Fork ====================
 let forkedWorkflow = null;
@@ -441,6 +636,8 @@ function clearFork() {
   forkedMeta = null;
   $('fork-badge').classList.add('hidden');
   $('fork-badge').innerHTML = '';
+  $('img1').value = '';
+  $('img2').value = '';
   loadCurrent();
 }
 
@@ -449,12 +646,17 @@ async function loadCurrent(setResolution = false) {
   $('fork-badge').classList.add('hidden');
   $('fork-badge').innerHTML = '';
   const path = getCurrentPath();
-  if (!path) return;
-  const r = await fetch('/api/workflows/current?path=' + encodeURIComponent(path));
+  if (!path) {
+    // 未选工作流：图生图模式下显示上传控件（后端自动匹配工作流）
+    $('img2img-box').classList.toggle('hidden', currentMode !== 'img2img');
+    return;
+  }
+  const r = await fetch('/api/workflows/current?path=' + encodeURIComponent(path) + '&_t=' + Date.now());
   const d = await r.json();
   if (!d.path || d.error) {
     setCurrentPath('');
     renderList();
+    $('img2img-box').classList.toggle('hidden', currentMode !== 'img2img');
     return;
   }
   defaultRes.w = d.default_width;
@@ -466,6 +668,13 @@ async function loadCurrent(setResolution = false) {
   }
   $('direct').value = (d.builtin_prompt || '').trim();
   $('negative_prompt').value = (d.builtin_negative_prompt || '').trim();
+  // 图生图：根据模式和当前工作流决定是否显示上传控件
+  if (currentMode === 'img2img') {
+    const hasLI = !!(d.summary && d.summary.has_loadimage);
+    $('img2img-box').classList.toggle('hidden', !hasLI);
+  } else {
+    $('img2img-box').classList.add('hidden');
+  }
   saveFormState();
 }
 
@@ -474,7 +683,19 @@ let _categoryOrder = [];
 
 async function loadList() {
   $('wf-list').textContent = '加载中...';
+  // 首次加载不带 subdir，获取目录配置
   const r = await fetch('/api/workflows');
+  const d = await r.json();
+  _wfDirs.txt2img = d.txt2img_dir || '';
+  _wfDirs.img2img = d.img2img_dir || '';
+  // 然后按当前模式加载对应目录
+  await loadListForMode();
+}
+
+async function loadListForMode() {
+  const dir = currentMode === 'img2img' ? _wfDirs.img2img : _wfDirs.txt2img;
+  const url = dir ? `/api/workflows?subdir=${encodeURIComponent(dir)}` : '/api/workflows';
+  const r = await fetch(url);
   const d = await r.json();
   allWorkflows = d.workflows || [];
   _categoryOrder = d.category_order || [];
@@ -491,18 +712,15 @@ function _highlight(text, q) {
 function _wfCard(w, q) {
   const stem = w.path.replace(/\.json$/i, '');
   const thumb = w.thumbnail
-    ? `<img src="/api/thumbnail?path=${encodeURIComponent(w.path)}" class="w-8 h-8 object-cover rounded bg-gray-50" loading="lazy" />`
-    : `<div class="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[8px]">无图</div>`;
+    ? `<img src="/api/thumbnail?path=${encodeURIComponent(w.path)}" class="wf-thumb" loading="lazy" alt="" />`
+    : `<div class="wf-thumb flex items-center justify-center text-gray-300 text-[10px]">无图</div>`;
   const isSelected = w.path === getCurrentPath();
-  const cardCls = isSelected
-    ? 'wf-item border-2 border-blue-500 ring-1 ring-blue-300 bg-blue-50 rounded p-0.5 cursor-pointer flex flex-col items-center w-10 overflow-hidden'
-    : 'wf-item border-2 border-transparent rounded p-0.5 cursor-pointer hover:bg-blue-50 hover:border-blue-300 flex flex-col items-center w-10 overflow-hidden';
+  const cardCls = 'wf-card' + (isSelected ? ' selected' : '');
   const cat = (w.category || '').trim();
-  const catTag = q && cat ? `<span class="text-[7px] text-gray-400 leading-tight text-center w-full break-all">${_highlight(cat, q)}</span>` : '';
-  return `<div class="${cardCls}" data-path="${w.path}" title="${stem}${cat ? ' [' + cat + ']' : ''}">
+  const catTag = cat ? `<span class="text-[9px] text-gray-400">${_esc(cat)}</span>` : '';
+  return `<div class="${cardCls}" data-path="${_esc(w.path)}" title="${_esc(stem)}${cat ? ' · ' + _esc(cat) : ''}">
      ${thumb}
-     <span class="text-[8px] font-medium leading-tight break-all text-center w-full">${_highlight(stem, q)}</span>
-     ${catTag}
+     <div class="wf-label">${_highlight(stem, q)}${catTag ? '<br/>' + catTag : ''}</div>
    </div>`;
 }
 
@@ -510,17 +728,28 @@ function renderList() {
   const cur = getCurrentPath();
   const curWf = allWorkflows.find(w => w.path === cur);
   $('wf-current').textContent = curWf ? (curWf.path.replace(/\.json$/i, '')) : '';
+
+  // 如果当前选中的工作流不在列表中，清除选择
+  if (cur && !allWorkflows.some(w => w.path === cur)) {
+    setCurrentPath('');
+    $('wf-current').textContent = '';
+    $('direct').value = '';
+    $('negative_prompt').value = '';
+  }
+
   const q = $('search').value.toLowerCase().trim();
   let filtered = q
     ? allWorkflows.filter(w => (w.path || '').toLowerCase().includes(q) || (w.category || '').toLowerCase().includes(q))
     : allWorkflows.slice();
   if (!filtered.length) {
-    $('wf-list').innerHTML = '<div class="p-2 text-gray-400 text-xs">无匹配</div>';
+    $('wf-list').innerHTML = '<div class="p-4 text-gray-400 text-xs text-center">无匹配工作流</div>';
     return;
   }
   if (q) {
-    $('wf-list').innerHTML = `<div class="flex flex-wrap gap-1.5">${filtered.map(w => _wfCard(w, q)).join('')}</div>`;
+    // 搜索模式：直接网格
+    $('wf-list').innerHTML = `<div class="wf-grid">${filtered.map(w => _wfCard(w, q)).join('')}</div>`;
   } else {
+    // 分类模式
     const groups = {};
     const uncategorized = [];
     for (const w of filtered) {
@@ -532,15 +761,15 @@ function renderList() {
     const orderedCats = _categoryOrder.filter(c => groups[c]);
     const extraCats = Object.keys(groups).filter(c => !_categoryOrder.includes(c)).sort();
     for (const cat of [...orderedCats, ...extraCats]) {
-      html += `<div class="mb-2"><div class="text-[10px] font-semibold text-gray-500 mb-1">${_esc(cat)}</div><div class="flex flex-wrap gap-1.5">${groups[cat].map(w => _wfCard(w)).join('')}</div></div>`;
+      html += `<div class="wf-cat-title">${_esc(cat)}</div><div class="wf-grid">${groups[cat].map(w => _wfCard(w)).join('')}</div>`;
     }
     if (uncategorized.length) {
       const label = Object.keys(groups).length ? '未分类' : '';
-      html += `<div class="mb-2">${label ? `<div class="text-[10px] font-semibold text-gray-400 mb-1">${label}</div>` : ''}<div class="flex flex-wrap gap-1.5">${uncategorized.map(w => _wfCard(w)).join('')}</div></div>`;
+      html += (label ? `<div class="wf-cat-title">${label}</div>` : '') + `<div class="wf-grid">${uncategorized.map(w => _wfCard(w)).join('')}</div>`;
     }
     $('wf-list').innerHTML = html;
   }
-  document.querySelectorAll('.wf-item').forEach(el => {
+  document.querySelectorAll('.wf-card').forEach(el => {
     el.addEventListener('click', () => selectWorkflow(el.dataset.path));
   });
 }
@@ -548,12 +777,38 @@ function renderList() {
 function getCurrentPath() { return localStorage.getItem('currentWorkflow') || ''; }
 function setCurrentPath(path) { if (path) localStorage.setItem('currentWorkflow', path); else localStorage.removeItem('currentWorkflow'); }
 
+// 工作流折叠展开
+let _wfExpanded = false;
+function toggleWfList(show) {
+  const list = $('wf-list');
+  const arrow = $('wf-arrow');
+  const expand = show !== undefined ? show : list.classList.contains('hidden');
+  if (expand) {
+    list.classList.remove('hidden');
+    arrow.textContent = '▾';
+    arrow.classList.add('rotate-180');
+    _wfExpanded = true;
+    if (!allWorkflows.length) loadList();
+  } else {
+    list.classList.add('hidden');
+    arrow.textContent = '▸';
+    arrow.classList.remove('rotate-180');
+    _wfExpanded = false;
+  }
+}
+$('wf-header').addEventListener('click', (e) => {
+  if (e.target.closest('#btn-wf-search') || e.target.closest('#search')) return;
+  toggleWfList();
+});
+
 async function selectWorkflow(path) {
   forkedWorkflow = null;
   forkedMeta = null;
   setCurrentPath(path);
   renderList();
   await loadCurrent(true);
+  // 选择后自动折叠
+  toggleWfList(false);
 }
 
 // ==================== 画风 ====================
@@ -578,11 +833,9 @@ async function loadResolutions() {
     $('res-presets').innerHTML = presets.map(p => {
       const sel = parseInt($('width').value) === p.w && parseInt($('height').value) === p.h;
       const cls = sel
-        ? 'px-1.5 py-0.5 bg-blue-500 text-white border border-blue-500 rounded text-[10px]'
-        : 'px-1.5 py-0.5 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 text-[10px]';
-      return `<button type="button" data-w="${p.w}" data-h="${p.h}" class="${cls}" title="${p.w}×${p.h}">
-        ${p.label ? _esc(p.label) : p.w + '×' + p.h}
-      </button>`;
+        ? 'px-2.5 py-1 bg-blue-500 text-white rounded-lg text-xs font-medium shadow-sm shadow-blue-200'
+        : 'px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 text-xs text-gray-600';
+      return `<button type="button" data-w="${p.w}" data-h="${p.h}" class="${cls}" title="${p.w}×${p.h}">${p.label ? _esc(p.label) : p.w + '×' + p.h}</button>`;
     }).join('');
   } catch {}
 }
@@ -616,25 +869,23 @@ function renderStyles() {
   }
   const cardsHtml = pool.map(s => {
     const active = s.tags === sel;
-    const cls = active
-      ? 'style-item border-2 border-blue-500 ring-1 ring-blue-300 bg-blue-50 rounded p-0.5 cursor-pointer flex flex-col items-center w-10 overflow-hidden'
-      : 'style-item border-2 border-transparent rounded p-0.5 cursor-pointer hover:bg-blue-50 hover:border-blue-300 flex flex-col items-center w-10 overflow-hidden';
+    const cls = 'style-card' + (active ? ' selected' : '');
     const thumb = s.image
-      ? `<img src="/api/style_thumbnail?name=${encodeURIComponent(s.image)}" class="w-8 h-8 object-cover rounded bg-gray-50" loading="lazy" />`
-      : `<div class="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[8px]">无图</div>`;
-    const label = s.name || s.tags;
-    return `<div class="${cls}" data-style-tags="${s.tags.replace(/"/g, '&quot;')}" title="${s.tags}">
+      ? `<img src="/api/style_thumbnail?name=${encodeURIComponent(s.image)}" class="style-thumb" loading="lazy" alt="" />`
+      : `<div class="style-thumb flex items-center justify-center text-gray-300 text-[10px]">无图</div>`;
+    const label = _esc(s.name || s.tags);
+    return `<div class="${cls}" data-style-tags="${_esc(s.tags)}" title="${_esc(s.tags)}">
       ${thumb}
-      <span class="text-[8px] font-medium leading-tight break-all text-center w-full line-clamp-2">${label}</span>
+      <div class="style-label">${label}</div>
     </div>`;
   }).join('');
   const noAliasCount = allStyles.filter(s => !s.name).length;
   const showToggle = !sq && noAliasCount;
   const toggleHtml = showToggle
-    ? `<button id="style-toggle-btn" class="border-2 border-transparent rounded p-0.5 cursor-pointer hover:bg-purple-50 hover:border-purple-300 flex flex-col items-center justify-center w-10 h-10 text-[9px] text-purple-600">${showAllStyles ? '收起' : '更多'}</button>`
+    ? `<button id="style-toggle-btn" class="style-card flex items-center justify-center text-[11px] text-purple-600 font-medium" style="aspect-ratio:1">${showAllStyles ? '收起' : '更多<br/>('+noAliasCount+')'}</button>`
     : '';
-  $('style-list').innerHTML = `<div class="flex flex-wrap gap-1">${cardsHtml}${toggleHtml}</div>`;
-  document.querySelectorAll('.style-item').forEach(el => {
+  $('style-list').innerHTML = `<div class="style-grid">${cardsHtml}${toggleHtml}</div>`;
+  document.querySelectorAll('.style-card').forEach(el => {
     el.addEventListener('click', () => {
       const tags = el.dataset.styleTags;
       if (getSelectedStyle() === tags) setSelectedStyle('');
@@ -648,12 +899,14 @@ function renderStyles() {
 
 // ==================== 生图 ====================
 let activeWS = null;
+let _genCounter = 0;
+let _activeGenId = 0;
 let currentPrompt = '';
 
 function appendLog(line) { const el = $('log'); el.textContent += line + '\n'; }
 
 function startRun() {
-  if (globalBusy) return;
+  if ($('btn-run').disabled) return;
   const direct = $('direct').value.trim();
   const nl = $('nl').value.trim();
   const neg = $('negative_prompt').value.trim();
@@ -672,7 +925,57 @@ function showGenNotice(direct, nl, neg, w, h) {
   $('gen-notice-cancel').onclick = close;
 }
 
-function actuallyStartRun(direct, nl, neg, w, h) {
+async function actuallyStartRun(direct, nl, neg, w, h) {
+  _finishing = false;
+  $('btn-run').disabled = true;
+  // 图生图：先上传图片
+  const img1File = $('img1').files[0];
+  const img2File = $('img2').files[0];
+  let image1_name = '', image2_name = '';
+  if (img1File || img2File) {
+    $('progress-box').classList.remove('hidden');
+    const fd = new FormData();
+    try {
+      if (img1File) {
+        $('progress-text').textContent = '压缩图片1...';
+        const c1 = await compressImage(img1File);
+        fd.append('image1', c1, c1.name || 'img1.jpg');
+      }
+      if (img2File) {
+        $('progress-text').textContent = '压缩图片2...';
+        const c2 = await compressImage(img2File);
+        fd.append('image2', c2, c2.name || 'img2.jpg');
+      }
+    } catch (err) {
+      appendLog('❌ 图片处理失败: ' + (err.message || err));
+      $('progress-text').textContent = '处理失败';
+      $('progress-box').classList.add('hidden');
+      $('btn-run').disabled = false;
+      return;
+    }
+    $('progress-text').textContent = '上传图片中...';
+    try {
+      const r = await fetch('/api/img2img/upload', { method: 'POST', body: fd });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        appendLog('❌ 图片上传失败: ' + (e.error || e.detail || r.status));
+        $('progress-text').textContent = '上传失败';
+        $('progress-box').classList.add('hidden');
+        $('btn-run').disabled = false;
+        return;
+      }
+      const d = await r.json();
+      image1_name = d.image1_name || '';
+      image2_name = d.image2_name || '';
+      appendLog('📷 图片上传完成');
+    } catch (err) {
+      appendLog('❌ 图片上传失败: ' + (err.message || err));
+      $('progress-text').textContent = '上传失败';
+      $('progress-box').classList.add('hidden');
+      $('btn-run').disabled = false;
+      return;
+    }
+  }
   const payload = {
     workflow_path: forkedWorkflow ? '' : getCurrentPath(),
     inline_workflow: forkedWorkflow || null,
@@ -681,27 +984,112 @@ function actuallyStartRun(direct, nl, neg, w, h) {
     width: w, height: h,
     style_tags: getSelectedStyleTags(),
     negative_prompt: neg,
+    image1_name: image1_name,
+    image2_name: image2_name,
   };
   $('progress-box').classList.remove('hidden');
   $('result-box').classList.add('hidden');
   $('log').textContent = '';
   $('llm-box').classList.add('hidden');
   $('llm-stream').textContent = '';
+  $('queue-status').classList.add('hidden');
   $('progress-text').textContent = '连接中...';
   $('progress-bar-wrap').classList.add('hidden');
-  $('btn-run').disabled = true;
   $('images').innerHTML = '';
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws/run`);
   activeWS = ws;
-  ws.onopen = () => ws.send(JSON.stringify(payload));
-  ws.onmessage = (e) => handleMsg(JSON.parse(e.data));
-  ws.onclose = () => finishRun();
-  ws.onerror = () => { appendLog('WS 错误'); finishRun(); };
+  const genId = ++_genCounter;
+  _activeGenId = genId;
+  let _opened = false;
+  // 15s 连接超时，防止网络慢时永远卡在"连接中"
+  const _connTimer = setTimeout(() => {
+    if (!_opened && genId === _activeGenId) {
+      appendLog('❌ 连接服务器超时，请检查网络后重试');
+      $('progress-text').textContent = '连接超时';
+      $('btn-run').disabled = false;
+      finishRun();
+    }
+  }, 15000);
+  ws.onopen = () => {
+    _opened = true;
+    clearTimeout(_connTimer);
+    ws.send(JSON.stringify(payload));
+  };
+  ws.onmessage = (e) => {
+    let m;
+    try { m = JSON.parse(e.data); } catch { return; }
+    if (genId !== _activeGenId) return;
+    handleMsg(m);
+  };
+  ws.onclose = () => { clearTimeout(_connTimer); if (genId === _activeGenId) finishRun(); };
+  ws.onerror = () => { clearTimeout(_connTimer); if (genId === _activeGenId) { appendLog('❌ 连接失败，请稍后重试'); finishRun(); } };
+}
+
+/** 前端图片压缩：短边≤1080 长边≤1920 等比缩放 + 质量调节，控制到 1.4MB 以内 */
+async function compressImage(file) {
+  const MAX_SHORT = 1080;
+  const MAX_LONG = 1920;
+  const MAX_SIZE = 1400 * 1024; // 留余量给后端 1.5MB 限制
+  // 读文件 → Image → canvas 缩放
+  const img = await new Promise((resolve, reject) => {
+    const i = new Image();
+    i.onload = () => resolve(i);
+    i.onerror = reject;
+    i.src = URL.createObjectURL(file);
+  });
+  let { width: w, height: h } = img;
+  const short = Math.min(w, h), long = Math.max(w, h);
+  if (short > MAX_SHORT || long > MAX_LONG) {
+    const ratio = Math.min(MAX_SHORT / short, MAX_LONG / long);
+    w = Math.round(w * ratio);
+    h = Math.round(h * ratio);
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  URL.revokeObjectURL(img.src);
+  // 二分法调质量，直到 ≤ MAX_SIZE
+  let lo = 0.3, hi = 0.92, best = null;
+  for (let i = 0; i < 6; i++) {
+    const q = (lo + hi) / 2;
+    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', q));
+    if (!blob) break;
+    best = blob;
+    if (blob.size <= MAX_SIZE) lo = q; else hi = q;
+  }
+  // 如果最终仍超标，再缩放尺寸兜底
+  if (best && best.size > MAX_SIZE) {
+    const ratio = Math.sqrt(MAX_SIZE / best.size);
+    const c2 = document.createElement('canvas');
+    c2.width = Math.round(w * ratio); c2.height = Math.round(h * ratio);
+    const ctx2 = c2.getContext('2d');
+    ctx2.drawImage(canvas, 0, 0, c2.width, c2.height);
+    best = await new Promise(r => c2.toBlob(r, 'image/jpeg', 0.8));
+  }
+  if (!best) throw new Error('图片压缩失败');
+  const origKB = (file.size / 1024).toFixed(0);
+  const newKB = (best.size / 1024).toFixed(0);
+  appendLog(`📐 图片压缩: ${origKB}KB → ${newKB}KB (${w}x${h})`);
+  // 保留原始扩展名信息
+  best.name = file.name.replace(/\.[^.]+$/, '.jpg');
+  return best;
 }
 
 function handleMsg(m) {
   if (m.type === 'log') { appendLog(m.message); }
+  else if (m.type === 'queued') {
+    $('queue-status').classList.remove('hidden');
+    $('queue-status').textContent = '⏳ ' + (m.message || ('排队中，前面还有 ' + ((m.position||1)-1) + ' 个任务'));
+    $('progress-text').textContent = '排队中...';
+    pollMyQueue();
+  }
+  else if (m.type === 'queue_start') {
+    $('queue-status').classList.add('hidden');
+    $('progress-text').textContent = m.message || '开始执行...';
+    pollMyQueue();
+  }
   else if (m.type === 'llm_start') { $('llm-box').classList.remove('hidden'); $('llm-stream').textContent = ''; $('progress-text').textContent = ''; }
   else if (m.type === 'llm_chunk') { const el = $('llm-stream'); el.textContent += m.delta; el.scrollTop = el.scrollHeight; }
   else if (m.type === 'llm_done') {
@@ -712,6 +1100,7 @@ function handleMsg(m) {
     }
   }
   else if (m.type === 'progress') {
+    $('queue-status').classList.add('hidden');
     if (m.max && m.max > 1) {
       const pct = Math.floor((m.value || 0) * 100 / m.max);
       $('progress-bar-wrap').classList.remove('hidden');
@@ -721,29 +1110,63 @@ function handleMsg(m) {
   }
   else if (m.type === 'prompt_id') {
     currentPrompt = m.final_prompt || '';
-    $('result-box').classList.remove('hidden');
   }
   else if (m.type === 'image') {
-    const div = document.createElement('div');
-    div.innerHTML = `<a href="${_esc(m.url)}" data-gallery="main" data-title="${_esc(m.filename)}" class="glightbox block">
-        <img src="${_esc(m.url)}" class="w-full aspect-square object-cover rounded border hover:ring-2 hover:ring-blue-400" loading="lazy" />
-      </a>`;
-    $('images').appendChild(div);
-    refreshLightbox();
+    // 不在生成页公开展示，引导用户去「我的」查看
     pushHistory({ url: m.url, filename: m.filename, prompt: currentPrompt, time: Date.now() });
   }
   else if (m.type === 'done') {
-    appendLog(`✅ 完成，共 ${m.count} 张`);
-    $('progress-text').textContent = '完成';
-    maybeShowStarPrompt();
+    appendLog(`✅ 完成，共 ${m.count} 张 — 请到「我的」查看`);
+    $('progress-text').textContent = '完成，请到「我的」查看';
+    _tabLoaded.myworks = false;  // 下次切换到"我的"时自动刷新
+    finishRun();
   }
   else if (m.type === 'error') {
     appendLog('❌ ' + m.message);
     $('progress-text').textContent = '失败: ' + m.message;
+    finishRun();
+  }
+  else if (m.type === 'headless_done') {
+    appendLog('📌 ' + m.message);
   }
 }
 
-function finishRun() { $('btn-run').disabled = !!globalBusy; activeWS = null; }
+let _cooldownTimerId = 0;
+function startCooldown(seconds) {
+  const el = $('cooldown-timer');
+  if (!el) return;
+  clearInterval(_cooldownTimerId);
+  $('btn-run').disabled = true;
+  el.classList.remove('hidden');
+  const tick = () => {
+    if (seconds <= 0) {
+      clearInterval(_cooldownTimerId);
+      el.classList.add('hidden');
+      $('btn-run').disabled = false;
+      return;
+    }
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    el.textContent = '⏳ 冷却中 ' + (m > 0 ? m + '分' : '') + s + '秒 后可提交';
+    seconds--;
+  };
+  tick();
+  _cooldownTimerId = setInterval(tick, 1000);
+}
+
+let _finishing = false;
+function finishRun() {
+  if (_finishing) return;
+  _finishing = true;
+  if (activeWS) { try { activeWS.close(); } catch {} }
+  activeWS = null;
+  mirroring = false;
+  pollMyQueue();
+  // 生图完成后启动冷却倒计时（管理员豁免）
+  if (!_currentUser || !_currentUser.is_admin) {
+    startCooldown(_cooldownDefault || 30);
+  }
+}
 
 // ==================== 事件绑定 ====================
 $('search').addEventListener('input', renderList);
@@ -770,17 +1193,55 @@ $('res-presets').addEventListener('click', (e) => {
 $('btn-reload-gallery').addEventListener('click', () => { _tabLoaded.gallery = false; loadGallery(true); });
 $('btn-load-more').addEventListener('click', () => loadGallery(false));
 
+// ==================== 访问密钥提交 ====================
+$('btn-submit-key').addEventListener('click', async () => {
+  const key = $('access-key-input').value.trim();
+  if (!key) { $('access-key-error').classList.remove('hidden'); $('access-key-error').textContent = '请输入密钥'; return; }
+  $('btn-submit-key').disabled = true;
+  $('access-key-error').classList.add('hidden');
+  $('access-key-success').classList.add('hidden');
+  try {
+    const r = await fetch('/api/auth/claim-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key }),
+    });
+    const d = await r.json();
+    if (!r.ok) {
+      $('access-key-error').classList.remove('hidden');
+      $('access-key-error').textContent = d.error || '密钥无效';
+      $('btn-submit-key').disabled = false;
+      return;
+    }
+    $('access-key-success').classList.remove('hidden');
+    $('access-key-success').textContent = '✓ 密钥验证成功，正在解锁...';
+    // 延迟一下再显示主界面
+    setTimeout(() => {
+      $('access-page').classList.add('hidden');
+      $('generate-main').classList.remove('hidden');
+      $('tab-bar').classList.remove('hidden');
+    }, 600);
+  } catch (err) {
+    $('access-key-error').classList.remove('hidden');
+    $('access-key-error').textContent = '网络错误，请重试';
+    $('btn-submit-key').disabled = false;
+  }
+});
+$('access-key-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('btn-submit-key').click();
+});
+
 // ==================== 全局状态 ====================
 let globalBusy = false;
 function applyGlobalStatus(s) {
   if (s.online != null) $('online-count').textContent = `· ${s.online} 在线`;
   globalBusy = !!s.busy;
   if (!s.busy) {
-    if (!activeWS) $('btn-run').disabled = false;
     mirroring = false;
+    if (!s.queue_size) $('queue-status').classList.add('hidden');
     return;
   }
-  if (!activeWS) $('btn-run').disabled = true;
+  // 忙时不禁用按钮，允许提交到队列
   if (!activeWS && !mirroring) enterMirrorMode();
 }
 
@@ -792,7 +1253,7 @@ function enterMirrorMode() {
   $('log').textContent = '';
   $('llm-box').classList.add('hidden');
   $('llm-stream').textContent = '';
-  $('progress-text').textContent = '👀 旁观其它页面的任务';
+  $('progress-text').textContent = '⏳ 等待中，可提交任务排队';
   $('progress-bar-wrap').classList.add('hidden');
   $('images').innerHTML = '';
   currentPrompt = '';
@@ -804,8 +1265,17 @@ function connectStatus() {
   statusWS = new WebSocket(`${proto}://${location.host}/ws/status`);
   statusWS.onmessage = (e) => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
+    if (m.type === 'ping') return;
     if (m.type === 'status') applyGlobalStatus(m);
     else if (m.type === 'online') $('online-count').textContent = `· ${m.count} 在线`;
+    else if (m.type === 'queue_update') {
+      if (!activeWS && (m.queue_size || 0) > 0) {
+        $('queue-status').classList.remove('hidden');
+        $('queue-status').textContent = `⏳ 当前队列: ${m.queue_size} 个任务等待中`;
+      } else if (!activeWS) {
+        $('queue-status').classList.add('hidden');
+      }
+    }
     else if (m.type === 'mirror') { if (activeWS) return; handleMsg(m.event); }
   };
   statusWS.onclose = () => { statusWS = null; setTimeout(connectStatus, 2000); };
@@ -858,7 +1328,7 @@ function showLightbox() {
   else { rptBtn.classList.add('hidden'); rptBtn.dataset.rel = ''; }
   const dl = $('lb-download');
   if (dl) { let u = it.url; if (u.startsWith('/api/output/file')) u += (u.includes('?') ? '&' : '?') + 'full=1'; dl.href = u; dl.download = it.title || ''; }
-  if (it.relPath) {
+  if (it.relPath && _currentUser && _currentUser.is_admin) {
     fetch('/api/output/creator?path=' + encodeURIComponent(it.relPath)).then(r => r.json()).then(d => { if (d && d.creator_ip) $('lb-creator').textContent = 'IP: ' + d.creator_ip; }).catch(() => {});
   }
   $('lb-root').classList.add('open');
@@ -922,15 +1392,6 @@ $('report-submit').addEventListener('click', async () => {
 function refreshLightbox() {}
 
 // Star prompt
-function maybeShowStarPrompt() {
-  if (localStorage.getItem('starPromptDismissed') === '1') return;
-  const m = $('star-modal'); if (!m) return;
-  if (m.classList.contains('hidden')) { m.classList.remove('hidden'); lockScroll(); m.dataset.locked = '1'; }
-}
-function closeStarModal() { const m = $('star-modal'); if (!m.classList.contains('hidden')) { m.classList.add('hidden'); if (m.dataset.locked) { unlockScroll(); delete m.dataset.locked; } } }
-$('star-never').addEventListener('click', () => { localStorage.setItem('starPromptDismissed', '1'); closeStarModal(); });
-$('star-later').addEventListener('click', closeStarModal);
-$('star-modal').addEventListener('click', (e) => { if (e.target === $('star-modal')) closeStarModal(); });
 
 // ==================== GPU ====================
 function gpuBar(value, max, color) {
@@ -965,6 +1426,7 @@ async function pollGPU() {
   } catch {}
 }
 let _gpuInterval = 5000;
+let _cooldownDefault = 30;
 let _gpuTimer = setInterval(pollGPU, _gpuInterval);
 
 // ==================== 公告 ====================
@@ -1005,11 +1467,147 @@ function restoreFormState() {
 _FORM_FIELDS.forEach(f => { const el = $(f.id); el.addEventListener(f.type === 'check' ? 'change' : 'input', saveFormState); });
 restoreFormState();
 
-// ==================== 初始化 ====================
+// ==================== 用户身份 ====================
+let _currentUser = null;
+(async () => {
+  try {
+    const r = await fetch('/api/whoami');
+    const d = await r.json();
+    _currentUser = d.logged_in ? d : null;
+    const label = $('user-label');
+    const adminLink = $('admin-link');
+    if (d.logged_in) {
+      label.innerHTML = (d.avatar_url ? '<img src="' + _esc(d.avatar_url) + '" class="w-4 h-4 rounded-full inline"> ' : '') + _esc(d.login) + ' ▾';
+      label.className = 'px-1 py-0.5 rounded bg-blue-100 text-blue-700 cursor-pointer relative';
+      label.title = d.email || d.login;
+let _keyInfoRateTimes = [];  // 菜单刷新限速：每分钟最多 20 次
+function _renderKeyInfo(ki, isAdmin, accessGranted) {
+  if (!ki || isAdmin || !accessGranted) return '';
+  let h = '';
+  if (ki.max_uses > 0) h += '🔢 剩余次数：' + Math.max(0, ki.max_uses - ki.used_count) + ' / ' + ki.max_uses;
+  if (ki.expires_at > 0) {
+    if (ki.max_uses > 0) h += '<br>';
+    const remain = Math.max(0, Math.ceil(ki.expires_at - Date.now()/1000));
+    h += '⏰ 剩余时间：' + (remain >= 86400 ? Math.floor(remain/86400)+'天' : remain >= 3600 ? Math.floor(remain/3600)+'时' : Math.floor(remain/60)+'分');
+  }
+  if (ki.max_uses === 0 && ki.expires_at === 0) h += '永久有效';
+  return h;
+}
+
+// ... later in the onclick handler:
+
+      label.onclick = async (e) => {
+        e.stopPropagation();
+        const menu = document.getElementById('user-menu');
+        if (menu) { menu.remove(); return; }
+        const div = document.createElement('div');
+        div.id = 'user-menu';
+        div.className = 'absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border text-[10px] z-50 min-w-[100px]';
+        div.innerHTML = `<div class="px-2 py-1 text-gray-400 border-b">${_esc(d.login)}</div>
+          <div id="key-info-placeholder" class="px-2 py-1 text-gray-400">加载中...</div>
+          <button id="btn-logout" class="w-full text-left px-2 py-1.5 hover:bg-red-50 text-red-600 rounded-b-lg">🚪 退出登录</button>`;
+        label.style.position = 'relative';
+        label.appendChild(div);
+        div.querySelector('#btn-logout').onclick = async () => { await fetch('/auth/logout', {method:'POST'}); location.href = '/'; };
+        document.addEventListener('click', () => div.remove(), { once: true });
+        // 限速：清理 60 秒前的记录，超过 20 次则跳过请求
+        const now = Date.now();
+        _keyInfoRateTimes = _keyInfoRateTimes.filter(t => now - t < 60000);
+        if (_keyInfoRateTimes.length < 20) {
+          _keyInfoRateTimes.push(now);
+          try {
+            const r = await fetch('/api/whoami');
+            const fresh = await r.json();
+            const html = _renderKeyInfo(fresh.key_info, fresh.is_admin, fresh.access_granted);
+            const placeholder = div.querySelector('#key-info-placeholder');
+            if (placeholder) {
+              placeholder.innerHTML = html || '<span class="text-gray-300">无密钥信息</span>';
+              placeholder.classList.remove('text-gray-400');
+            }
+          } catch {}
+        } else {
+          const placeholder = div.querySelector('#key-info-placeholder');
+          if (placeholder) {
+            placeholder.innerHTML = '<span class="text-gray-300">刷新太频繁，请稍后再试</span>';
+            placeholder.classList.remove('text-gray-400');
+          }
+        }
+      };
+      if (d.is_admin) {
+        adminLink.classList.remove('hidden');
+        $('tab-gallery').style.display = '';
+      }
+      // 非管理员 + 未验证密钥 → 显示密钥输入页，隐藏主界面
+      if (!d.is_admin && !d.access_granted) {
+        $('access-page').classList.remove('hidden');
+        $('generate-main').classList.add('hidden');
+        $('tab-bar').classList.add('hidden');
+      } else {
+        $('access-page').classList.add('hidden');
+        $('generate-main').classList.remove('hidden');
+        $('tab-bar').classList.remove('hidden');
+      }
+      // 冷却倒计时
+      if (d.cooldown_total) { _cooldownDefault = d.cooldown_total; }
+      if (d.cooldown_remaining > 0) { startCooldown(d.cooldown_remaining); }
+    } else {
+      label.textContent = '登录';
+      label.className = 'px-1 py-0.5 rounded bg-green-100 text-green-700 cursor-pointer';
+      label.onclick = () => { location.href = '/auth/login'; };
+      adminLink.classList.add('hidden');
+    }
+  } catch {}
+})();
+
+// ==================== 我的队列轮询 ====================
+async function pollMyQueue() {
+  if (!_currentUser) { $('my-queue-card').classList.add('hidden'); return; }
+  try {
+    const r = await fetch('/api/my-queue');
+    const d = await r.json();
+    const items = d.items || [];
+    const card = $('my-queue-card');
+    const status = $('my-queue-status');
+    const list = $('my-queue-items');
+    if (!items.length && !(activeWS && activeWS.readyState === WebSocket.OPEN)) {
+      card.classList.add('hidden');
+      if (!activeWS) $('btn-run').disabled = false;
+    } else {
+      card.classList.remove('hidden');
+      const waiting = items.filter(i => i.status === 'waiting');
+      const running = items.filter(i => i.status === 'running');
+      const hasMyTask = waiting.length || running.length;
+      if (hasMyTask) $('btn-run').disabled = true;
+      if (running.length) {
+        status.textContent = '⚡ 正在生成';
+        status.className = 'text-[10px] text-blue-600 font-medium';
+      } else if (waiting.length) {
+        const pos = waiting[0].position;
+        status.textContent = pos ? `⏳ 排队第 ${pos} 位` : '⏳ 排队中';
+        status.className = 'text-[10px] text-amber-600 font-medium';
+      } else {
+        status.textContent = '✅ 空闲';
+        status.className = 'text-[10px] text-gray-400';
+      }
+      list.innerHTML = items.map(i => {
+        const st = { waiting: '⏳ 等待', running: '⚡ 生成中', done: '✅ 完成', failed: '❌ 失败', cancelled: '✕ 取消' }[i.status] || _esc(i.status || '');
+        const pos = i.position ? ` (#${_esc(String(i.position))})` : '';
+        return `<div class="flex justify-between text-gray-500"><span>任务 #${_esc(String(i.id))}${pos}</span><span>${st}</span></div>`;
+      }).join('');
+    }
+  } catch {}
+}
+setInterval(pollMyQueue, 8000);
+pollMyQueue();
+
 loadResolutions();
 loadStyles();
 loadCurrent();
-loadList();
+loadList().then(() => {
+  // 如果已有选中的工作流则保持折叠，否则自动展开让用户选择
+  if (!getCurrentPath()) toggleWfList(true);
+});
+
 </script>
 </body>
 </html>

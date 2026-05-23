@@ -40,7 +40,7 @@
   const raw = `{{MESSAGE}}`;
   const el = document.getElementById('msg');
   if (raw.trim()) {
-    el.innerHTML = marked.parse(raw);
+    el.textContent = raw;
   } else {
     el.parentElement.removeChild(el);
     document.querySelector('.subtitle').textContent = '系统正在升级维护中，请稍后再来访问。';

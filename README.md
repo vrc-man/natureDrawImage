@@ -105,9 +105,9 @@ WEB_HOST = "127.0.0.1"
 WEB_PORT = 8080
 
 # ComfyUI 输出目录（只读浏览）
-OUTPUT_DIR_STR = r"C:\Users\acofo\Documents\ComfyUI\output"
+OUTPUT_DIR_STR = r"C:\path\to\ComfyUI\output"
 # ComfyUI 工作流目录（自动扫描）
-COMFYUI_WORKFLOWS_DIR = r"C:\Users\acofo\Documents\ComfyUI\user\default\workflows"
+COMFYUI_WORKFLOWS_DIR = r"C:\path\to\ComfyUI\user\default\workflows"
 # ===================================
 ```
 

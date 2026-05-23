@@ -10,6 +10,7 @@ dev
 
 # ── 运行时数据 ──
 web/__pycache__
+web/state.json
 web/creator_ips.txt
 web/banned_ips.txt
 web/featured.txt
@@ -22,8 +23,17 @@ web/announcement.json
 web/maintenance.json
 web/custom_head.json
 web/workflow_meta.json
+web/admin_identity.json
+web/users.json
+web/sessions.json
+web/access_keys.json
+web/gen_log.json
+web/queue_state.json
+web/user_images.json
+web/deleted_images.json
 
 # ── 运行时图片 & 资源 ──
 web/thumbnails
 web/style_thumbnails
 web/lora_links
+web/backups

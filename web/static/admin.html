@@ -32,6 +32,8 @@
     <span id="lb-title"></span>
     <span id="lb-time" class="text-xs text-gray-300"></span>
     <span id="lb-creator" class="text-xs text-amber-300"></span>
+    <span id="lb-gh-user" class="text-xs text-emerald-300 hidden"></span>
+    <button id="lb-ban-user" class="hidden text-xs px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700">🚫 封禁用户</button>
     <a id="lb-download" href="#" target="_blank" rel="noopener" download
        class="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">⬇ 下载原图</a>
   </div>
@@ -43,6 +45,27 @@
     <a href="/" class="text-sm text-blue-600 hover:underline">← 返回首页</a>
   </div>
 
+  <!-- 队列管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="queue-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="queue-body">&#x25B8;</span>
+        &#x1F3C3; 队列管理
+        <span id="queue-badge" class="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">空闲</span>
+      </h2>
+      <button id="btn-refresh-queue" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="queue-body" class="hidden">
+      <div id="online-count" class="text-sm text-gray-500 mb-1"></div>
+      <div id="online-list" class="text-xs text-gray-400 mb-2"></div>
+      <div id="queue-content" class="text-sm text-gray-500">加载中...</div>
+      <div class="mt-3 flex gap-2">
+        <button id="btn-cancel-task" class="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm hidden">&#x23F9; 取消当前任务</button>
+        <button id="btn-force-unlock" class="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 text-sm hidden">&#x1F513; 强制解锁</button>
+        <span id="queue-status" class="text-xs text-gray-500 self-center"></span>
+      </div>
+    </div>
+  </div>
 
   <!-- 公告管理 -->
   <div class="bg-white rounded shadow p-4 mb-4">
@@ -380,6 +403,86 @@
     </div>
   </div>
 
+  <!-- 用户管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="users-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="users-body">▸</span>
+        👤 注册用户管理
+      </h2>
+      <button id="btn-refresh-users" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="users-body" class="hidden">
+      <div id="user-list" class="text-sm">加载中...</div>
+    </div>
+  </div>
+
+  <!-- 访问密钥管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="access-keys-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="access-keys-body">▸</span>
+        🔑 访问密钥管理
+        <span class="text-xs text-gray-500 font-normal">(<span id="access-keys-count">0</span>)</span>
+      </h2>
+      <button id="btn-refresh-access-keys" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="access-keys-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">管理用户访问密钥。生成后分发给用户，用户在登录后输入密钥解锁服务。密钥格式为 43 字符，每个密钥仅限一人使用。管理员删除/禁用密钥后 2 秒生效，密钥到期后有 60 秒缓冲。</p>
+      <!-- 生成区 -->
+      <div class="flex flex-col gap-2 mb-3">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-xs text-gray-500">生成</span>
+          <input id="ak-gen-count" type="number" min="1" max="50" value="1" class="w-14 border rounded px-2 py-1 text-xs" />
+          <span class="text-xs text-gray-500">个密钥，类型</span>
+          <select id="ak-gen-type" class="border rounded px-2 py-1 text-xs">
+            <option value="time">按时间</option>
+            <option value="count">按次数</option>
+            <option value="both">时间+次数</option>
+          </select>
+          <button id="btn-gen-access-keys" class="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm">生成</button>
+          <span id="access-keys-status" class="text-xs text-gray-500"></span>
+        </div>
+        <div id="ak-gen-time-row" class="flex items-center gap-2 flex-wrap">
+          <span class="text-xs text-gray-500">有效期</span>
+          <input id="ak-gen-days" type="number" min="0" max="365" value="7" class="w-12 border rounded px-1 py-1 text-xs text-center" />
+          <span class="text-xs text-gray-500">天</span>
+          <input id="ak-gen-hours" type="number" min="0" max="23" value="0" class="w-12 border rounded px-1 py-1 text-xs text-center" />
+          <span class="text-xs text-gray-500">时</span>
+          <input id="ak-gen-mins" type="number" min="0" max="59" value="0" class="w-12 border rounded px-1 py-1 text-xs text-center" />
+          <span class="text-xs text-gray-500">分</span>
+        </div>
+        <div id="ak-gen-count-row" class="hidden flex items-center gap-2 flex-wrap">
+          <span class="text-xs text-gray-500">可使用</span>
+          <input id="ak-gen-max-uses" type="number" min="1" max="9999" value="50" class="w-16 border rounded px-1 py-1 text-xs text-center" />
+          <span class="text-xs text-gray-500">次</span>
+        </div>
+      </div>
+      <!-- 密钥列表 -->
+      <div id="access-keys-list" class="text-sm">加载中...</div>
+    </div>
+  </div>
+
+  <!-- 生图日志 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="gen-logs-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="gen-logs-body">&#x25B8;</span>
+        📋 生图日志
+        <span class="text-xs text-gray-500 font-normal">(<span id="gen-logs-count">0</span>)</span>
+      </h2>
+      <div class="flex gap-2">
+        <button id="btn-refresh-gen-logs" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+        <button id="btn-clear-gen-logs" class="text-sm px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600">清空日志</button>
+      </div>
+    </div>
+    <div id="gen-logs-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">记录每次生图的用户、prompt、工作流、状态等信息，最多保留 2000 条。</p>
+      <div id="gen-logs-list" class="text-sm max-h-96 overflow-y-auto">加载中...</div>
+      <div id="gen-logs-status" class="text-xs text-gray-500 mt-1"></div>
+    </div>
+  </div>
+
   <!-- 封禁列表 -->
   <div class="bg-white rounded shadow p-4 mb-4">
     <div class="flex items-center justify-between mb-2">
@@ -437,6 +540,10 @@
     </div>
     <div id="featured-body" class="hidden">
       <div id="featured-list" class="text-sm">加载中...</div>
+      <div class="mt-3 text-center">
+        <button id="btn-load-more-featured"
+          class="hidden text-sm px-4 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">加载更多精选</button>
+      </div>
     </div>
   </div>
 
@@ -454,6 +561,30 @@
       <div id="recent-list" class="text-sm">加载中...</div>
       <div class="mt-3 text-center">
         <button id="btn-load-more-recent"
+          class="hidden text-sm px-4 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">加载更多</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 图片管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="images-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="images-body">▸</span>
+        🖼️ 图片管理
+        <span class="text-xs text-gray-500 font-normal">(<span id="images-shown">0</span>/<span id="images-total">0</span>)</span>
+      </h2>
+      <div class="flex gap-2">
+        <button id="btn-images-select-all" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">全选</button>
+        <button id="btn-images-del-selected" class="text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 hidden">🗑 删除选中</button>
+        <button id="btn-refresh-images" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+      </div>
+    </div>
+    <div id="images-body" class="hidden">
+      <div id="images-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2"></div>
+      <div id="images-empty" class="text-center text-gray-400 text-sm py-8 hidden">暂无图片</div>
+      <div class="mt-3 text-center">
+        <button id="btn-load-more-images"
           class="hidden text-sm px-4 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">加载更多</button>
       </div>
     </div>
@@ -511,7 +642,58 @@ async function unban(ip) {
   loadRecent();
 }
 
+function formatTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  if (isNaN(d.getTime())) return ts;
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ==================== 用户管理 ====================
+async function loadUsers() {
+  $('user-list').textContent = '加载中...';
+  try {
+    const d = await api('GET', '/api/admin/users');
+    const users = d.users || [];
+    if (!users.length) { $('user-list').innerHTML = '<div class="text-gray-400">暂无注册用户</div>'; return; }
+    $('user-list').innerHTML = '<div class="flex flex-col gap-1 max-h-96 overflow-y-auto">' +
+      users.map(u => {
+        const banned = u.banned;
+        const rowCls = banned ? 'bg-red-100' : 'bg-gray-50';
+        const banLabel = banned ? '✓ 已封禁' : '封禁';
+        const banCls = banned ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600';
+        return `<div class="flex items-center gap-2 ${rowCls} rounded px-2 py-1 text-xs">
+          <span class="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 ${onlineGithubIds.has(u.github_id) ? 'bg-green-500' : 'bg-gray-300'}" title="${onlineGithubIds.has(u.github_id) ? '在线' : '离线'}"></span>
+          <span class="font-mono text-gray-600 w-20 truncate" title="${escHtml(u.github_id)}">${escHtml(u.github_id)}</span>
+          <span class="font-medium">${escHtml(u.login || '?')}</span>
+          ${u.email ? `<span class="text-gray-400 text-[10px]">${escHtml(u.email)}</span>` : ''}
+          <span class="text-[10px] px-1 rounded ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-200 text-gray-500'}">${escHtml(u.role || 'user')}</span>
+          ${u.created_at ? `<span class="text-gray-400 text-[10px]">${formatTime(u.created_at)}</span>` : ''}
+          ${banned ? `<span class="text-red-500 text-[10px]">原因: ${escHtml(u.banned_reason || '未说明')}</span>` : ''}
+          <button data-gid="${escHtml(u.github_id)}" data-banned="${banned}" class="btn-toggle-user-ban ml-auto text-[10px] px-2 py-0.5 text-white rounded ${banCls}">${banLabel}</button>
+        </div>`;
+      }).join('') + '</div>';
+    document.querySelectorAll('.btn-toggle-user-ban').forEach(b => {
+      b.addEventListener('click', () => toggleUserBan(b.dataset.gid, b.dataset.banned === 'true'));
+    });
+  } catch (e) { $('user-list').textContent = '失败: ' + e.message; }
+}
+
+async function toggleUserBan(githubId, currentlyBanned) {
+  if (currentlyBanned) {
+    if (!confirm('确定解封用户 ' + githubId + ' ？')) return;
+    await api('POST', '/api/admin/users/unban', { github_id: githubId });
+  } else {
+    const reason = prompt('封禁原因（可选）：');
+    if (reason === null) return;
+    await api('POST', '/api/admin/users/ban', { github_id: githubId, reason: reason || '' });
+  }
+  loadUsers();
+}
+
 let bannedSet = new Set();
+let onlineGithubIds = new Set();
 async function refreshBannedSet() {
   try {
     const d = await api('GET', '/api/admin/bans');
@@ -519,7 +701,8 @@ async function refreshBannedSet() {
   } catch {}
 }
 
-const recentState = { loaded: 0, total: 0, pageSize: 60 };
+const recentState = { loaded: 0, total: 0, pageSize: 5 };
+const featuredState = { loaded: 0, total: 0, pageSize: 5, allItems: [] };
 let featuredSet = new Set();
 
 function rowHTML(it) {
@@ -593,9 +776,20 @@ async function removeFeatured(path) {
 }
 
 function renderFeatured(items) {
-  $('featured-count').textContent = items.length;
+  // 存储全部精选列表，保持当前已显示数量不重置
+  const prevLoaded = featuredState.loaded || featuredState.pageSize;
+  featuredState.allItems = items || [];
+  featuredState.total = featuredState.allItems.length;
+  featuredState.loaded = Math.min(prevLoaded, featuredState.total);
+  _renderFeaturedSlice();
+}
+
+function _renderFeaturedSlice() {
+  const items = featuredState.allItems.slice(0, featuredState.loaded);
+  $('featured-count').textContent = featuredState.total;
   if (!items.length) {
     $('featured-list').innerHTML = '<div class="text-gray-400">还没添加任何精选图。在下面「生图记录」里点 ☆ 加入精选。</div>';
+    $('btn-load-more-featured').classList.add('hidden');
     return;
   }
   $('featured-list').innerHTML = '<div id="featured-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">' +
@@ -626,6 +820,17 @@ function renderFeatured(items) {
       featuredSet = new Set(d.items || []);
     });
   });
+  // 加载更多按钮
+  if (featuredState.loaded >= featuredState.total) {
+    $('btn-load-more-featured').classList.add('hidden');
+  } else {
+    $('btn-load-more-featured').classList.remove('hidden');
+  }
+}
+
+function loadMoreFeatured() {
+  featuredState.loaded = Math.min(featuredState.loaded + 10, featuredState.total);
+  _renderFeaturedSlice();
 }
 
 async function loadFeatured() {
@@ -645,7 +850,8 @@ async function loadRecent(reset = true) {
   try {
     await refreshBannedSet();
     await refreshFeaturedSet();
-    const d = await api('GET', `/api/admin/recent?limit=${recentState.pageSize}&offset=${recentState.loaded}`);
+    const limit = reset ? recentState.pageSize : 10;
+    const d = await api('GET', `/api/admin/recent?limit=${limit}&offset=${recentState.loaded}`);
     const items = d.items || [];
     recentState.total = d.total || 0;
     if (reset) {
@@ -732,6 +938,7 @@ async function saveLimits() {
 }
 
 $('btn-refresh-bans').addEventListener('click', loadBans);
+$('btn-refresh-users').addEventListener('click', loadUsers);
 $('btn-refresh-recent').addEventListener('click', () => loadRecent(true));
 $('btn-refresh-featured').addEventListener('click', loadFeatured);
 $('btn-refresh-limits').addEventListener('click', loadLimits);
@@ -801,7 +1008,7 @@ function renderResEntries() {
       <span class="text-gray-400">×</span>
       <input type="number" value="${p.h}" min="64" step="8" placeholder="高"
         class="res-h w-20 border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
-      <input type="text" value="${(p.label || '').replace(/"/g, '&quot;')}" placeholder="标签（可选）"
+      <input type="text" value="${escHtml(p.label || '')}" placeholder="标签（可选）"
         class="res-label flex-1 border rounded px-2 py-1 text-xs" data-idx="${i}" />
       <button class="res-up text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
       <button class="res-down text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === adminRes.presets.length - 1 ? 'disabled' : ''}>▼</button>
@@ -868,6 +1075,28 @@ $('btn-refresh-res').addEventListener('click', loadRes);
 
 loadRes();
 
+// 缩略图前端压缩为 256x256 JPEG（减小传输体积，后端会二次校验）
+async function resizeImageTo256(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, 256, 256);
+      canvas.toBlob(blob => {
+        if (blob) resolve(new File([blob], file.name.replace(/\.\w+$/i, '.jpg'), { type: 'image/jpeg' }));
+        else reject(new Error('缩略图生成失败'));
+      }, 'image/jpeg', 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')); };
+    img.src = url;
+  });
+}
+
 // -------- 画风管理 --------
 let adminStyles = [];
 
@@ -888,8 +1117,8 @@ function renderStyleEntries() {
       </div>
       <div class="flex flex-col gap-1 flex-1 text-sm">
         <textarea rows="2" placeholder="英文 tags（必填，逗号分隔）"
-          class="style-tags border rounded px-2 py-1 font-mono text-xs" data-idx="${i}">${s.tags.replace(/</g, '&lt;')}</textarea>
-        <input type="text" value="${s.name.replace(/"/g, '&quot;')}" placeholder="别名（可选，不填则显示 tags）"
+          class="style-tags border rounded px-2 py-1 font-mono text-xs" data-idx="${i}">${escHtml(s.tags)}</textarea>
+        <input type="text" value="${escHtml(s.name)}" placeholder="别名（可选，不填则显示 tags）"
           class="style-name border rounded px-2 py-1" data-idx="${i}" />
       </div>
       <div class="flex flex-col gap-1">
@@ -911,12 +1140,16 @@ function renderStyleEntries() {
       if (!file) return;
       const idx = +el.dataset.idx;
       const form = new FormData();
-      form.append('file', file);
+      try {
+        const compressed = await resizeImageTo256(file);
+        form.append('file', compressed, compressed.name);
+      } catch(e) { $('styles-status').textContent = '压缩失败: ' + e.message; return; }
       try {
         const r = await fetch('/api/admin/style_thumbnail', { method: 'POST', body: form });
         if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
         const d = await r.json();
-        adminStyles[idx].image = d.filename;
+        const entry = adminStyles[idx];
+        if (entry) { entry.image = d.filename; }
         renderStyleEntries();
         autoSaveStyles();
       } catch (e) { $('styles-status').textContent = '上传失败: ' + e.message; }
@@ -952,8 +1185,7 @@ async function loadStyles() {
 let _saveStylesTimer = null;
 async function saveStyles() {
   try {
-    const d = await api('POST', '/api/admin/styles', { styles: adminStyles });
-    adminStyles = (d.styles || []).map(s => ({name: s.name || '', tags: s.tags || '', image: s.image || ''}));
+    await api('POST', '/api/admin/styles', { styles: adminStyles });
     $('styles-status').textContent = '✓ 已保存';
     setTimeout(() => { $('styles-status').textContent = ''; }, 2000);
   } catch (e) { $('styles-status').textContent = '保存失败: ' + e.message; }
@@ -981,7 +1213,7 @@ let adminWfMeta = [];
 function renderWfMetaEntries() {
   const container = $('wfmeta-entries');
   container.innerHTML = adminWfMeta.map((m, i) => {
-    const thumbSrc = m.thumbnail ? `/api/thumbnail?path=${encodeURIComponent(m.workflow)}` : '';
+    const thumbSrc = m.thumbnail ? `/api/thumbnail?path=${encodeURIComponent(m.workflow)}&_t=${encodeURIComponent(m.thumbnail)}` : '';
     const thumbEl = m.thumbnail
       ? `<img src="${thumbSrc}" class="w-12 h-12 object-cover rounded bg-gray-50" />`
       : `<div class="w-12 h-12 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">无图</div>`;
@@ -995,13 +1227,13 @@ function renderWfMetaEntries() {
       </div>
       <div class="flex flex-col gap-1 flex-1 text-sm min-w-0">
         <div class="flex items-center gap-1">
-          <input type="text" value="${m.workflow.replace(/\.json$/i, '').replace(/"/g, '&quot;')}" placeholder="工作流名称"
+          <input type="text" value="${escHtml(m.workflow.replace(/\.json$/i, ''))}" placeholder="工作流名称"
             class="wfmeta-workflow flex-1 min-w-0 border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
           <span class="text-xs text-gray-400">.json</span>
         </div>
-        <input type="text" value="${(m.lora_link || '').replace(/"/g, '&quot;')}" placeholder="Lora 链接 URL（可选）"
+        <input type="text" value="${escHtml(m.lora_link || '')}" placeholder="Lora 链接 URL（可选）"
           class="wfmeta-link border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
-        <input type="text" value="${(m.category || '').replace(/"/g, '&quot;')}" placeholder="分类（可选，如「蔚蓝档案」）"
+        <input type="text" value="${escHtml(m.category || '')}" placeholder="分类（可选，如「蔚蓝档案」）"
           class="wfmeta-category border rounded px-2 py-1 text-xs" data-idx="${i}" />
       </div>
       <div class="flex flex-col gap-1">
@@ -1042,7 +1274,10 @@ function renderWfMetaEntries() {
       if (!file) return;
       const idx = +el.dataset.idx;
       const form = new FormData();
-      form.append('file', file);
+      try {
+        const compressed = await resizeImageTo256(file);
+        form.append('file', compressed, compressed.name);
+      } catch(e) { $('wfmeta-status').textContent = '压缩失败: ' + e.message; return; }
       try {
         const r = await fetch('/api/admin/wf_thumbnail', { method: 'POST', body: form });
         if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
@@ -1135,8 +1370,8 @@ function renderCatUI() {
   const chips = $('wfmeta-cat-chips');
   chips.innerHTML = cats.map(c => {
     const sel = c === _selectedCat;
-    return `<span class="wfmeta-cat-chip cursor-grab text-xs px-2 py-0.5 rounded ${sel ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}" draggable="true" data-cat="${c.replace(/"/g, '&quot;')}">${c}
-      <button class="wfmeta-cat-del ml-1 text-[10px] opacity-60 hover:opacity-100" data-cat="${c.replace(/"/g, '&quot;')}">✕</button>
+    return `<span class="wfmeta-cat-chip cursor-grab text-xs px-2 py-0.5 rounded ${sel ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}" draggable="true" data-cat="${escHtml(c)}">${c}
+      <button class="wfmeta-cat-del ml-1 text-[10px] opacity-60 hover:opacity-100" data-cat="${escHtml(c)}">✕</button>
     </span>`;
   }).join('');
   let dragChip = null;
@@ -1204,7 +1439,7 @@ function renderCatUI() {
       incatDiv.classList.remove('hidden');
       incatList.innerHTML = incat.map(m => {
         const name = m.workflow.replace(/\.json$/i, '');
-        return `<span class="wfmeta-remove cursor-pointer text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-800 hover:bg-red-100 hover:text-red-800" data-wf="${m.workflow.replace(/"/g, '&quot;')}">${name} ✕</span>`;
+        return `<span class="wfmeta-remove cursor-pointer text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-800 hover:bg-red-100 hover:text-red-800" data-wf="${escHtml(m.workflow)}">${escHtml(name)} ✕</span>`;
       }).join('');
       incatList.querySelectorAll('.wfmeta-remove').forEach(el => {
         el.addEventListener('click', () => {
@@ -1224,7 +1459,7 @@ function renderCatUI() {
       uncatDiv.classList.remove('hidden');
       uncatList.innerHTML = uncat.map(m => {
         const name = m.workflow.replace(/\.json$/i, '');
-        return `<span class="wfmeta-assign cursor-pointer text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 hover:bg-amber-200" data-wf="${m.workflow.replace(/"/g, '&quot;')}">${name}</span>`;
+        return `<span class="wfmeta-assign cursor-pointer text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 hover:bg-amber-200" data-wf="${escHtml(m.workflow)}">${escHtml(name)}</span>`;
       }).join('');
       uncatList.querySelectorAll('.wfmeta-assign').forEach(el => {
         el.addEventListener('click', () => {
@@ -1381,7 +1616,7 @@ $('btn-models-llm').addEventListener('click', async () => {
     }
     $('llm-status').textContent = `发现 ${models.length} 个模型`;
     list.innerHTML = models.map(m =>
-      `<div class="flex items-center justify-between py-0.5 border-b last:border-0 cursor-pointer hover:bg-blue-50 px-1 rounded" data-model-id="${m.id}"><span>${m.name || m.id}</span><span class="text-[10px] text-gray-400">${m.id}</span></div>`
+      `<div class="flex items-center justify-between py-0.5 border-b last:border-0 cursor-pointer hover:bg-blue-50 px-1 rounded" data-model-id="${escHtml(m.id)}"><span>${escHtml(m.name || m.id)}</span><span class="text-[10px] text-gray-400">${escHtml(m.id)}</span></div>`
     ).join('');
     list.classList.remove('hidden');
     list.querySelectorAll('[data-model-id]').forEach(el => {
@@ -1399,10 +1634,12 @@ $('btn-models-llm').addEventListener('click', async () => {
 
 loadLLM();
 $('btn-load-more-recent').addEventListener('click', () => loadRecent(false));
+$('btn-load-more-featured').addEventListener('click', () => loadMoreFeatured());
 $('btn-add-ban').addEventListener('click', () => ban($('ban-input').value.trim()));
 $('ban-input').addEventListener('keydown', e => { if (e.key === 'Enter') ban($('ban-input').value.trim()); });
 
 // 折叠：点击带 data-toggle 的标题，切换对应 id 的显隐 + 箭头
+const _toggleLoaded = {};
 document.querySelectorAll('[data-toggle]').forEach(h => {
   h.addEventListener('click', e => {
     // 点到右侧的「刷新」按钮等不触发折叠
@@ -1413,6 +1650,12 @@ document.querySelectorAll('[data-toggle]').forEach(h => {
     const arrow = document.querySelector(`[data-arrow="${id}"]`);
     const collapsed = body.classList.toggle('hidden');
     if (arrow) arrow.textContent = collapsed ? '▸' : '▾';
+    // 首次展开时懒加载
+    if (!collapsed && !_toggleLoaded[id]) {
+      _toggleLoaded[id] = true;
+      if (id === 'access-keys-body') loadAccessKeys();
+      if (id === 'gen-logs-body') loadGenLogs();
+    }
   });
 });
 
@@ -1605,6 +1848,19 @@ function showLightbox() {
   $('lb-title').textContent = name;
   $('lb-time').textContent = it.mtime ? new Date(it.mtime * 1000).toLocaleString('zh-CN') : '';
   $('lb-creator').textContent = it.ip ? ('IP: ' + it.ip) : '';
+  $('lb-gh-user').classList.add('hidden');
+  $('lb-ban-user').classList.add('hidden');
+  // 异步查 GitHub 用户信息
+  if (it.path) {
+    api('GET', '/api/output/creator?path=' + encodeURIComponent(it.path)).then(d => {
+      if (d.github_id) {
+        $('lb-gh-user').textContent = 'GitHub: ' + (d.github_login || d.github_id) + (d.github_email ? ' <' + d.github_email + '>' : '');
+        $('lb-gh-user').classList.remove('hidden');
+        $('lb-ban-user').dataset.githubId = d.github_id;
+        $('lb-ban-user').classList.remove('hidden');
+      }
+    }).catch(() => {});
+  }
   $('lb-download').href = it.url + (it.url.includes('?') ? '&' : '?') + 'full=1';
   $('lb-root').classList.add('open');
   document.body.style.overflow = 'hidden';
@@ -1631,6 +1887,17 @@ document.addEventListener('click', (e) => {
 $('lb-close').addEventListener('click', closeLightbox);
 $('lb-prev').addEventListener('click', () => { lbState.index = (lbState.index - 1 + lbState.items.length) % lbState.items.length; showLightbox(); });
 $('lb-next').addEventListener('click', () => { lbState.index = (lbState.index + 1) % lbState.items.length; showLightbox(); });
+$('lb-ban-user').addEventListener('click', async () => {
+  const gid = $('lb-ban-user').dataset.githubId;
+  if (!gid) return;
+  const reason = prompt('封禁原因（可选）：');
+  if (reason === null) return; // 用户取消
+  try {
+    await api('POST', '/api/admin/users/ban', { github_id: gid, reason: reason || '' });
+    alert('已封禁用户 ' + gid);
+    $('lb-ban-user').classList.add('hidden');
+  } catch (e) { alert('封禁失败: ' + e.message); }
+});
 
 $('lb-img-wrap').addEventListener('click', (e) => { if (e.target === $('lb-img-wrap')) closeLightbox(); });
 $('lb-root').addEventListener('click', (e) => { if (e.target === $('lb-root')) closeLightbox(); });
@@ -1724,9 +1991,472 @@ loadCustomHead();
 
 loadLimits();
 loadBans();
+loadUsers();
 loadReports();
 loadFeatured();
 loadRecent(true);
+
+// -------- 队列管理 --------
+let _queueTimer = null;
+
+async function loadQueue() {
+  try {
+    const d = await api('GET', '/api/admin/queue');
+    const badge = $('queue-badge');
+    const content = $('queue-content');
+    const btn = $('btn-cancel-task');
+    const unlockBtn = $('btn-force-unlock');
+
+    // 在线用户
+    const onlineCount = d.online_count || 0;
+    const onlineUsers = d.online_users || [];
+    onlineGithubIds = new Set(onlineUsers.map(u => u.github_id));
+    $('online-count').textContent = onlineCount;
+    $('online-list').textContent = onlineUsers.map(u => u.login).join(', ');
+    // 同步更新用户管理列表中的在线状态灯
+    const userRows = document.querySelectorAll('#user-list .btn-toggle-user-ban');
+    userRows.forEach(btn => {
+      const gid = btn.dataset.gid;
+      const dot = btn.parentElement.querySelector('span.rounded-full');
+      if (!dot) return;
+      if (onlineGithubIds.has(gid)) {
+        dot.classList.remove('bg-gray-300'); dot.classList.add('bg-green-500');
+        dot.title = '在线';
+      } else {
+        dot.classList.remove('bg-green-500'); dot.classList.add('bg-gray-300');
+        dot.title = '离线';
+      }
+    });
+
+    // 排队列表
+    const queue = d.queue || [];
+    let queueHtml = '';
+
+    // 当前执行中
+    if (d.busy) {
+      badge.textContent = '执行中';
+      badge.className = 'ml-2 text-xs px-2 py-0.5 rounded bg-yellow-500 text-white';
+      const t = d.current_task || {};
+      const started = t.started_at ? new Date(t.started_at * 1000).toLocaleTimeString() : '?';
+      const elapsed = t.started_at ? Math.floor((Date.now() / 1000) - t.started_at) + 's' : '?';
+      const login = t.login || '';
+      const githubId = t.github_id || '';
+      const userLabel = login ? (login + (githubId ? ' (#' + githubId + ')' : '')) : (githubId || '?');
+      queueHtml +=
+        '<div class="bg-yellow-50 rounded px-2 py-1.5 mb-2 border border-yellow-200">' +
+        '<div class="flex items-center gap-2 flex-wrap">' +
+        '<span class="font-semibold text-yellow-700">&#x1F534 正在生成</span>' +
+        '<span class="text-xs font-medium text-gray-700">' + escHtml(userLabel) + '</span>' +
+        '<span class="text-xs text-gray-500">' + escHtml(t.workflow || '?') + '</span>' +
+        '<span class="text-[10px] text-gray-400">' + started + ' (' + elapsed + ')</span>' +
+        '<span class="text-[10px] text-gray-400">IP: ' + escHtml(t.client_ip || '?') + '</span>' +
+        '</div>' +
+        '<div class="text-[10px] text-gray-500 mt-0.5">提示词: ' + escHtml((t.final_prompt || '?').substring(0, 80)) + '</div>' +
+        '</div>';
+      if (d.cancel_set) {
+        btn.className = 'px-3 py-1 bg-gray-400 text-white rounded text-sm';
+        btn.textContent = '取消中...';
+        btn.disabled = true;
+      } else {
+        btn.className = 'px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm';
+        btn.textContent = '⏹ 取消当前任务';
+        btn.disabled = false;
+      }
+      btn.classList.remove('hidden');
+      unlockBtn.classList.remove('hidden');
+    } else {
+      badge.textContent = '空闲';
+      badge.className = 'ml-2 text-xs px-2 py-0.5 rounded bg-green-500 text-white';
+      if (queue.length === 0) {
+        queueHtml += '<div class="text-green-600">&#x2705 GPU 空闲，无排队</div>';
+      }
+      btn.classList.add('hidden');
+      unlockBtn.classList.remove('hidden');
+    }
+
+    // 排队中任务列表
+    const waitingItems = queue.filter(q => q.status === 'waiting');
+    if (waitingItems.length > 0) {
+      if (!d.busy) {
+        queueHtml += '<div class="text-xs text-gray-500 mb-1">排队中 (' + waitingItems.length + ' 个)：</div>';
+      } else {
+        queueHtml += '<div class="text-xs text-gray-500 mt-2 mb-1">排队中 (' + waitingItems.length + ' 个)：</div>';
+      }
+      waitingItems.forEach((q, i) => {
+        const created = q.created_at ? new Date(q.created_at * 1000).toLocaleTimeString() : '?';
+        queueHtml +=
+          '<div class="flex items-center gap-2 bg-gray-50 rounded px-2 py-1 text-[10px] mb-0.5">' +
+          '<span class="text-gray-400 w-6">#' + (i + 1) + '</span>' +
+          '<span class="font-medium">' + escHtml(q.login || q.github_id) + '</span>' +
+          '<span class="text-gray-400">' + escHtml((q.workflow || '?').substring(0, 30)) + '</span>' +
+          '<span class="text-gray-400 ml-auto">' + created + '</span>' +
+          '<button class="ak-cancel-q text-[9px] px-1.5 py-0.5 bg-red-400 text-white rounded hover:bg-red-500" data-id="' + escHtml(String(q.id)) + '">取消</button>' +
+          '</div>';
+      });
+    }
+
+    content.innerHTML = queueHtml || '<div class="text-gray-400">加载中...</div>';
+
+    // 绑定排队取消按钮
+    content.querySelectorAll('.ak-cancel-q').forEach(btn => {
+      btn.addEventListener('click', () => cancelQueueItem(parseInt(btn.dataset.id)));
+    });
+
+    $('queue-status').textContent = '';
+  } catch (e) {
+    $('queue-content').textContent = '加载失败: ' + e.message;
+    $('queue-status').textContent = '';
+  }
+}
+
+async function cancelQueueItem(itemId) {
+  if (!confirm('确定取消此排队任务？')) return;
+  try {
+    await api('POST', '/api/admin/queue/cancel', { item_id: itemId });
+    $('queue-status').textContent = '已取消';
+    await loadQueue();
+    setTimeout(() => { $('queue-status').textContent = ''; }, 3000);
+  } catch (e) {
+    $('queue-status').textContent = '取消失败: ' + e.message;
+    setTimeout(() => { $('queue-status').textContent = ''; }, 3000);
+  }
+}
+
+async function cancelTask() {
+  if (!confirm('确定要强制取消当前正在执行的任务吗？')) return;
+  try {
+    const d = await api('POST', '/api/admin/queue/cancel');
+    $('queue-status').textContent = '✓ ' + d.message;
+    await loadQueue();
+    setTimeout(() => { $('queue-status').textContent = ''; }, 5000);
+  } catch (e) {
+    $('queue-status').textContent = '取消失败: ' + e.message;
+    setTimeout(() => { $('queue-status').textContent = ''; }, 5000);
+  }
+}
+
+async function forceUnlock() {
+  if (!confirm('确定要强制解锁吗？\n\n仅用于 WebSocket 异常导致锁卡死的情况。如果确实有任务在执行，请先用"取消当前任务"。')) return;
+  try {
+    const d = await api('POST', '/api/admin/queue/force-unlock');
+    $('queue-status').textContent = '✓ ' + d.message;
+    await loadQueue();
+    setTimeout(() => { $('queue-status').textContent = ''; }, 5000);
+  } catch (e) {
+    $('queue-status').textContent = '强制解锁失败: ' + e.message;
+    setTimeout(() => { $('queue-status').textContent = ''; }, 5000);
+  }
+}
+
+function startQueuePolling() {
+  loadQueue();
+  if (_queueTimer) clearInterval(_queueTimer);
+  _queueTimer = setInterval(loadQueue, 5000);
+}
+
+$('btn-refresh-queue').addEventListener('click', loadQueue);
+$('btn-cancel-task').addEventListener('click', cancelTask);
+$('btn-force-unlock').addEventListener('click', forceUnlock);
+
+startQueuePolling();
+
+// ==================== 图片管理 ====================
+const imagesState = { total: 0, loaded: 0, pageSize: 30 };
+const imagesSelected = new Set();
+
+async function loadImages(reset = true) {
+  if (reset) { imagesState.loaded = 0; $('images-grid').innerHTML = ''; imagesSelected.clear(); updateImagesDelBtn(); }
+  try {
+    const d = await api('GET', `/api/admin/images?limit=${imagesState.pageSize}&offset=${imagesState.loaded}`);
+    imagesState.total = d.total || 0;
+    $('images-total').textContent = imagesState.total;
+    if (!d.items || !d.items.length) {
+      if (reset) { $('images-empty').classList.remove('hidden'); $('images-grid').classList.add('hidden'); }
+      $('btn-load-more-images').classList.add('hidden');
+      $('images-shown').textContent = imagesState.loaded;
+      return;
+    }
+    $('images-empty').classList.add('hidden');
+    $('images-grid').classList.remove('hidden');
+    const frag = document.createDocumentFragment();
+    d.items.forEach(it => {
+      const url = '/api/output/file?path=' + encodeURIComponent(it.path);
+      const safe = escHtml(it.path);
+      const ip = it.creator_ip ? `IP: ${escHtml(it.creator_ip)}` : '';
+      const gh = it.github_user ? ` | GH: ${escHtml(it.github_user)}` : '';
+      const info = (ip + gh) || '&nbsp;';
+      const wrapper = document.createElement('div');
+      wrapper.className = 'relative border rounded p-1 bg-gray-50';
+      wrapper.setAttribute('data-img-path', safe);
+      wrapper.innerHTML =
+        `<input type="checkbox" class="img-mgr-check absolute top-0.5 left-0.5 w-4 h-4 cursor-pointer z-10" data-path="${safe}" />
+        <img src="${escHtml(url)}" loading="lazy" decoding="async"
+          class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer"
+          data-path="${safe}" data-mtime="${it.mtime || ''}" data-ip="${it.creator_ip || ''}" />
+        <div class="text-[9px] text-gray-500 mt-0.5 truncate" title="${safe}">${safe.split('/').pop()}</div>
+        <div class="text-[8px] text-gray-400 truncate">${info}</div>`;
+      const cb = wrapper.querySelector('.img-mgr-check');
+      cb.addEventListener('change', () => {
+        if (cb.checked) imagesSelected.add(cb.dataset.path);
+        else imagesSelected.delete(cb.dataset.path);
+        updateImagesDelBtn();
+      });
+      frag.appendChild(wrapper);
+    });
+    $('images-grid').appendChild(frag);
+    imagesState.loaded += d.items.length;
+    $('images-shown').textContent = imagesState.loaded;
+    $('btn-load-more-images').classList.toggle('hidden', imagesState.loaded >= imagesState.total);
+  } catch (e) {
+    if (reset) { $('images-empty').classList.remove('hidden'); $('images-empty').textContent = '加载失败: ' + e.message; }
+  }
+}
+
+function updateImagesDelBtn() {
+  const btn = $('btn-images-del-selected');
+  if (imagesSelected.size > 0) {
+    btn.classList.remove('hidden');
+    btn.textContent = `🗑 删除选中 (${imagesSelected.size})`;
+  } else {
+    btn.classList.add('hidden');
+  }
+}
+
+$('btn-images-select-all').addEventListener('click', () => {
+  const checks = $('images-grid').querySelectorAll('.img-mgr-check');
+  const allChecked = Array.from(checks).every(c => c.checked);
+  checks.forEach(c => {
+    c.checked = !allChecked;
+    if (c.checked) imagesSelected.add(c.dataset.path);
+    else imagesSelected.delete(c.dataset.path);
+  });
+  updateImagesDelBtn();
+});
+
+$('btn-images-del-selected').addEventListener('click', async () => {
+  if (!imagesSelected.size) return;
+  if (!confirm(`确定删除选中的 ${imagesSelected.size} 张图片？标记后 30 秒内后台静默删除磁盘文件。`)) return;
+  const paths = Array.from(imagesSelected);
+  try {
+    await api('POST', '/api/admin/mark_delete_batch', { paths });
+    paths.forEach(p => {
+      const card = $('images-grid').querySelector(`[data-img-path="${CSS.escape(p)}"]`);
+      if (card) card.remove();
+    });
+    imagesSelected.clear();
+    updateImagesDelBtn();
+    imagesState.total -= paths.length;
+    $('images-total').textContent = imagesState.total;
+    imagesState.loaded = $('images-grid').querySelectorAll('[data-img-path]').length;
+    $('images-shown').textContent = imagesState.loaded;
+    if (imagesState.loaded === 0 && imagesState.total === 0) {
+      $('images-empty').classList.remove('hidden');
+      $('images-grid').classList.add('hidden');
+    }
+    if (imagesState.loaded < imagesState.pageSize && imagesState.loaded < imagesState.total && imagesState.total > 0) {
+      loadImages(false);
+    }
+  } catch (e) { alert('删除失败: ' + e.message); }
+});
+
+$('btn-refresh-images').addEventListener('click', () => loadImages(true));
+$('btn-load-more-images').addEventListener('click', () => loadImages(false));
+
+// ==================== 访问密钥管理 ====================
+async function loadAccessKeys() {
+  $('access-keys-list').textContent = '加载中...';
+  try {
+    const d = await api('GET', '/api/admin/access-keys');
+    const items = d.items || [];
+    $('access-keys-count').textContent = items.length;
+    if (!items.length) {
+      $('access-keys-list').innerHTML = '<div class="text-gray-400">暂无密钥，请生成新密钥</div>';
+      return;
+    }
+    $('access-keys-list').innerHTML = '<div class="flex flex-col gap-1 max-h-96 overflow-y-auto">' +
+      items.map(it => {
+        const keyPreview = it.key_preview || '';
+        let statusHtml = '';
+        if (it.disabling) {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">禁用中…</span>';
+        } else if (it.disabled_at) {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-200 text-red-800 font-medium">已禁用</span>';
+        } else if (it.expired) {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-300 text-gray-700">已过期</span>';
+        } else if (it.used_by && (it.max_uses > 0) && (it.used_count >= it.max_uses)) {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-300 text-gray-700">次数用尽</span>';
+        } else if (it.used_by) {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">已使用</span>';
+        } else {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">可用</span>';
+        }
+        // 类型标签
+        let typeHtml = '';
+        if (it.max_uses > 0 && it.expires_at > 0) {
+          typeHtml = '<span class="text-[9px] px-1 py-0 rounded bg-purple-50 text-purple-600">时间+次数</span>';
+        } else if (it.max_uses > 0) {
+          typeHtml = '<span class="text-[9px] px-1 py-0 rounded bg-orange-50 text-orange-600">按次数</span>';
+        } else {
+          typeHtml = '<span class="text-[9px] px-1 py-0 rounded bg-cyan-50 text-cyan-600">按时间</span>';
+        }
+        // 次数信息
+        let usesHtml = '';
+        if (it.max_uses > 0) {
+          usesHtml = '<span class="text-[9px] text-gray-400">' + it.used_count + '/' + it.max_uses + '次</span>';
+        }
+        const created = it.created_at ? formatTime(it.created_at) : '?';
+        const expires = it.expires_at ? formatTime(it.expires_at) : (it.max_uses > 0 ? '不限' : '永久');
+        const userInfo = it.used_by ? ('<span class="text-[10px] text-gray-600">' + escHtml(it.login || it.used_by) + '</span>') : '';
+        let actions = '<button class="ak-copy-key text-[10px] px-2 py-0.5 bg-blue-500 text-white rounded hover:bg-blue-600 mr-1" data-key="' + escHtml(keyPreview) + '">复制密钥</button>';
+        if (it.disabling || it.disabled_at) {
+          actions += '<button class="ak-enable text-[10px] px-2 py-0.5 bg-emerald-500 text-white rounded hover:bg-emerald-600" data-key="' + escHtml(keyPreview) + '">重新启用</button>';
+        } else {
+          actions += '<button class="ak-delete text-[10px] px-2 py-0.5 bg-red-500 text-white rounded hover:bg-red-600" data-key="' + escHtml(keyPreview) + '">禁用</button>';
+        }
+        return '<div class="flex items-center gap-2 bg-gray-50 rounded px-2 py-1.5">' +
+          '<code class="text-[10px] font-mono text-gray-700 flex-1 min-w-0 truncate" title="' + escHtml(keyPreview) + '">' + escHtml(keyPreview) +
+          '</code>' +
+          statusHtml +
+          typeHtml +
+          userInfo +
+          usesHtml +
+          '<span class="text-[9px] text-gray-400">创建:' + created + '</span>' +
+          '<span class="text-[9px] text-gray-400">过期:' + expires + '</span>' +
+          actions +
+          '</div>';
+      }).join('') + '</div>';
+    // 禁用密钥
+    $('access-keys-list').querySelectorAll('.ak-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('确定禁用此密钥？2 秒后正式生效，用户将无法继续使用。')) return;
+        try {
+          await api('POST', '/api/admin/access-keys/delete', { key_preview: btn.dataset.key });
+          $('access-keys-status').textContent = '✓ 已禁用（2 秒后正式生效）';
+          setTimeout(() => { $('access-keys-status').textContent = ''; }, 3000);
+          loadAccessKeys();
+        } catch (e) { alert('操作失败: ' + e.message); }
+      });
+    });
+    // 复制完整密钥
+    $('access-keys-list').querySelectorAll('.ak-copy-key').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          const d = await api('POST', '/api/admin/access-keys/reveal', { key_preview: btn.dataset.key });
+          if (d.key) {
+            await navigator.clipboard.writeText(d.key);
+            $('access-keys-status').textContent = '✓ 完整密钥已复制到剪贴板';
+            setTimeout(() => { $('access-keys-status').textContent = ''; }, 2000);
+          }
+        } catch (e) { alert('获取密钥失败: ' + e.message); }
+      });
+    });
+    // 重新启用密钥
+    $('access-keys-list').querySelectorAll('.ak-enable').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('确定重新启用此密钥？')) return;
+        try {
+          await api('POST', '/api/admin/access-keys/enable', { key_preview: btn.dataset.key });
+          $('access-keys-status').textContent = '✓ 已重新启用';
+          setTimeout(() => { $('access-keys-status').textContent = ''; }, 2000);
+          loadAccessKeys();
+        } catch (e) { alert('操作失败: ' + e.message); }
+      });
+    });
+  } catch (e) {
+    $('access-keys-list').textContent = '加载失败: ' + e.message;
+  }
+}
+
+$('btn-refresh-access-keys').addEventListener('click', loadAccessKeys);
+// 类型切换：显示/隐藏时间和次数行
+$('ak-gen-type').addEventListener('change', () => {
+  const t = $('ak-gen-type').value;
+  $('ak-gen-time-row').classList.toggle('hidden', t === 'count');
+  $('ak-gen-count-row').classList.toggle('hidden', t === 'time');
+});
+$('btn-gen-access-keys').addEventListener('click', async () => {
+  const count = parseInt($('ak-gen-count').value) || 1;
+  const type = $('ak-gen-type').value;
+  const days = parseInt($('ak-gen-days').value) || 0;
+  const hours = parseInt($('ak-gen-hours').value) || 0;
+  const mins = parseInt($('ak-gen-mins').value) || 0;
+  const max_uses_parsed = parseInt($('ak-gen-max-uses').value);
+  const max_uses = isNaN(max_uses_parsed) ? 50 : max_uses_parsed;
+  if (type !== 'count' && days === 0 && hours === 0 && mins === 0) { alert('请设置有效期'); return; }
+  if (type !== 'time' && max_uses <= 0) { alert('请设置使用次数'); return; }
+  try {
+    const d = await api('POST', '/api/admin/access-keys/generate', { count, type, days, hours, mins, max_uses });
+    const fullKeys = d.keys || [];
+    // 在列表顶部临时展示完整密钥（可点击复制）
+    let keysHtml = '<div class="bg-green-50 border border-green-300 rounded p-2 mb-2">' +
+      '<div class="text-xs font-semibold text-green-800 mb-1">✓ 已生成 ' + fullKeys.length + ' 个密钥（点击复制，刷新后消失）:</div>';
+    fullKeys.forEach(k => {
+      keysHtml += '<code class="ak-full-key block text-[10px] font-mono text-green-900 bg-white rounded px-2 py-1 mb-1 cursor-pointer hover:bg-green-100 select-all" title="点击复制完整密钥">' + escHtml(k) + '</code>';
+    });
+    keysHtml += '</div>';
+    $('access-keys-list').insertAdjacentHTML('afterbegin', keysHtml);
+    $('access-keys-list').querySelectorAll('.ak-full-key').forEach(el => {
+      el.addEventListener('click', () => {
+        navigator.clipboard.writeText(el.textContent).then(() => {
+          $('access-keys-status').textContent = '✓ 已复制到剪贴板';
+          setTimeout(() => { $('access-keys-status').textContent = ''; }, 2000);
+        }).catch(() => {});
+      });
+    });
+    $('access-keys-status').textContent = '✓ 已生成 ' + fullKeys.length + ' 个密钥';
+    setTimeout(() => { $('access-keys-status').textContent = ''; }, 5000);
+    loadAccessKeys();
+  } catch (e) { $('access-keys-status').textContent = '生成失败: ' + e.message; }
+});
+
+// ==================== 生图日志 ====================
+async function loadGenLogs() {
+  $('gen-logs-list').textContent = '加载中...';
+  try {
+    const d = await api('GET', '/api/admin/gen-logs?limit=100');
+    const items = d.items || [];
+    $('gen-logs-count').textContent = d.total || 0;
+    if (!items.length) {
+      $('gen-logs-list').innerHTML = '<div class="text-gray-400">暂无日志</div>';
+      return;
+    }
+    $('gen-logs-list').innerHTML = items.map(it => {
+      const t = new Date((it.created_at || 0) * 1000).toLocaleString('zh-CN');
+      const stColor = it.status === 'success' ? 'text-green-600' : 'text-red-600';
+      const stLabel = it.status === 'success' ? '✓' : '✗';
+      const loginInfo = escHtml(it.login || it.github_id || '?');
+      const promptText = escHtml((it.prompt || '').substring(0, 80));
+      const wf = escHtml((it.workflow || '').split('/').pop() || '-');
+      return `<div class="border-b border-gray-100 py-1.5 text-[10px]">
+        <div class="flex justify-between text-gray-400">
+          <span>${t}</span>
+          <span class="${stColor}">${stLabel} ${it.count}张</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-gray-700">👤 ${loginInfo}</span>
+          <span class="text-gray-400">📁 ${wf}</span>
+        </div>
+        <div class="text-gray-500 truncate">💬 ${promptText}</div>
+      </div>`;
+    }).join('');
+    $('gen-logs-status').textContent = '';
+  } catch (e) {
+    $('gen-logs-list').textContent = '加载失败: ' + e.message;
+  }
+}
+
+$('btn-refresh-gen-logs').addEventListener('click', loadGenLogs);
+$('btn-clear-gen-logs').addEventListener('click', async () => {
+  if (!confirm('确认清空所有生图日志？此操作不可恢复。')) return;
+  try {
+    await api('DELETE', '/api/admin/gen-logs');
+    $('gen-logs-status').textContent = '✓ 日志已清空';
+    loadGenLogs();
+  } catch (e) {
+    $('gen-logs-status').textContent = '清空失败: ' + e.message;
+  }
+});
+
 </script>
 </body>
 </html>
