@@ -2461,8 +2461,42 @@ async def _github_api(path: str, access_token: str = "") -> dict:
 
 # ---------------- routes ----------------
 
+_WELCOME_HTML = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>自然语言生图</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+<div class="bg-white rounded-xl shadow-lg max-w-md w-full p-8 text-center space-y-5">
+  <h1 class="text-2xl font-bold">自然语言生图</h1>
+  <p class="text-sm text-gray-600 leading-relaxed">
+    使用 ComfyUI + AI 大模型，将自然语言转换为精美图片
+  </p>
+  <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-left space-y-2">
+    <p class="text-sm font-semibold text-red-700">隐私提示</p>
+    <p class="text-xs text-red-600 leading-relaxed">
+      登录即表示同意本站收集你的 <strong>GitHub 用户名、邮箱</strong> 及 <strong>生图时 IP 地址</strong>，以上信息仅用于身份识别与生图溯源。
+    </p>
+  </div>
+  <a href="/auth/login"
+     class="block w-full bg-gray-900 text-white rounded-lg py-3 font-semibold hover:bg-gray-700 transition">
+    GitHub 登录
+  </a>
+  <p class="text-[10px] text-gray-400">
+    点击上方按钮将跳转至 GitHub 进行授权
+  </p>
+</div>
+</body>
+</html>"""
+
 @app.get("/")
 async def index(request: Request):
+    if not getattr(request.state, "user", None):
+        return Response(content=_WELCOME_HTML, media_type="text/html")
     return _serve_html(STATIC_DIR / "index.html")
 
 
