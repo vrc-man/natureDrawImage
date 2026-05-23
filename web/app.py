@@ -575,7 +575,12 @@ async def _save_custom_head(state: Dict[str, Any]) -> bool:
 
 import re as _re
 _CUSTOM_HEAD_DENY = _re.compile(
-    r"<\s*script[\s>/]|<\s*/\s*script|<\s*iframe[\s>]|<\s*object[\s>]|<\s*embed[\s>]",
+    r"<\s*script[\s>/]|<\s*/\s*script|<\s*iframe[\s>]|<\s*object[\s>]|<\s*embed[\s>]"
+    r"|<\s*svg[\s>]|<\s*/\s*svg"
+    r"|<\s*meta[\s>]"
+    r"|<\s*base[\s>]"
+    r"|<\s*style[\s>]|<\s*/\s*style"
+    r"|<\s*link[\s>][^>]*\brel\s*=\s*[\"']?\s*stylesheet",
     _re.IGNORECASE,
 )
 _CUSTOM_HEAD_ON_EVENT = _re.compile(r"[\s/>]on[a-z]+\s*=", _re.IGNORECASE)
@@ -765,56 +770,87 @@ _GOOGLE_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 
 # ========== API Key 加密存储 ==========
-# 加密密钥从环境变量 LLM_ENCRYPTION_KEY 读取，未设置则明文存储（向后兼容）
+# 使用 cryptography Fernet (AES-128-CBC + HMAC-SHA256)，密钥从环境变量 LLM_ENCRYPTION_KEY 派生。
+# 未设置环境变量时明文存储（向后兼容）。
+# 密文格式: "fernet:<base64>"；旧版 XOR 格式 "enc:<base64>" 自动兼容解密，保存时统一升级。
 
-def _derive_encryption_key() -> bytes:
-    """从环境变量派生 32 字节加密密钥。未设置返回空字节串（明文模式）。"""
+def _derive_encryption_key() -> Optional[bytes]:
+    """从环境变量派生 Fernet 密钥。未设置返回 None（明文模式）。"""
     env_key = os.environ.get("LLM_ENCRYPTION_KEY", "")
     if not env_key:
-        return b""
-    return hashlib.sha256(env_key.encode()).digest()
+        return None
+    try:
+        import base64 as _b64
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    except ImportError:
+        print("[WARN] cryptography 未安装，LLM API Key 将明文存储")
+        return None
+    hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=b"llm-api-key-v2")
+    return _b64.urlsafe_b64encode(hkdf.derive(env_key.encode()))
 
 
 def _encrypt_api_value(plaintext: str) -> str:
-    """加密 API Key。未配置密钥时返回明文（向后兼容）。"""
+    """使用 Fernet 加密 API Key。未配置密钥时返回明文（向后兼容）。"""
     if not plaintext:
         return plaintext
     key = _derive_encryption_key()
     if not key:
         return plaintext
-    import base64 as _b64
-    nonce = os.urandom(16)
-    plain_bytes = plaintext.encode("utf-8")
-    # 生成足够长的密钥流
-    rounds = (len(plain_bytes) // 32) + 1
-    key_stream = hashlib.sha256(nonce + key).digest() * rounds
-    cipher_bytes = bytes(p ^ k for p, k in zip(plain_bytes, key_stream[:len(plain_bytes)]))
-    return "enc:" + _b64.b64encode(nonce + cipher_bytes).decode()
+    try:
+        from cryptography.fernet import Fernet
+    except ImportError:
+        return plaintext
+    return "fernet:" + Fernet(key).encrypt(plaintext.encode()).decode()
+    return "fernet:" + Fernet(key).encrypt(plaintext.encode()).decode()
 
 
 def _decrypt_api_value(ciphertext: str) -> str:
-    """解密 API Key。不以 enc: 开头则视为明文直接返回。"""
-    if not ciphertext or not ciphertext.startswith("enc:"):
+    """解密 API Key。兼容旧版 enc: 格式和新版 fernet: 格式。"""
+    if not ciphertext:
         return ciphertext
-    key = _derive_encryption_key()
-    if not key:
-        return ciphertext  # 无密钥时无法解密，返回原文（会导致 LLM 调用失败，提示配置密钥）
-    import base64 as _b64
-    try:
-        raw = _b64.b64decode(ciphertext[4:])
-    except Exception:
-        return ciphertext
-    if len(raw) < 17:
-        return ciphertext
-    nonce = raw[:16]
-    cipher_bytes = raw[16:]
-    rounds = (len(cipher_bytes) // 32) + 1
-    key_stream = hashlib.sha256(nonce + key).digest() * rounds
-    plain_bytes = bytes(c ^ k for c, k in zip(cipher_bytes, key_stream[:len(cipher_bytes)]))
-    try:
-        return plain_bytes.decode("utf-8")
-    except Exception:
-        return ciphertext
+
+    # 新版 Fernet 加密
+    if ciphertext.startswith("fernet:"):
+        key = _derive_encryption_key()
+        if not key:
+            return ciphertext
+        try:
+            from cryptography.fernet import Fernet, InvalidToken
+        except ImportError:
+            print("[WARN] cryptography 未安装，无法解密 Fernet 密钥，返回密文")
+            return ciphertext
+        try:
+            return Fernet(key).decrypt(ciphertext[7:].encode()).decode()
+        except InvalidToken:
+            print("[WARN] Fernet 解密失败，密钥可能已更换，返回密文")
+            return ciphertext
+
+    # 旧版 XOR 加密（向后兼容）
+    if ciphertext.startswith("enc:"):
+        key = _derive_encryption_key()
+        if not key:
+            return ciphertext
+        import base64 as _b64
+        import hashlib as _hashlib
+        try:
+            raw = _b64.b64decode(ciphertext[4:])
+        except Exception:
+            return ciphertext
+        if len(raw) < 17:
+            return ciphertext
+        nonce = raw[:16]
+        cipher_bytes = raw[16:]
+        rounds = (len(cipher_bytes) // 32) + 1
+        key_stream = _hashlib.sha256(nonce + _b64.urlsafe_b64decode(key)).digest() * rounds
+        plain_bytes = bytes(c ^ k for c, k in zip(cipher_bytes, key_stream[:len(cipher_bytes)]))
+        try:
+            return plain_bytes.decode("utf-8")
+        except Exception:
+            return ciphertext
+
+    # 明文（未加密的旧数据）
+    return ciphertext
 
 
 def _load_llm_config() -> Dict[str, Any]:
@@ -1062,7 +1098,7 @@ async def _creator_map_set(rel: str, ip: str) -> bool:
         except Exception:
             return False
 
-app = FastAPI(title="自然语言生图")
+app = FastAPI(title="二次元绘梦")
 # 文本响应（JSON / HTML / JS / CSS）做轻量级 gzip 压缩；图片字节走另一条路（webp 转码）
 app.add_middleware(GZipMiddleware, minimum_size=512, compresslevel=4)
 
@@ -1072,6 +1108,8 @@ _MAX_REQUEST_BODY = 10 * 1024 * 1024  # 10 MB
 
 @app.middleware("http")
 async def _body_limit_middleware(request: Request, call_next):
+    # 为每个请求生成 CSP nonce，后续中间件和路由通过 request.state.csp_nonce 读取
+    request.state.csp_nonce = secrets.token_urlsafe(16)
     cl = request.headers.get("content-length")
     if cl and cl.isdigit():
         if int(cl) > _MAX_REQUEST_BODY:
@@ -1087,7 +1125,7 @@ _MAINTENANCE_TEMPLATE: str = ""
 _MAINTENANCE_TEMPLATE_MTIME: float = 0
 
 
-def _get_maintenance_html(message: str) -> str:
+def _get_maintenance_html(message: str, nonce: str = "") -> str:
     global _MAINTENANCE_TEMPLATE, _MAINTENANCE_TEMPLATE_MTIME
     tpl_path = STATIC_DIR / "maintenance.html"
     try:
@@ -1096,12 +1134,15 @@ def _get_maintenance_html(message: str) -> str:
             _MAINTENANCE_TEMPLATE = tpl_path.read_text(encoding="utf-8")
             _MAINTENANCE_TEMPLATE_MTIME = mt
     except Exception:
-        return f"<html><body><h1>站点维护中</h1><p>{message}</p></body></html>"
+        fallback = f"<html><body><h1>站点维护中</h1><p>{message}</p></body></html>"
+        return _inject_script_nonce(fallback, nonce) if nonce else fallback
     safe = message.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
     html = _MAINTENANCE_TEMPLATE.replace("{{MESSAGE}}", safe)
     ch = _custom_head
     if ch.get("enabled") and ch.get("html", "").strip():
         html = html.replace("<head>", "<head>\n" + _sanitize_custom_html(ch["html"]), 1)
+    if nonce:
+        html = _inject_script_nonce(html, nonce)
     return html
 
 
@@ -1132,16 +1173,22 @@ async def _maintenance_middleware(request: Request, call_next):
     if path.startswith("/api/"):
         from fastapi.responses import JSONResponse as _JR
         return _JR({"error": "站点维护中", "message": _maintenance.get("message", "")}, status_code=503)
-    html = _get_maintenance_html(_maintenance.get("message", ""))
+    html = _get_maintenance_html(_maintenance.get("message", ""), nonce=getattr(request.state, "csp_nonce", ""))
     return Response(html, status_code=503, media_type="text/html")
-
-
-# 自定义 Head 注入（在 HTML 端点中调用）
 _HTML_CACHE: Dict[str, tuple] = {}  # path -> (mtime, content)
 
 
-def _serve_html(file_path: Path) -> Response:
-    """读取 HTML 文件，注入自定义 head，返回 Response。带文件修改时间缓存。"""
+def _inject_script_nonce(html: str, nonce: str) -> str:
+    """向所有 <script> 标签注入 nonce 属性，配合 CSP nonce 策略。"""
+    if not nonce:
+        return html
+    html = html.replace("<script ", f'<script nonce="{nonce}" ')
+    html = html.replace("<script>", f'<script nonce="{nonce}">')
+    return html
+
+
+def _serve_html(file_path: Path, nonce: str = "") -> Response:
+    """读取 HTML 文件，注入自定义 head 和 CSP nonce，返回 Response。带文件修改时间缓存。"""
     try:
         mt = file_path.stat().st_mtime
         cached = _HTML_CACHE.get(str(file_path))
@@ -1155,6 +1202,8 @@ def _serve_html(file_path: Path) -> Response:
     ch = _custom_head
     if ch.get("enabled") and ch.get("html", "").strip():
         html = html.replace("<head>", "<head>\n" + _sanitize_custom_html(ch["html"]), 1)
+    if nonce:
+        html = _inject_script_nonce(html, nonce)
     return Response(content=html, media_type="text/html")
 
 
@@ -1167,11 +1216,13 @@ async def _no_index_headers(request: Request, call_next):
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     resp.headers["X-XSS-Protection"] = "0"  # 废弃头，设为 0 禁用不安全的旧版过滤器
+    nonce = getattr(request.state, "csp_nonce", "")
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com https://giscus.app https://cdn.jsdelivr.net; "
+        f"script-src 'self' 'nonce-{nonce}' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
         "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: blob:; "
+        "img-src 'self' data: blob: https:; "
+        "frame-src 'self'; "
         "connect-src 'self' ws: wss:; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
@@ -1233,7 +1284,7 @@ async def _auth_middleware(request: Request, call_next):
                     status_code=503,
                     media_type="application/json",
                 )
-            html = _get_maintenance_html(_maintenance.get("message", ""))
+            html = _get_maintenance_html(_maintenance.get("message", ""), nonce=getattr(request.state, "csp_nonce", ""))
             return Response(html, status_code=503, media_type="text/html")
 
     user = _get_user_from_session(request)
@@ -1569,7 +1620,7 @@ async def _run_gc():
 async def _backup_data_files():
     """将关键数据文件备份到 backups/ 目录（由百度网盘等工具同步到云端）。"""
     import shutil as _shutil
-    backups_dir = Path(__file__).parent / "backups"
+    backups_dir = Path(__file__).parent.parent / "backups"
     try:
         backups_dir.mkdir(parents=True, exist_ok=True)
         ts = _time_module.strftime("%Y%m%d_%H%M%S", _time_module.localtime())
@@ -2484,15 +2535,12 @@ _WELCOME_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="robots" content="noindex, nofollow" />
-<title>自然语言生图</title>
+<title>二次元绘梦</title>
 <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
 <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-8 text-center space-y-5">
-  <h1 class="text-2xl font-bold">自然语言生图</h1>
-  <p class="text-sm text-gray-600 leading-relaxed">
-    使用 ComfyUI + AI 大模型，将自然语言转换为精美图片
-  </p>
+  <h1 class="text-2xl font-bold">二次元绘梦</h1>
   <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-left space-y-2">
     <p class="text-sm font-semibold text-red-700">隐私提示</p>
     <p class="text-xs text-red-600 leading-relaxed">
@@ -2514,13 +2562,13 @@ _WELCOME_HTML = """<!DOCTYPE html>
 async def index(request: Request):
     if not getattr(request.state, "user", None):
         return Response(content=_WELCOME_HTML, media_type="text/html")
-    return _serve_html(STATIC_DIR / "index.html")
+    return _serve_html(STATIC_DIR / "index.html", nonce=getattr(request.state, "csp_nonce", ""))
 
 
 @app.get("/access")
 async def access_page(request: Request):
     """访问密钥输入页面（与首页相同的 SPA，前端 JS 根据状态显示密钥输入框）。"""
-    return _serve_html(STATIC_DIR / "index.html")
+    return _serve_html(STATIC_DIR / "index.html", nonce=getattr(request.state, "csp_nonce", ""))
 
 
 _whoami_rate_buckets: Dict[str, List[float]] = {}
@@ -2615,16 +2663,17 @@ async def api_whoami(request: Request):
 # ---------------- GitHub OAuth 认证 ----------------
 
 @app.get("/auth/login")
-async def auth_login():
+async def auth_login(request: Request):
     """重定向到 GitHub OAuth 授权页。开发模式返回简易登录表单。"""
     if not GITHUB_CLIENT_ID:
         if DEV_MODE:
-            return HTMLResponse(content="""<!DOCTYPE html>
+            nonce = getattr(request.state, "csp_nonce", "")
+            return HTMLResponse(content=f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>开发登录 · 自然语言生图</title>
+<title>开发登录 · 二次元绘梦</title>
 <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center">
@@ -2640,19 +2689,19 @@ async def auth_login():
 </form>
 <div id="msg" class="text-xs text-gray-500 mt-3"></div>
 </div>
-<script>
-document.getElementById('login-form').addEventListener('submit', async (e) => {
+<script nonce="{nonce}">
+document.getElementById('login-form').addEventListener('submit', async (e) => {{
   e.preventDefault();
   const login = document.getElementById('login-input').value.trim();
   if (!login) return;
   const resp = await fetch('/auth/dev_login?login=' + encodeURIComponent(login));
-  if (resp.ok) {
+  if (resp.ok) {{
     location.href = '/';
-  } else {
+  }} else {{
     const d = await resp.json();
     document.getElementById('msg').textContent = '错误: ' + (d.detail || resp.status);
-  }
-});
+  }}
+}});
 </script>
 </body>
 </html>""")
@@ -4078,7 +4127,7 @@ async def _ws_verify_key(user: dict, pre_consume: bool = False) -> Optional[str]
 async def ws_status(ws: WebSocket):
     """只读订阅：当前任务状态 + 历史回放 + 后续广播。需要登录。"""
     await ws.accept()
-    if not _ws_check_origin(ws.headers):
+    if not _ws_check_origin(ws.headers, require_origin=True):
         try: await ws.close()
         except Exception: pass
         return
@@ -5042,7 +5091,7 @@ async def api_report(payload: Dict[str, Any], request: Request):
 async def admin_page(request: Request):
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
-    return FileResponse(str(STATIC_DIR / "admin.html"))
+    return _serve_html(STATIC_DIR / "admin.html", nonce=getattr(request.state, "csp_nonce", ""))
 
 
 @app.get("/api/admin/whoami")

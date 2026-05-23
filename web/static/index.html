@@ -7,7 +7,7 @@
 <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet, noimageindex" />
 <meta name="bingbot" content="noindex, nofollow, noarchive, nosnippet" />
 <meta name="referrer" content="no-referrer" />
-<title>自然语言生图</title>
+<title>二次元绘梦</title>
 <link rel="icon" type="image/webp" href="/static/chiz.webp" />
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
@@ -124,7 +124,7 @@
       <p>您了解并已知晓自己即将进行生图操作，<strong>您的 IP 将会被记录</strong>。</p>
       <p>若您恶意生图、滥用 API、生成鬼图、恶心图片，<strong>有可能会遭到不定处罚</strong>。</p>
       <p>本站<strong>有权随时将您永久禁止生图</strong>，并移除您的所有违规图片。</p>
-      <p>若您为生图小白，请严格按照教程学习正确的生图姿势。<strong>不要随意生图</strong>，任何人生图对所有人都是可见的。</p>
+      <p>若您为生图小白，请严格按照教程学习正确的生图姿势。<strong>不要随意生图</strong>，</p>
       <p class="text-xs text-gray-500">该弹窗仅在本次会话首次生图时提示。</p>
     </div>
     <div class="flex gap-2 justify-end">
@@ -140,7 +140,7 @@
   <div class="p-3 space-y-3 max-w-3xl mx-auto">
     <!-- 标题 -->
     <div class="flex items-center justify-between">
-      <h1 class="text-sm font-bold">🎨 自然语言生图 <span id="online-count" class="font-normal text-[10px] text-gray-400"></span></h1>
+      <h1 class="text-sm font-bold">🎨 二次元绘梦 <span id="online-count" class="font-normal text-[10px] text-gray-400"></span></h1>
       <div class="flex items-center gap-1.5 text-[10px]">
         <span id="user-label" class="px-1 py-0.5 rounded bg-green-100 text-green-700 cursor-pointer" onclick="location.href='/auth/login'">登录</span>
         <a id="admin-link" href="/admin" class="hidden px-1 py-0.5 rounded bg-red-100 text-red-700">管理</a>
@@ -365,10 +365,18 @@
       </div>
     </div>
 
-    <!-- 评论区 -->
+    <!-- 免责声明 -->
     <div class="bg-white rounded-lg shadow-sm p-3">
-      <h2 class="text-sm font-semibold mb-2">💬 评论区</h2>
-      <div id="giscus-container"></div>
+      <h2 class="text-sm font-semibold mb-2">免责声明</h2>
+      <div class="text-xs text-gray-600 leading-relaxed space-y-2">
+        <p>使用本站服务即表示您同意：</p>
+        <ul class="list-disc list-inside space-y-1">
+          <li>您应对自己生成的图片内容承担全部责任</li>
+          <li>请遵守当地法律法规，不得生成违法、侵权或不当内容</li>
+          <li>您的 IP 地址将被记录，违规行为将被追溯</li>
+          <li>本站保留对违规用户进行封禁的权利</li>
+        </ul>
+      </div>
     </div>
 
     <!-- 来源声明 -->
@@ -426,27 +434,6 @@ function switchTab(name) {
     _tabLoaded.more = true;
     loadAnnouncement();
     pollGPU();
-    // 懒加载 giscus
-    const gc = $('giscus-container');
-    if (!gc.querySelector('script')) {
-      const s = document.createElement('script');
-      s.src = 'https://giscus.app/client.js';
-      s.setAttribute('data-repo', 'afoim/natureDrawImage');
-      s.setAttribute('data-repo-id', 'R_kgDOSMbMpw');
-      s.setAttribute('data-category', 'Announcements');
-      s.setAttribute('data-category-id', 'DIC_kwDOSMbMp84C7zcH');
-      s.setAttribute('data-mapping', 'pathname');
-      s.setAttribute('data-strict', '1');
-      s.setAttribute('data-reactions-enabled', '1');
-      s.setAttribute('data-emit-metadata', '0');
-      s.setAttribute('data-input-position', 'top');
-      s.setAttribute('data-theme', 'light');
-      s.setAttribute('data-lang', 'zh-CN');
-      s.setAttribute('data-loading', 'lazy');
-      s.crossOrigin = 'anonymous';
-      s.async = true;
-      gc.appendChild(s);
-    }
   }
 }
 document.querySelectorAll('#tab-bar button').forEach(btn => {

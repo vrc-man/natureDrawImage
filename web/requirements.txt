@@ -4,3 +4,4 @@ httpx
 websockets
 pydantic
 pillow
+cryptography
