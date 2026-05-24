@@ -9,79 +9,182 @@
 <meta name="referrer" content="no-referrer" />
 <title>二次元绘梦</title>
 <link rel="icon" type="image/webp" href="/static/chiz.webp" />
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="/static/tailwind.min.css" />
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; width: 100%; }
   *, *::before, *::after { min-width: 0; min-height: 0; }
   a, code, pre, span, div, p, li, td { overflow-wrap: anywhere; word-break: break-word; }
   pre, code { white-space: pre-wrap; }
   img, video, canvas, iframe { max-width: 100%; height: auto; }
+
+  /* 樱花粉白渐变背景 + 花瓣 */
+  body {
+    background: linear-gradient(135deg, #fef2f4 0%, #fdf2f8 25%, #faf5ff 50%, #fff1f2 75%, #fef2f4 100%);
+    background-size: 400% 400%;
+    animation: bgShift 30s ease infinite;
+  }
+  @keyframes bgShift {
+    0%   { background-position: 0% 50%; }
+    50%  { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+  /* 樱花花瓣飘落 */
+  @keyframes sakuraFall {
+    0%   { transform: translateY(-10vh) rotate(0deg) translateX(0); opacity: 0.9; }
+    100% { transform: translateY(110vh) rotate(720deg) translateX(80px); opacity: 0; }
+  }
+  @keyframes sakuraSway {
+    0%, 100% { margin-left: 0; }
+    50%      { margin-left: 30px; }
+  }
+  body::before {
+    content: '🌸 🌸 🌸 🌸 🌸 🌸 🌸 🌸';
+    position: fixed; inset: 0;
+    font-size: 24px; white-space: pre;
+    pointer-events: none; z-index: 0; opacity: 0;
+  }
+  .sakura-petal {
+    position: fixed; top: -40px; z-index: 0; pointer-events: none;
+    font-size: 18px; animation: sakuraFall linear infinite, sakuraSway ease-in-out infinite;
+  }
+
+  /* 浅色滚动条 */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: rgba(244,114,182,0.06); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb { background: rgba(244,114,182,0.2); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(244,114,182,0.35); }
+
   /* 灯箱 */
   #lb-root { position: fixed; inset: 0; z-index: 60; background: #000; display: none; flex-direction: column; }
   #lb-root.open { display: flex; }
   #lb-img-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 8px; min-height: 0; }
   #lb-img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; user-select: auto; -webkit-user-select: auto; -webkit-touch-callout: default; }
-  #lb-bar { color: #fff; padding: 8px 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: rgba(0,0,0,.5); }
+  #lb-bar { color: #fff; padding: 8px 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: rgba(15,23,42,.85); backdrop-filter: blur(12px); }
   .lb-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,.4); color: #fff; border: 0; width: 44px; height: 64px; font-size: 28px; cursor: pointer; }
   .lb-nav:hover { background: rgba(0,0,0,.7); }
   #lb-prev { left: 8px; }
   #lb-next { right: 8px; }
   #lb-close { position: absolute; top: 8px; right: 12px; background: transparent; color: #fff; border: 0; font-size: 28px; cursor: pointer; z-index: 1; }
   #lb-title { color: #ddd; font-size: 12px; margin-right: auto; word-break: break-all; }
+
   /* Tab 布局 */
-  .tab-page { position: fixed; top: 0; left: 0; right: 0; bottom: 52px; overflow-y: auto; display: none; -webkit-overflow-scrolling: touch; padding-top: env(safe-area-inset-top); }
-  .tab-page.active { display: block; }
-  #tab-bar { position: fixed; bottom: 0; left: 50%; transform: translateX(-50%); width: 100%; max-width: 48rem; height: 52px; z-index: 40; background: #fff; border-top: 1px solid #e5e7eb; display: flex; padding-bottom: env(safe-area-inset-bottom); border-radius: 12px 12px 0 0; box-shadow: 0 -2px 8px rgba(0,0,0,.08); }
-  #tab-bar button { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 0; background: none; color: #9ca3af; font-size: 10px; cursor: pointer; transition: color .15s; }
-  #tab-bar button .tab-icon { font-size: 20px; }
-  #tab-bar button.active { color: #3b82f6; }
+  .tab-page { position: fixed; top: 0; left: 0; right: 0; bottom: 60px; overflow-y: auto; display: none; -webkit-overflow-scrolling: touch; padding-top: env(safe-area-inset-top); }
+  .tab-page.active { display: block; animation: fadeIn 0.3s ease; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* 底部 Tab 栏 — 白色毛玻璃 */
+  #tab-bar {
+    position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
+    width: 100%; max-width: 48rem; height: 60px; z-index: 40;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+    border-top: 1px solid rgba(244, 114, 182, 0.15);
+    display: flex; padding-bottom: env(safe-area-inset-bottom);
+    border-radius: 24px 24px 0 0;
+    box-shadow: 0 -4px 30px rgba(244, 114, 182, 0.1);
+  }
+  #tab-bar button {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 3px;
+    border: 0; background: none;
+    color: #9ca3af;
+    font-size: 11px; font-weight: 500;
+    cursor: pointer; transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+  }
+  #tab-bar button .tab-icon { font-size: 24px; transition: transform 0.25s ease; }
+  #tab-bar button.active { color: #f472b6; }
+  #tab-bar button.active .tab-icon { transform: translateY(-2px) scale(1.12); }
+  #tab-bar button.active::after {
+    content: ''; position: absolute; top: 6px;
+    width: 4px; height: 4px; border-radius: 50%;
+    background: #f472b6; box-shadow: 0 0 8px rgba(244, 114, 182, 0.5);
+  }
+
   /* 工作流 / 画风卡片 */
   .wf-card, .style-card {
-    cursor: pointer; border-radius: 12px; overflow: hidden;
-    background: #fff; border: 2px solid transparent;
-    transition: all .2s ease; box-shadow: 0 1px 3px rgba(0,0,0,.06);
+    cursor: pointer; border-radius: 16px; overflow: hidden;
+    background: rgba(255,255,255,0.75); border: 1px solid rgba(244,114,182,0.12);
+    transition: all 0.25s ease;
+    box-shadow: 0 2px 12px rgba(244,114,182,0.06);
     -webkit-tap-highlight-color: transparent; user-select: none;
     -webkit-user-select: none;
   }
   @media (hover: hover) {
     .wf-card:hover, .style-card:hover {
-      transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.1);
-      border-color: #93c5fd;
+      transform: translateY(-4px);
+      box-shadow: 0 12px 30px rgba(244,114,182,0.15), 0 0 0 1px rgba(244,114,182,0.2);
     }
   }
   .wf-card:active, .style-card:active {
     transform: scale(0.96); transition: transform .1s ease;
   }
   .wf-card.selected, .style-card.selected {
-    border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,.25);
-    background: #eff6ff;
+    border-color: #f472b6;
+    box-shadow: 0 0 0 3px rgba(244,114,182,0.2), 0 0 24px rgba(244,114,182,0.12);
+    background: rgba(244,114,182,0.08);
   }
   .wf-card .wf-thumb, .style-card .style-thumb {
-    width: 100%; aspect-ratio: 1; object-fit: cover; background: #f9fafb;
+    width: 100%; aspect-ratio: 1; object-fit: cover; background: rgba(244,114,182,0.04);
   }
   .wf-card .wf-label, .style-card .style-label {
-    padding: 6px 8px; font-size: 10px; font-weight: 500;
+    padding: 5px 6px; font-size: 11px; font-weight: 500;
     line-height: 1.3; text-align: center; word-break: break-word;
     overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2; color: #374151;
+    -webkit-line-clamp: 2; color: #4b5563;
   }
+
   /* 工作流选区容器 */
   .wf-scroll, .style-scroll { max-height: 50vh; overflow-y: auto; }
   .wf-grid, .style-grid {
-    display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px;
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
   }
-  @media (min-width: 400px) { .wf-grid, .style-grid { grid-template-columns: repeat(3, 1fr); } }
-  @media (min-width: 640px) { .wf-grid, .style-grid { grid-template-columns: repeat(4, 1fr); } }
+  @media (min-width: 480px) { .wf-grid, .style-grid { grid-template-columns: repeat(4, 1fr); gap: 10px; } }
+  @media (min-width: 768px) { .wf-grid, .style-grid { grid-template-columns: repeat(5, 1fr); gap: 12px; } }
   @media (min-width: 1024px) { .wf-grid, .style-grid { grid-template-columns: repeat(6, 1fr); } }
-  .wf-cat-title { font-size: 11px; font-weight: 600; color: #6b7280; margin: 10px 0 6px; }
+  @media (min-width: 1280px) { .wf-grid, .style-grid { grid-template-columns: repeat(7, 1fr); } }
+  .wf-cat-title { font-size: 12px; font-weight: 600; color: #9ca3af; margin: 14px 0 8px; }
+
   /* 响应式表单 */
-  .prompt-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
-  @media (min-width: 640px) { .prompt-grid { grid-template-columns: 1fr 1fr; } }
-  .img2img-row { display: flex; flex-direction: column; gap: 10px; }
+  .prompt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  @media (min-width: 640px) { .prompt-grid { gap: 14px; } }
+  .img2img-row { display: flex; flex-direction: column; gap: 16px; }
   @media (min-width: 640px) { .img2img-row { flex-direction: row; } }
+
+  /* 生成按钮发光脉冲 — 樱花粉 */
+  @keyframes glowPulse {
+    0%, 100% { box-shadow: 0 0 16px rgba(244,114,182,.25), 0 0 4px rgba(251,113,133,.15); }
+    50%      { box-shadow: 0 0 32px rgba(244,114,182,.4), 0 0 12px rgba(251,113,133,.25); }
+  }
+  #btn-run:not(:disabled) { animation: glowPulse 3s ease-in-out infinite; }
+
+  /* 进度条渐变 — 粉色调 */
+  #progress-bar {
+    background: linear-gradient(90deg, #f472b6, #fb7185, #f472b6);
+    background-size: 200% 100%;
+    animation: barShimmer 2s linear infinite;
+  }
+  @keyframes barShimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+
+  /* 画廊图片 hover */
+  .gal-img {
+    transition: all 0.2s ease; border-radius: 10px;
+    border: 1px solid rgba(244,114,182,0.08);
+  }
+  .gal-img:hover {
+    transform: scale(1.03);
+    box-shadow: 0 0 18px rgba(244,114,182,0.2);
+    border-color: rgba(244,114,182,0.35); z-index: 2;
+  }
 </style>
 </head>
-<body class="bg-gray-50">
+<body class="relative">
 
 <!-- 灯箱 -->
 <div id="lb-root" role="dialog" aria-modal="true">
@@ -91,10 +194,10 @@
   <div id="lb-img-wrap"><img id="lb-img" alt="" /></div>
   <div id="lb-bar">
     <span id="lb-title"></span>
-    <span id="lb-time" class="text-xs text-gray-300"></span>
+    <span id="lb-time" class="text-xs text-white/30"></span>
     <span id="lb-creator" class="text-xs text-amber-300"></span>
     <a id="lb-download" href="#" target="_blank" rel="noopener" download
-       class="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">⬇ 下载原图</a>
+       class="text-xs px-3 py-1 bg-gradient-to-r from-pink-500 to-rose-500 text-white rounded-lg hover:from-pink-400 hover:to-rose-400 transition-all">⬇ 下载原图</a>
     <button id="lb-fork" class="text-xs px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700">🍴 Fork 工作流</button>
     <button id="lb-report" class="text-xs px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 hidden">🚩 举报</button>
     <span id="lb-status" class="text-xs text-white/80"></span>
@@ -102,34 +205,34 @@
 </div>
 
 <!-- 举报弹窗 -->
-<div id="report-modal" class="fixed inset-0 z-[70] bg-black/70 items-center justify-center p-4 hidden">
-  <div class="bg-white rounded-lg shadow-xl max-w-sm w-full p-5">
-    <h3 class="text-lg font-bold mb-3 text-red-600">🚩 举报此图片</h3>
+<div id="report-modal" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm items-center justify-center p-4 hidden">
+  <div class="bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 max-w-sm w-full p-5">
+    <h3 class="text-lg font-bold mb-3 text-red-500">🚩 举报此图片</h3>
     <p class="text-sm text-gray-600 mb-2">请简要说明举报原因：</p>
     <textarea id="report-reason" rows="3" maxlength="500"
-      class="w-full border rounded px-2 py-1 text-sm" placeholder="例如：违规内容、不当图片..."></textarea>
+      class="w-full border border-pink-200 rounded-xl px-3 py-2 text-sm bg-white text-gray-700 focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all" placeholder="例如：违规内容、不当图片..."></textarea>
     <div class="flex gap-2 justify-end mt-3">
-      <button id="report-cancel" class="px-3 py-2 bg-gray-200 rounded hover:bg-gray-300 text-sm">取消</button>
-      <button id="report-submit" class="px-3 py-2 bg-red-500 text-white rounded hover:bg-red-600 text-sm">提交举报</button>
+      <button id="report-cancel" class="px-4 py-2 bg-gray-100 rounded-xl hover:bg-gray-200 text-sm text-gray-600 transition-all">取消</button>
+      <button id="report-submit" class="px-4 py-2 bg-red-500 text-white rounded-xl hover:bg-red-600 text-sm font-medium transition-all">提交举报</button>
     </div>
-    <span id="report-status" class="text-xs text-gray-500 mt-2 block"></span>
+    <span id="report-status" class="text-xs text-gray-400 mt-2 block"></span>
   </div>
 </div>
 
 <!-- 生图前公告确认 -->
-<div id="gen-notice-modal" class="fixed inset-0 z-50 bg-black/70 items-center justify-center p-4 hidden">
-  <div class="bg-white rounded-lg shadow-xl max-w-md w-full p-5 max-h-[90vh] overflow-y-auto">
-    <h3 class="text-lg font-bold mb-3 text-red-600">⚠️ 生图前必读公告</h3>
-    <div class="text-sm text-gray-800 leading-relaxed space-y-2 mb-4">
+<div id="gen-notice-modal" class="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm items-center justify-center p-4 hidden">
+  <div class="bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 max-w-md w-full p-5 max-h-[90vh] overflow-y-auto">
+    <h3 class="text-lg font-bold mb-3 text-red-500">⚠️ 生图前必读公告</h3>
+    <div class="text-sm text-gray-700 leading-relaxed space-y-2 mb-4">
       <p>您了解并已知晓自己即将进行生图操作，<strong>您的 IP 将会被记录</strong>。</p>
       <p>若您恶意生图、滥用 API、生成鬼图、恶心图片，<strong>有可能会遭到不定处罚</strong>。</p>
       <p>本站<strong>有权随时将您永久禁止生图</strong>，并移除您的所有违规图片。</p>
       <p>若您为生图小白，请严格按照教程学习正确的生图姿势。<strong>不要随意生图</strong>，</p>
-      <p class="text-xs text-gray-500">该弹窗仅在本次会话首次生图时提示。</p>
+      <p class="text-xs text-gray-400">该弹窗仅在本次会话首次生图时提示。</p>
     </div>
     <div class="flex gap-2 justify-end">
-      <button id="gen-notice-cancel" class="px-3 py-2 bg-gray-200 rounded hover:bg-gray-300 text-sm">退出</button>
-      <button id="gen-notice-accept" class="px-3 py-2 bg-red-500 text-white rounded hover:bg-red-600 text-sm">我已知悉，继续生图</button>
+      <button id="gen-notice-cancel" class="px-4 py-2 bg-gray-100 rounded-xl hover:bg-gray-200 text-sm text-gray-600 transition-all">退出</button>
+      <button id="gen-notice-accept" class="px-4 py-2 bg-red-500 text-white rounded-xl hover:bg-red-600 text-sm font-medium transition-all">我已知悉，继续生图</button>
     </div>
   </div>
 </div>
@@ -137,23 +240,23 @@
 <!-- ==================== Tab 1: 生图 ==================== -->
 <div id="page-generate" class="tab-page active">
 
-  <div class="p-3 space-y-3 max-w-3xl mx-auto">
+  <div class="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto">
     <!-- 标题 -->
     <div class="flex items-center justify-between">
-      <h1 class="text-sm font-bold">🎨 二次元绘梦 <span id="online-count" class="font-normal text-[10px] text-gray-400"></span></h1>
-      <div class="flex items-center gap-1.5 text-[10px]">
-        <span id="user-label" class="px-1 py-0.5 rounded bg-green-100 text-green-700 cursor-pointer" onclick="location.href='/auth/login'">登录</span>
-        <a id="admin-link" href="/admin" class="hidden px-1 py-0.5 rounded bg-red-100 text-red-700">管理</a>
+      <h1 class="text-xl sm:text-2xl font-bold text-gray-800">🎨 二次元绘梦 <span id="online-count" class="font-normal text-sm text-gray-400"></span></h1>
+      <div class="flex items-center gap-2 text-xs">
+        <span id="user-label" class="px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 cursor-pointer font-medium" onclick="location.href='/auth/login'">登录</span>
+        <a id="admin-link" href="/admin" class="hidden px-2 py-1 rounded-full bg-red-50 text-red-500 font-medium">管理</a>
       </div>
     </div>
 
     <!-- 访问密钥页面（非管理员登录后显示） -->
-    <div id="access-page" class="hidden bg-white rounded-xl shadow-sm p-8 text-center max-w-md mx-auto">
-      <h2 class="text-xl font-bold mb-2">🔑 访问密钥</h2>
+    <div id="access-page" class="hidden bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/40 p-8 text-center max-w-md mx-auto">
+      <h2 class="text-xl font-bold mb-2 text-gray-800">🔑 访问密钥</h2>
       <p class="text-sm text-gray-500 mb-5">请输入管理员分发的密钥以解锁服务</p>
       <input id="access-key-input" type="text" placeholder="输入密钥"
-        class="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm mb-3 text-center focus:border-blue-400 focus:ring-1 focus:ring-blue-400 outline-none" autocomplete="off" />
-      <button id="btn-submit-key" class="w-full bg-blue-500 text-white rounded-xl py-3 text-sm font-semibold hover:bg-blue-600 transition-all shadow-sm shadow-blue-200">
+        class="w-full border border-pink-200 rounded-2xl px-4 py-3 text-sm mb-3 text-center bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all" autocomplete="off" />
+      <button id="btn-submit-key" class="w-full bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl py-3 text-sm font-semibold hover:from-pink-300 hover:to-rose-300 transition-all shadow-lg shadow-pink-300/30 active:scale-[0.98]">
         提交
       </button>
       <p id="access-key-error" class="hidden text-red-500 text-xs mt-2"></p>
@@ -164,67 +267,67 @@
     <div id="generate-main">
 
     <!-- 生图模式切换 -->
-    <div class="flex gap-1.5">
-      <button id="mode-txt2img" class="flex-1 py-2 text-xs font-semibold rounded-xl transition-all bg-blue-500 text-white shadow-sm shadow-blue-200">
+    <div class="flex gap-2">
+      <button id="mode-txt2img" class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all bg-gradient-to-r from-pink-400 to-rose-400 text-white shadow-lg shadow-pink-300/30 active:scale-[0.98]">
         📝 文生图
       </button>
-      <button id="mode-img2img" class="flex-1 py-2 text-xs font-semibold rounded-xl transition-all bg-white text-gray-500 border-2 border-gray-200 hover:border-blue-300">
+      <button id="mode-img2img" class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all bg-white/70 text-gray-400 border-2 border-pink-100 hover:border-pink-300 hover:text-gray-600">
         🖼️ 图生图
       </button>
     </div>
 
     <!-- 工作流 -->
-    <div class="bg-white rounded-xl shadow-sm p-3">
+    <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
       <div id="wf-header" class="flex items-center justify-between cursor-pointer select-none" title="点击展开/折叠">
-        <h2 class="text-sm font-bold flex items-center gap-1.5 min-w-0 flex-1">
-          <span id="wf-arrow" class="inline-block transition-transform text-gray-400 text-[10px]">▸</span>
+        <h2 class="text-base font-bold flex items-center gap-1.5 min-w-0 flex-1 text-gray-700">
+          <span id="wf-arrow" class="inline-block transition-transform text-gray-400 text-xs">▸</span>
           📋 工作流
-          <span id="wf-current" class="font-normal text-gray-400 text-[11px] truncate"></span>
-          <span id="fork-badge" class="hidden font-normal text-[11px] text-emerald-600"></span>
+          <span id="wf-current" class="font-normal text-gray-400 text-xs truncate"></span>
+          <span id="fork-badge" class="hidden font-normal text-xs text-emerald-600"></span>
         </h2>
         <button id="btn-wf-search" class="text-gray-400 hover:text-gray-600 text-sm ml-2" onclick="event.stopPropagation()">🔍</button>
         <input id="search" type="text" placeholder="搜索工作流..."
-          class="hidden absolute inset-0 border rounded-lg px-3 py-1.5 text-xs bg-white z-10" />
+          class="hidden absolute inset-0 border border-pink-200 rounded-xl px-3 py-1.5 text-sm bg-white text-gray-700 z-10 focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none" />
       </div>
       <div id="wf-list" class="wf-scroll hidden"></div>
     </div>
 
     <!-- 画风 -->
-    <div id="style-section" class="bg-white rounded-xl shadow-sm p-3 hidden">
-      <div class="relative flex items-center justify-between mb-2">
-        <h2 class="text-sm font-bold">🖌️ 画风 <span id="style-current" class="font-normal text-gray-400 text-[11px]"></span></h2>
+    <div id="style-section" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 hidden">
+      <div class="relative flex items-center justify-between mb-3">
+        <h2 class="text-base font-bold text-gray-700">🖌️ 画风 <span id="style-current" class="font-normal text-gray-400 text-xs"></span></h2>
         <button id="btn-style-search" class="text-gray-400 hover:text-gray-600 text-sm">🔍</button>
         <input id="style-search" type="text" placeholder="搜索画风..."
-          class="hidden absolute inset-0 border rounded-lg px-3 py-1.5 text-xs bg-white z-10" />
+          class="hidden absolute inset-0 border border-pink-200 rounded-xl px-3 py-1.5 text-sm bg-white text-gray-700 z-10 focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none" />
       </div>
       <div id="style-list" class="style-scroll"></div>
     </div>
 
     <!-- 生图表单 -->
-    <div class="bg-white rounded-xl shadow-sm p-3 space-y-3">
+    <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 space-y-5">
       <div class="prompt-grid">
         <div>
-          <label class="block text-xs font-semibold mb-1 text-gray-600">正面提示词</label>
+          <label class="block text-sm font-semibold mb-1.5 text-gray-600">正面提示词</label>
           <textarea id="direct" rows="3" placeholder="英文 tags，选择工作流后自动填入"
-            class="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-mono focus:border-blue-400 focus:ring-1 focus:ring-blue-400 outline-none resize-none"></textarea>
+            class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all resize-y"></textarea>
         </div>
         <div>
-          <label class="block text-xs font-semibold mb-1 text-gray-600">负面提示词</label>
+          <label class="block text-sm font-semibold mb-1.5 text-gray-600">负面提示词</label>
           <textarea id="negative_prompt" rows="3" placeholder="如: worst quality, low quality, blurry"
-            class="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs font-mono focus:border-blue-400 focus:ring-1 focus:ring-blue-400 outline-none resize-none"></textarea>
+            class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all resize-y"></textarea>
         </div>
       </div>
 
       <div>
-        <label class="block text-xs font-semibold mb-1 text-gray-600">自然语言描述 <span class="text-gray-400 font-normal">(中文/英文，LLM 翻译生成提示词)</span></label>
+        <label class="block text-sm font-semibold mb-1.5 text-gray-600">自然语言描述 <span class="text-gray-400 font-normal">(中文/英文，LLM 翻译生成提示词)</span></label>
         <textarea id="nl" rows="2" placeholder="描述你想要的画面，LLM 会自动翻译为 tags"
-          class="w-full border border-gray-200 rounded-lg px-2.5 py-2 text-xs focus:border-blue-400 focus:ring-1 focus:ring-blue-400 outline-none resize-none"></textarea>
+          class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all resize-none"></textarea>
       </div>
 
       <div class="flex items-center flex-wrap gap-3">
-        <label class="flex items-center gap-1.5 text-xs font-medium text-gray-600 cursor-pointer select-none">
-          <input type="checkbox" id="rewrite" checked class="w-3.5 h-3.5" /> 改写
-          <span class="text-gray-400 cursor-pointer" onclick="alert('改写：LLM 基于「直接 Tag」结合「自然语言描述」整体重写 prompt\n\n不勾选：LLM 翻译后追加到原 prompt 后面')">?</span>
+        <label class="flex items-center gap-1.5 text-sm font-medium text-gray-600 cursor-pointer select-none">
+          <input type="checkbox" id="rewrite" checked class="w-4 h-4 accent-pink-500" /> 改写
+          <span class="text-gray-400 cursor-help" title="改写：LLM 基于「直接 Tag」结合「自然语言描述」整体重写 prompt&#10;不勾选：LLM 翻译后追加到原 prompt 后面">?</span>
         </label>
         <div class="flex flex-wrap gap-1.5" id="res-presets"></div>
       </div>
@@ -234,53 +337,54 @@
       <div id="img2img-box" class="hidden">
         <div class="img2img-row">
           <div class="flex-1">
-            <label class="block text-xs font-semibold mb-1 text-gray-600">🖼️ 输入图 1 <span class="text-gray-400 font-normal">(可选)</span></label>
-            <input type="file" id="img1" accept="image/*" class="w-full text-xs" />
+            <label class="block text-sm font-semibold mb-1.5 text-gray-600">🖼️ 输入图 1 <span class="text-gray-400 font-normal">(可选)</span></label>
+            <input type="file" id="img1" accept="image/*" class="w-full text-sm" />
           </div>
           <div class="flex-1">
-            <label class="block text-xs font-semibold mb-1 text-gray-600">🖼️ 输入图 2 <span class="text-gray-400 font-normal">(可选)</span></label>
-            <input type="file" id="img2" accept="image/*" class="w-full text-xs" />
+            <label class="block text-sm font-semibold mb-1.5 text-gray-600">🖼️ 输入图 2 <span class="text-gray-400 font-normal">(可选)</span></label>
+            <input type="file" id="img2" accept="image/*" class="w-full text-sm" />
           </div>
         </div>
       </div>
 
-      <button id="btn-run" class="w-full py-2.5 bg-blue-500 text-white rounded-xl hover:bg-blue-600 disabled:bg-gray-300 disabled:cursor-not-allowed font-semibold text-sm shadow-sm shadow-blue-200 transition-all active:scale-[0.98]">
+      <button id="btn-run" class="w-full py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl hover:from-pink-300 hover:to-rose-300 disabled:from-gray-200 disabled:to-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed font-semibold text-base shadow-lg shadow-pink-300/30 transition-all active:scale-[0.98]">
         ▶ 开始生成
       </button>
-      <div id="cooldown-timer" class="hidden text-center text-xs text-amber-600 mt-1"></div>
+      <div id="cooldown-timer" class="hidden text-center text-sm text-amber-600 mt-2"></div>
     </div>
 
     <!-- 进度 -->
-    <div id="progress-box" class="hidden bg-white rounded-xl shadow-sm p-3">
-      <div id="queue-status" class="hidden text-xs text-amber-600 text-center font-semibold mb-2"></div>
-      <div id="progress-bar-wrap" class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden hidden">
-        <div id="progress-bar" class="bg-blue-500 h-2.5 transition-all rounded-full" style="width:0%"></div>
+    <div id="progress-box" class="hidden bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 space-y-3">
+      <div id="queue-status" class="hidden text-sm text-amber-600 text-center font-semibold"></div>
+      <div id="progress-bar-wrap" class="hidden w-full bg-pink-100 rounded-full h-2.5 overflow-hidden">
+        <div id="progress-bar" class="h-2.5 transition-all rounded-full" style="width:0%"></div>
       </div>
-      <div class="flex items-center justify-center gap-2 mt-1.5">
-        <div id="progress-text" class="text-xs text-gray-500 text-center"></div>
-      </div>
-      <div id="llm-box" class="hidden mt-2">
-        <div class="text-[11px] text-gray-400 mb-1">🤖 LLM 处理中...</div>
-        <pre id="llm-stream" class="text-xs bg-yellow-50 border border-yellow-200 p-2 rounded-lg h-40 overflow-y-auto whitespace-pre-wrap break-words"></pre>
+      <div id="progress-text" class="text-sm text-gray-500 text-center"></div>
+      <div id="llm-box" class="hidden">
+        <div class="flex items-center gap-2 text-xs text-pink-500 font-medium mb-2">
+          <span class="inline-block w-2 h-2 rounded-full bg-pink-400 animate-pulse"></span>
+          🤖 LLM 处理中...
+        </div>
+        <pre id="llm-stream" class="text-xs bg-rose-50 border border-pink-100 p-3 rounded-xl h-36 overflow-y-auto whitespace-pre-wrap break-words text-gray-700 leading-relaxed"></pre>
       </div>
       <pre id="log" class="hidden"></pre>
     </div>
 
     <!-- 结果 -->
-    <div id="result-box" class="bg-white rounded-xl shadow-sm p-3 hidden">
-      <div class="flex items-center justify-between mb-2">
-        <span class="text-sm font-bold">🖼️ 结果</span>
+    <div id="result-box" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 hidden">
+      <div class="flex items-center justify-between mb-3">
+        <span class="text-base font-bold text-gray-700">🖼️ 结果</span>
       </div>
-      <div id="images" class="grid grid-cols-3 md:grid-cols-4 gap-2 justify-items-center"></div>
+      <div id="images" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 justify-items-center"></div>
     </div>
 
     <!-- 我的排队状态 -->
-    <div id="my-queue-card" class="hidden bg-white rounded-xl shadow-sm p-3">
+    <div id="my-queue-card" class="hidden bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
       <div class="flex items-center justify-between">
-        <span class="text-sm font-bold">📋 我的队列</span>
+        <span class="text-base font-bold text-gray-700">📋 我的队列</span>
         <span id="my-queue-status" class="text-xs text-gray-400">空闲</span>
       </div>
-      <div id="my-queue-items" class="mt-1.5 space-y-1 text-xs"></div>
+      <div id="my-queue-items" class="mt-2 space-y-1 text-xs text-gray-500"></div>
     </div>
 
     </div><!-- /#generate-main -->
@@ -289,86 +393,86 @@
 
 <!-- ==================== Tab 2: 画廊 ==================== -->
 <div id="page-gallery" class="tab-page">
-  <div class="p-3 space-y-3 max-w-3xl mx-auto">
+  <div class="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto">
     <div class="flex items-center justify-between">
-      <h1 class="text-lg font-bold">🖼️ 画廊
-        <span class="text-xs text-gray-500 font-normal">(<span id="gallery-shown">0</span>/<span id="gallery-total">0</span>)</span>
+      <h1 class="text-xl sm:text-2xl font-bold text-gray-800">🖼️ 画廊
+        <span class="text-sm text-gray-500 font-normal">(<span id="gallery-shown">0</span>/<span id="gallery-total">0</span>)</span>
       </h1>
       <div class="flex items-center gap-2">
-        <button id="btn-reload-gallery" class="text-[10px] px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">重载</button>
+        <button id="btn-reload-gallery" class="text-xs px-3 py-1.5 bg-pink-50 text-pink-600 rounded-xl hover:bg-pink-100 transition-all font-medium">重载</button>
       </div>
     </div>
-    <div id="gallery-dir" class="text-[10px] text-gray-400"></div>
-    <div id="gallery" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5"></div>
+    <div id="gallery-dir" class="text-xs text-gray-400"></div>
+    <div id="gallery" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 gap-2"></div>
     <div class="text-center">
-      <button id="btn-load-more" class="hidden text-xs px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">加载更多</button>
+      <button id="btn-load-more" class="hidden text-sm px-5 py-2.5 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl hover:from-pink-300 hover:to-rose-300 shadow-lg shadow-pink-300/30 transition-all font-medium">加载更多</button>
     </div>
   </div>
 </div>
 
 <!-- ==================== Tab 3: 精选 ==================== -->
 <div id="page-featured" class="tab-page">
-  <div class="p-3 space-y-3 max-w-3xl mx-auto">
-    <h1 class="text-lg font-bold">⭐ 精选展示
-      <span class="text-xs text-gray-500 font-normal">(<span id="featured-count">0</span>)</span>
+  <div class="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto">
+    <h1 class="text-xl sm:text-2xl font-bold text-gray-800">⭐ 精选展示
+      <span class="text-sm text-gray-500 font-normal">(<span id="featured-count">0</span>)</span>
     </h1>
-    <div id="featured-tip" class="hidden text-xs bg-amber-50 border border-amber-200 text-amber-800 rounded p-2"></div>
-    <div id="featured-gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2"></div>
+    <div id="featured-tip" class="hidden text-sm bg-amber-50 border border-amber-200 text-amber-700 rounded-2xl p-3"></div>
+    <div id="featured-gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2"></div>
     <div id="featured-empty" class="text-center text-gray-400 text-sm py-8 hidden">暂无精选</div>
   </div>
 </div>
 
 <!-- ==================== Tab 4: 我的作品 ==================== -->
 <div id="page-myworks" class="tab-page">
-  <div class="p-3 space-y-3 max-w-3xl mx-auto">
+  <div class="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto">
     <div class="flex items-center justify-between">
-      <h1 class="text-lg font-bold">📁 我的作品
-        <span class="text-xs text-gray-500 font-normal">(<span id="myworks-shown">0</span>/<span id="myworks-total">0</span>)</span>
+      <h1 class="text-xl sm:text-2xl font-bold text-gray-800">📁 我的作品
+        <span class="text-sm text-gray-500 font-normal">(<span id="myworks-shown">0</span>/<span id="myworks-total">0</span>)</span>
       </h1>
-      <button id="btn-reload-myworks" class="text-[10px] px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+      <button id="btn-reload-myworks" class="text-xs px-3 py-1.5 bg-pink-50 text-pink-600 rounded-xl hover:bg-pink-100 transition-all font-medium">刷新</button>
     </div>
-    <div id="myworks-gallery" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-1.5"></div>
+    <div id="myworks-gallery" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2"></div>
     <div id="myworks-empty" class="text-center text-gray-400 text-sm py-8 hidden">你还没有生成过图片</div>
     <div class="text-center">
-      <button id="btn-myworks-more" class="hidden text-xs px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">加载更多</button>
+      <button id="btn-myworks-more" class="hidden text-sm px-5 py-2.5 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl hover:from-pink-300 hover:to-rose-300 shadow-lg shadow-pink-300/30 transition-all font-medium">加载更多</button>
     </div>
   </div>
 </div>
 
 <!-- ==================== Tab 5: 更多 ==================== -->
 <div id="page-more" class="tab-page">
-  <div class="p-3 space-y-3 max-w-3xl mx-auto">
-    <h1 class="text-lg font-bold">⚙️ 更多</h1>
+  <div class="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto">
+    <h1 class="text-xl sm:text-2xl font-bold text-gray-800">⚙️ 更多</h1>
 
     <!-- 公告 -->
-    <div id="announcement-bar" class="hidden rounded-lg border p-3 text-sm bg-blue-50 border-blue-300 text-blue-900">
+    <div id="announcement-bar" class="hidden rounded-2xl border p-4 text-sm bg-pink-50 border-pink-200 text-pink-700">
       <div id="ann-bar-title" class="font-semibold"></div>
       <div id="ann-bar-content" class="mt-1 text-xs whitespace-pre-wrap"></div>
     </div>
 
     <!-- GPU -->
-    <div id="gpu-bar" class="hidden bg-white rounded-lg shadow-sm p-3 text-xs text-gray-700">
-      <div class="flex items-center justify-between mb-1">
-        <span class="font-semibold">🎮 GPU 状态</span>
-        <span id="gpu-bar-meta" class="text-[10px] text-gray-400"></span>
+    <div id="gpu-bar" class="hidden bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 text-sm text-gray-600">
+      <div class="flex items-center justify-between mb-2">
+        <span class="font-semibold text-gray-700">🎮 GPU 状态</span>
+        <span id="gpu-bar-meta" class="text-xs text-gray-400"></span>
       </div>
-      <div id="gpu-bar-list" class="space-y-1"></div>
+      <div id="gpu-bar-list" class="space-y-1.5"></div>
     </div>
 
     <!-- 链接 -->
-    <div class="bg-white rounded-lg shadow-sm p-3">
-      <h2 class="text-sm font-semibold mb-2">🔗 常用链接</h2>
-      <div class="flex flex-col gap-1.5 text-xs">
-        <a href="https://2x.nz/posts/ai-wife" target="_blank" rel="noopener" class="text-blue-600 hover:underline">📖 新手教程：从零开始造老婆</a>
-        <a href="https://www.downloadmost.com/NoobAI-XL/danbooru-artist/" target="_blank" rel="noopener" class="text-blue-600 hover:underline">🎨 danbooru-artist 画师库</a>
-        <a href="https://www.downloadmost.com/NoobAI-XL/danbooru-character/" target="_blank" rel="noopener" class="text-blue-600 hover:underline">👤 danbooru-character 角色库</a>
+    <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+      <h2 class="text-base font-semibold mb-3 text-gray-700">🔗 常用链接</h2>
+      <div class="flex flex-col gap-2 text-sm">
+        <a href="https://2x.nz/posts/ai-wife" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">📖 新手教程：从零开始造老婆</a>
+        <a href="https://www.downloadmost.com/NoobAI-XL/danbooru-artist/" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">🎨 danbooru-artist 画师库</a>
+        <a href="https://www.downloadmost.com/NoobAI-XL/danbooru-character/" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">👤 danbooru-character 角色库</a>
       </div>
     </div>
 
     <!-- 免责声明 -->
-    <div class="bg-white rounded-lg shadow-sm p-3">
-      <h2 class="text-sm font-semibold mb-2">免责声明</h2>
-      <div class="text-xs text-gray-600 leading-relaxed space-y-2">
+    <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+      <h2 class="text-base font-semibold mb-3 text-gray-700">免责声明</h2>
+      <div class="text-sm text-gray-600 leading-relaxed space-y-2">
         <p>使用本站服务即表示您同意：</p>
         <ul class="list-disc list-inside space-y-1">
           <li>您应对自己生成的图片内容承担全部责任</li>
@@ -380,7 +484,7 @@
     </div>
 
     <!-- 来源声明 -->
-    <div class="text-center text-[10px] text-gray-400 py-1">
+    <div class="text-center text-xs text-gray-400 py-2">
       本项目基于 <a href="https://github.com/afoim/natureDrawImage" target="_blank" rel="noopener" class="text-gray-500 hover:text-gray-700 underline">natureDrawImage</a> 二次修改
     </div>
   </div>
@@ -443,8 +547,8 @@ document.querySelectorAll('#tab-bar button').forEach(btn => {
 // ==================== 生图模式切换 ====================
 function setMode(mode) {
   currentMode = mode;
-  const activeCls = 'flex-1 py-2 text-xs font-semibold rounded-xl transition-all bg-blue-500 text-white shadow-sm shadow-blue-200';
-  const inactiveCls = 'flex-1 py-2 text-xs font-semibold rounded-xl transition-all bg-white text-gray-500 border-2 border-gray-200 hover:border-blue-300';
+  const activeCls = 'flex-1 py-3 text-base font-semibold rounded-2xl transition-all bg-gradient-to-r from-pink-400 to-rose-400 text-white shadow-lg shadow-pink-300/30 active:scale-[0.98]';
+  const inactiveCls = 'flex-1 py-3 text-base font-semibold rounded-2xl transition-all bg-white/70 text-gray-400 border-2 border-pink-100 hover:border-pink-300 hover:text-gray-600';
   $('mode-txt2img').className = mode === 'txt2img' ? activeCls : inactiveCls;
   $('mode-img2img').className = mode === 'img2img' ? activeCls : inactiveCls;
   if (mode === 'txt2img') {
@@ -476,10 +580,11 @@ async function loadFeatured() {
     else { tipEl.classList.add('hidden'); }
     $('featured-gallery').innerHTML = items.map(it => {
       const url = '/api/output/file?path=' + encodeURIComponent(it.path);
+      const thumb = (it.thumb || url);
       const safe = _esc(it.path);
       const mt = it.mtime ? ` data-mtime="${it.mtime}"` : '';
       return `<a href="${url}" data-gallery="featured" data-title="${safe}" data-rel-path="${safe}"${mt} title="${safe}" class="glightbox block">
-        <img src="${url}" loading="lazy" decoding="async" class="w-full aspect-square object-cover rounded border bg-gray-50 hover:ring-2 hover:ring-amber-400" />
+        <img src="${thumb}" loading="lazy" decoding="async" class="w-full aspect-square object-cover rounded-lg border border-pink-100 bg-pink-50/30 hover:ring-2 hover:ring-amber-400 hover:shadow-lg transition-all" />
       </a>`;
     }).join('');
   } catch {}
@@ -488,12 +593,13 @@ async function loadFeatured() {
 // ==================== 画廊 ====================
 const galleryState = { total: 0, loaded: 0, initialSize: 10, moreSize: 10 };
 
-function galleryItemHTML(relPath, mtime) {
+function galleryItemHTML(relPath, mtime, thumbUrl) {
   const url = '/api/output/file?path=' + encodeURIComponent(relPath);
+  const thumb = thumbUrl || url;
   const safe = _esc(relPath);
   const mt = mtime ? ` data-mtime="${mtime}"` : '';
   return `<a href="${url}" data-gallery="main" data-title="${safe}" data-description="loading-prompt" data-rel-path="${safe}"${mt} title="${safe}" class="glightbox block">
-    <img src="${url}" loading="lazy" decoding="async" class="w-full aspect-square object-cover rounded border bg-gray-50 hover:ring-2 hover:ring-blue-400" />
+    <img src="${thumb}" loading="lazy" decoding="async" class="w-full aspect-square object-cover rounded-lg border border-pink-100 bg-pink-50/30 hover:ring-2 hover:ring-pink-400 hover:shadow-lg transition-all" />
   </a>`;
 }
 
@@ -508,7 +614,7 @@ async function loadGallery(reset = true) {
   const frag = document.createDocumentFragment();
   for (const it of (d.items || [])) {
     const wrap = document.createElement('div');
-    wrap.innerHTML = galleryItemHTML(it.path, it.mtime);
+    wrap.innerHTML = galleryItemHTML(it.path, it.mtime, it.thumb);
     frag.appendChild(wrap.firstElementChild);
   }
   $('gallery').appendChild(frag);
@@ -562,9 +668,10 @@ async function loadMyWorks(reset = true) {
       const safeTitle = _esc(it.prompt ? it.prompt : it.path);
       const timeStr = it.time ? new Date(it.time * 1000).toLocaleDateString() : '';
       const encPath = encodeURIComponent(it.path);
+      const thumbSrc = it.thumb || it.url;
       wrapper.innerHTML = `<a href="${_esc(it.url)}" data-gallery="myworks" data-title="${safeTitle}" data-rel-path="${_esc(it.path)}" class="glightbox block">
-        <img src="${_esc(it.url)}" loading="lazy" decoding="async" class="w-full aspect-square object-cover rounded border bg-gray-50 hover:ring-2 hover:ring-emerald-400" />
-        ${it.prompt ? `<div class="text-[9px] text-gray-500 truncate mt-0.5 pr-4">${_esc(it.prompt.slice(0, 30))}</div>` : ''}
+        <img src="${_esc(thumbSrc)}" loading="lazy" decoding="async" class="w-full aspect-square object-cover rounded-lg border border-pink-100 bg-pink-50/30 hover:ring-2 hover:ring-emerald-400 hover:shadow-lg transition-all" />
+        ${it.prompt ? `<div class="text-[10px] text-gray-500 truncate mt-1 pr-4">${_esc(it.prompt.slice(0, 30))}</div>` : ''}
       </a>
       <button data-del-path="${_esc(it.path)}" class="btn-del-mywork absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] leading-none opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700" title="删除">✕</button>`;
       frag.appendChild(wrapper);
@@ -700,7 +807,7 @@ function _wfCard(w, q) {
   const stem = w.path.replace(/\.json$/i, '');
   const thumb = w.thumbnail
     ? `<img src="/api/thumbnail?path=${encodeURIComponent(w.path)}" class="wf-thumb" loading="lazy" alt="" />`
-    : `<div class="wf-thumb flex items-center justify-center text-gray-300 text-[10px]">无图</div>`;
+    : `<div class="wf-thumb flex items-center justify-center text-gray-300 text-xs">无图</div>`;
   const isSelected = w.path === getCurrentPath();
   const cardCls = 'wf-card' + (isSelected ? ' selected' : '');
   const cat = (w.category || '').trim();
@@ -729,7 +836,7 @@ function renderList() {
     ? allWorkflows.filter(w => (w.path || '').toLowerCase().includes(q) || (w.category || '').toLowerCase().includes(q))
     : allWorkflows.slice();
   if (!filtered.length) {
-    $('wf-list').innerHTML = '<div class="p-4 text-gray-400 text-xs text-center">无匹配工作流</div>';
+    $('wf-list').innerHTML = '<div class="p-4 text-gray-400 text-sm text-center">无匹配工作流</div>';
     return;
   }
   if (q) {
@@ -820,8 +927,8 @@ async function loadResolutions() {
     $('res-presets').innerHTML = presets.map(p => {
       const sel = parseInt($('width').value) === p.w && parseInt($('height').value) === p.h;
       const cls = sel
-        ? 'px-2.5 py-1 bg-blue-500 text-white rounded-lg text-xs font-medium shadow-sm shadow-blue-200'
-        : 'px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 text-xs text-gray-600';
+        ? 'px-3 py-1.5 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl text-sm font-medium shadow-lg shadow-pink-300/30'
+        : 'px-3 py-1.5 bg-pink-50 border border-pink-200 rounded-xl hover:bg-pink-100 text-sm text-gray-600 transition-all';
       return `<button type="button" data-w="${p.w}" data-h="${p.h}" class="${cls}" title="${p.w}×${p.h}">${p.label ? _esc(p.label) : p.w + '×' + p.h}</button>`;
     }).join('');
   } catch {}
@@ -859,7 +966,7 @@ function renderStyles() {
     const cls = 'style-card' + (active ? ' selected' : '');
     const thumb = s.image
       ? `<img src="/api/style_thumbnail?name=${encodeURIComponent(s.image)}" class="style-thumb" loading="lazy" alt="" />`
-      : `<div class="style-thumb flex items-center justify-center text-gray-300 text-[10px]">无图</div>`;
+      : `<div class="style-thumb flex items-center justify-center text-gray-300 text-xs">无图</div>`;
     const label = _esc(s.name || s.tags);
     return `<div class="${cls}" data-style-tags="${_esc(s.tags)}" title="${_esc(s.tags)}">
       ${thumb}
@@ -869,7 +976,7 @@ function renderStyles() {
   const noAliasCount = allStyles.filter(s => !s.name).length;
   const showToggle = !sq && noAliasCount;
   const toggleHtml = showToggle
-    ? `<button id="style-toggle-btn" class="style-card flex items-center justify-center text-[11px] text-purple-600 font-medium" style="aspect-ratio:1">${showAllStyles ? '收起' : '更多<br/>('+noAliasCount+')'}</button>`
+    ? `<button id="style-toggle-btn" class="style-card flex items-center justify-center text-xs text-pink-500 font-medium" style="aspect-ratio:1">${showAllStyles ? '收起' : '更多<br/>('+noAliasCount+')'}</button>`
     : '';
   $('style-list').innerHTML = `<div class="style-grid">${cardsHtml}${toggleHtml}</div>`;
   document.querySelectorAll('.style-card').forEach(el => {
@@ -908,7 +1015,7 @@ function showGenNotice(direct, nl, neg, w, h) {
   m.classList.remove('hidden'); m.classList.add('flex');
   lockScroll(); m.dataset.locked = '1';
   const close = () => { m.classList.add('hidden'); m.classList.remove('flex'); if (m.dataset.locked) { unlockScroll(); delete m.dataset.locked; } };
-  $('gen-notice-accept').onclick = () => { close(); _genNoticeAcked = true; document.cookie = 'genNoticeAcked=1; path=/; max-age=31536000'; actuallyStartRun(direct, nl, neg, w, h); };
+  $('gen-notice-accept').onclick = () => { close(); _genNoticeAcked = true; document.cookie = 'genNoticeAcked=1; path=/; max-age=31536000; Secure; SameSite=Lax'; actuallyStartRun(direct, nl, neg, w, h); };
   $('gen-notice-cancel').onclick = close;
 }
 
@@ -1106,11 +1213,13 @@ function handleMsg(m) {
     appendLog(`✅ 完成，共 ${m.count} 张 — 请到「我的」查看`);
     $('progress-text').textContent = '完成，请到「我的」查看';
     _tabLoaded.myworks = false;  // 下次切换到"我的"时自动刷新
+    _pendingCooldownSec = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1;
     finishRun();
   }
   else if (m.type === 'error') {
     appendLog('❌ ' + m.message);
     $('progress-text').textContent = '失败: ' + m.message;
+    _pendingCooldownSec = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1;
     finishRun();
   }
   else if (m.type === 'headless_done') {
@@ -1118,27 +1227,16 @@ function handleMsg(m) {
   }
 }
 
-let _cooldownTimerId = 0;
+let _pendingCooldownSec = -1;  // 服务端返回的实际剩余冷却秒数，-1 表示用默认值
 function startCooldown(seconds) {
   const el = $('cooldown-timer');
   if (!el) return;
-  clearInterval(_cooldownTimerId);
   $('btn-run').disabled = true;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  const wait = m > 0 ? m + '分' + s + '秒' : s + '秒';
+  el.textContent = '⏳ 冷却等待中，预计 ' + wait + ' 后可提交';
   el.classList.remove('hidden');
-  const tick = () => {
-    if (seconds <= 0) {
-      clearInterval(_cooldownTimerId);
-      el.classList.add('hidden');
-      $('btn-run').disabled = false;
-      return;
-    }
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    el.textContent = '⏳ 冷却中 ' + (m > 0 ? m + '分' : '') + s + '秒 后可提交';
-    seconds--;
-  };
-  tick();
-  _cooldownTimerId = setInterval(tick, 1000);
 }
 
 let _finishing = false;
@@ -1151,7 +1249,9 @@ function finishRun() {
   pollMyQueue();
   // 生图完成后启动冷却倒计时（管理员豁免）
   if (!_currentUser || !_currentUser.is_admin) {
-    startCooldown(_cooldownDefault || 30);
+    const sec = _pendingCooldownSec >= 0 ? _pendingCooldownSec : (_cooldownDefault || 30);
+    _pendingCooldownSec = -1;
+    startCooldown(sec);
   }
 }
 
@@ -1262,6 +1362,10 @@ function connectStatus() {
       } else if (!activeWS) {
         $('queue-status').classList.add('hidden');
       }
+    }
+    else if (m.type === 'cooldown_done') {
+      $('cooldown-timer').classList.add('hidden');
+      $('btn-run').disabled = false;
     }
     else if (m.type === 'mirror') { if (activeWS) return; handleMsg(m.event); }
   };
@@ -1383,7 +1487,7 @@ function refreshLightbox() {}
 // ==================== GPU ====================
 function gpuBar(value, max, color) {
   const pct = (max && value != null) ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
-  return `<div class="relative bg-gray-200 rounded h-2 overflow-hidden"><div class="absolute inset-y-0 left-0 ${color}" style="width:${pct.toFixed(1)}%"></div></div>`;
+  return `<div class="relative bg-white/10 rounded h-2 overflow-hidden"><div class="absolute inset-y-0 left-0 ${color}" style="width:${pct.toFixed(1)}%"></div></div>`;
 }
 async function pollGPU() {
   try {
@@ -1391,7 +1495,7 @@ async function pollGPU() {
     const d = await r.json();
     if (d.poll_interval_ms && d.poll_interval_ms !== _gpuInterval) { _gpuInterval = d.poll_interval_ms; clearInterval(_gpuTimer); _gpuTimer = setInterval(pollGPU, _gpuInterval); }
     const bar = $('gpu-bar');
-    if (!d.available) { bar.classList.remove('hidden'); $('gpu-bar-meta').textContent = 'GPU 不可用'; $('gpu-bar-list').innerHTML = `<div class="text-[11px] text-red-600">⚠️ ${d.error || '未知错误'}</div>`; return; }
+    if (!d.available) { bar.classList.remove('hidden'); $('gpu-bar-meta').textContent = 'GPU 不可用'; $('gpu-bar-list').innerHTML = `<div class="text-xs text-red-500">⚠️ ${_esc(d.error || '未知错误')}</div>`; return; }
     bar.classList.remove('hidden');
     const gpus = d.gpus || [];
     $('gpu-bar-meta').textContent = gpus.length ? new Date().toLocaleTimeString() : '无 GPU';
@@ -1402,8 +1506,8 @@ async function pollGPU() {
       const pStr = (power != null && plim != null) ? `${power.toFixed(0)}/${plim.toFixed(0)}W` : (power != null ? `${power.toFixed(0)}W` : '?');
       const tempColor = temp >= 80 ? 'text-red-600' : temp >= 70 ? 'text-orange-600' : 'text-emerald-600';
       const utilColor = util >= 90 ? 'bg-red-500' : util >= 60 ? 'bg-amber-400' : 'bg-emerald-500';
-      const memColor = memPct >= 90 ? 'bg-red-500' : memPct >= 70 ? 'bg-amber-400' : 'bg-blue-500';
-      return `<div class="flex flex-wrap gap-2 items-center text-[10px]">
+      const memColor = memPct >= 90 ? 'bg-red-500' : memPct >= 70 ? 'bg-amber-400' : 'bg-pink-400';
+      return `<div class="flex flex-wrap gap-2 items-center text-xs">
         <span class="font-medium">${g.name || ''}</span>
         <span>GPU ${util}%</span> ${gpuBar(util, 100, utilColor)}
         <span>VRAM ${memU}/${memT}M</span> ${gpuBar(memU, memT, memColor)}
@@ -1465,7 +1569,7 @@ let _currentUser = null;
     const adminLink = $('admin-link');
     if (d.logged_in) {
       label.innerHTML = (d.avatar_url ? '<img src="' + _esc(d.avatar_url) + '" class="w-4 h-4 rounded-full inline"> ' : '') + _esc(d.login) + ' ▾';
-      label.className = 'px-1 py-0.5 rounded bg-blue-100 text-blue-700 cursor-pointer relative';
+      label.className = 'px-2 py-1 rounded-full bg-pink-50 text-pink-600 cursor-pointer relative font-medium';
       label.title = d.email || d.login;
 let _keyInfoRateTimes = [];  // 菜单刷新限速：每分钟最多 20 次
 function _renderKeyInfo(ki, isAdmin, accessGranted) {
@@ -1489,10 +1593,10 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
         if (menu) { menu.remove(); return; }
         const div = document.createElement('div');
         div.id = 'user-menu';
-        div.className = 'absolute right-0 top-full mt-1 bg-white rounded-lg shadow-lg border text-[10px] z-50 min-w-[100px]';
-        div.innerHTML = `<div class="px-2 py-1 text-gray-400 border-b">${_esc(d.login)}</div>
-          <div id="key-info-placeholder" class="px-2 py-1 text-gray-400">加载中...</div>
-          <button id="btn-logout" class="w-full text-left px-2 py-1.5 hover:bg-red-50 text-red-600 rounded-b-lg">🚪 退出登录</button>`;
+        div.className = 'absolute right-0 top-full mt-1 bg-white/95 backdrop-blur-xl rounded-xl shadow-xl border border-pink-100 text-xs z-50 min-w-[100px]';
+        div.innerHTML = `<div class="px-3 py-2 text-gray-400 border-b border-pink-100 text-xs">${_esc(d.login)}</div>
+          <div id="key-info-placeholder" class="px-3 py-2 text-gray-400 text-xs">加载中...</div>
+          <button id="btn-logout" class="w-full text-left px-3 py-2 hover:bg-red-50 text-red-500 rounded-b-xl text-xs transition-all">🚪 退出登录</button>`;
         label.style.position = 'relative';
         label.appendChild(div);
         div.querySelector('#btn-logout').onclick = async () => { await fetch('/auth/logout', {method:'POST'}); location.href = '/'; };
@@ -1508,14 +1612,14 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
             const html = _renderKeyInfo(fresh.key_info, fresh.is_admin, fresh.access_granted);
             const placeholder = div.querySelector('#key-info-placeholder');
             if (placeholder) {
-              placeholder.innerHTML = html || '<span class="text-gray-300">无密钥信息</span>';
+              placeholder.innerHTML = html || '<span class="text-gray-400">无密钥信息</span>';
               placeholder.classList.remove('text-gray-400');
             }
           } catch {}
         } else {
           const placeholder = div.querySelector('#key-info-placeholder');
           if (placeholder) {
-            placeholder.innerHTML = '<span class="text-gray-300">刷新太频繁，请稍后再试</span>';
+            placeholder.innerHTML = '<span class="text-gray-400">刷新太频繁，请稍后再试</span>';
             placeholder.classList.remove('text-gray-400');
           }
         }
@@ -1539,7 +1643,7 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
       if (d.cooldown_remaining > 0) { startCooldown(d.cooldown_remaining); }
     } else {
       label.textContent = '登录';
-      label.className = 'px-1 py-0.5 rounded bg-green-100 text-green-700 cursor-pointer';
+      label.className = 'px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 cursor-pointer font-medium';
       label.onclick = () => { location.href = '/auth/login'; };
       adminLink.classList.add('hidden');
     }
@@ -1567,14 +1671,14 @@ async function pollMyQueue() {
       if (hasMyTask) $('btn-run').disabled = true;
       if (running.length) {
         status.textContent = '⚡ 正在生成';
-        status.className = 'text-[10px] text-blue-600 font-medium';
+        status.className = 'text-xs text-blue-600 font-medium';
       } else if (waiting.length) {
         const pos = waiting[0].position;
         status.textContent = pos ? `⏳ 排队第 ${pos} 位` : '⏳ 排队中';
-        status.className = 'text-[10px] text-amber-600 font-medium';
+        status.className = 'text-xs text-amber-600 font-medium';
       } else {
         status.textContent = '✅ 空闲';
-        status.className = 'text-[10px] text-gray-400';
+        status.className = 'text-xs text-gray-400';
       }
       list.innerHTML = items.map(i => {
         const st = { waiting: '⏳ 等待', running: '⚡ 生成中', done: '✅ 完成', failed: '❌ 失败', cancelled: '✕ 取消' }[i.status] || _esc(i.status || '');
@@ -1594,6 +1698,24 @@ loadList().then(() => {
   // 如果已有选中的工作流则保持折叠，否则自动展开让用户选择
   if (!getCurrentPath()) toggleWfList(true);
 });
+
+// ==================== 樱花飘落动画 ====================
+(function initSakura() {
+  const petalCount = 7;
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < petalCount; i++) {
+    const petal = document.createElement('div');
+    petal.className = 'sakura-petal';
+    petal.textContent = '🌸';
+    petal.style.left = (Math.random() * 94) + '%';
+    petal.style.animationDuration = (12 + Math.random() * 18) + 's';
+    petal.style.animationDelay = (Math.random() * 15) + 's';
+    petal.style.fontSize = (14 + Math.random() * 16) + 'px';
+    petal.style.opacity = (0.3 + Math.random() * 0.5);
+    frag.appendChild(petal);
+  }
+  document.body.appendChild(frag);
+})();
 
 </script>
 </body>

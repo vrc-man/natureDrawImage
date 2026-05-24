@@ -53,13 +53,21 @@ SITE_URL = os.environ.get("SITE_URL", "")
 
 # 开发测试模式：设为 "1" 可跳过 GitHub OAuth，使用 /auth/dev_login 测试
 DEV_MODE = os.environ.get("DEV_MODE", "0") == "1"
+if DEV_MODE:
+    import sys as _sys
+    print("\n" + "=" * 60, file=_sys.stderr)
+    print("⚠️  [SECURITY] DEV_MODE=1 — CSRF 校验已完全绕过!", file=_sys.stderr)
+    print("⚠️  生产环境绝对不可启用，误设将导致严重安全漏洞", file=_sys.stderr)
+    print("=" * 60 + "\n", file=_sys.stderr)
 # ===================================
 
 import asyncio
 import hashlib
+import ipaddress
 import json
 import random
 import secrets
+import socket
 import time as _time_module
 import uuid
 from pathlib import Path
@@ -91,6 +99,7 @@ STATE_FILE = Path(__file__).parent / "state.json"
 OUTPUT_DIR = Path(OUTPUT_DIR_STR)
 STATIC_DIR = Path(__file__).parent / "static"
 THUMB_DIR = Path(__file__).parent / "thumbnails"
+THUMB_CACHE_DIR = Path(__file__).parent.parent / "thumb_cache"  # 缩略图磁盘缓存，<web/同级
 THUMB_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 LORA_LINKS_DIR = Path(__file__).parent / "lora_links"
 WORKFLOW_META_FILE = Path(__file__).parent / "workflow_meta.json"
@@ -319,7 +328,7 @@ async def _create_session(github_id: str) -> str:
     return token
 
 def _get_user_from_session(request: Request) -> Optional[dict]:
-    """从请求 cookie 中提取会话，返回用户字典或 None。"""
+    """从请求 cookie 中提取会话，返回用户字典或 None。活跃用户自动续期。"""
     token = request.cookies.get("session") or ""
     if not token:
         return None
@@ -327,12 +336,22 @@ def _get_user_from_session(request: Request) -> Optional[dict]:
     sess = sessions.get(token)
     if not sess:
         return None
-    if _time_module.time() > sess.get("expires_at", 0):
+    now = _time_module.time()
+    if now > sess.get("expires_at", 0):
         return None
+    # 滑动过期：剩余时间不足一半时自动续期为完整 30 天（每 token 每日最多续一次）
+    # 仅更新内存中的会话，持久化由后续 _save_sessions 触发（避免无锁写文件）
+    half_life = SESSION_MAX_AGE_SEC / 2
+    remaining = sess.get("expires_at", 0) - now
+    if remaining < half_life:
+        _last_refresh = _session_refresh_tracker.get(token, 0)
+        if now - _last_refresh > 86400:  # 24 小时内不重复续
+            sess["expires_at"] = now + SESSION_MAX_AGE_SEC
+            _session_refresh_tracker[token] = now
     users = _load_users()
     user = users.get(str(sess.get("github_id")))
     if user:
-        _user_last_seen[str(user.get("github_id", ""))] = _time_module.time()
+        _user_last_seen[str(user.get("github_id", ""))] = now
     return user
 
 def _get_user_from_request(request: Request) -> Optional[dict]:
@@ -396,6 +415,7 @@ _REPORT_RATE: Dict[str, List[float]] = {}
 _report_rate_lock = asyncio.Lock()
 _RATE_LAST_TS: Dict[str, float] = {}  # client_ip -> 上次开始生图的时间戳（用于生图冷却）
 _user_last_seen: Dict[str, float] = {}  # github_id -> 最后一次请求时间戳（用于在线状态判断）
+_session_refresh_tracker: Dict[str, float] = {}  # token -> 上次续期时间戳（限流用）
 _cooldown_lock = asyncio.Lock()
 _TRANSLATE_RATE: Dict[str, List[float]] = {}  # IP → 翻译请求时间戳列表
 _translate_rate_lock = asyncio.Lock()
@@ -426,7 +446,7 @@ DEFAULT_LIMITS = {
     "report_pending_max": 10,
     "gpu_poll_interval_ms": 5000,
     "gpu_cache_ttl_ms": 5000,
-    "gc_interval_hours": 6,
+    "gc_interval_hours": 0.5,
     "featured_tip": "💡 温馨提示：可以尝试 Fork 优秀作品二改哦！只收录非 R18、作画好看、无明显坏手坏脚、风格独特的作品。",
     "category_order": [],
 }
@@ -580,12 +600,23 @@ _CUSTOM_HEAD_DENY = _re.compile(
     r"|<\s*meta[\s>]"
     r"|<\s*base[\s>]"
     r"|<\s*style[\s>]|<\s*/\s*style"
-    r"|<\s*link[\s>][^>]*\brel\s*=\s*[\"']?\s*stylesheet",
+    r"|<\s*link[\s>]"
+    r"|<\s*img[\s>]"
+    r"|<\s*form[\s>]"
+    r"|<\s*input[\s>]"
+    r"|<\s*textarea[\s>]"
+    r"|<\s*button[\s>]"
+    r"|<\s*select[\s>]"
+    r"|<\s*option[\s>]"
+    r"|<\s*a\s+[^>]*\bhref\s*=\s*[\"']?\s*[^\"'>]",
     _re.IGNORECASE,
 )
 _CUSTOM_HEAD_ON_EVENT = _re.compile(r"[\s/>]on[a-z]+\s*=", _re.IGNORECASE)
+_CUSTOM_HEAD_CSS_URL = _re.compile(r"url\s*\(\s*[\"']?\s*(?:https?://|data:)", _re.IGNORECASE)
+_CUSTOM_HEAD_CSS_IMPORT = _re.compile(r"@import\s", _re.IGNORECASE)
 _CUSTOM_HEAD_JS_ATTRS = r"(?:href|src|action|formaction)\s*=\s*[\"']?\s*"
 _CUSTOM_HEAD_JS_URL = _re.compile(_CUSTOM_HEAD_JS_ATTRS + r"javascript:", _re.IGNORECASE)
+_CUSTOM_HEAD_JS_URL_VB = _re.compile(_CUSTOM_HEAD_JS_ATTRS + r"vbscript:", _re.IGNORECASE)
 # URL 编码绕过：java%73cript: 等（浏览器会解码后执行）
 _CUSTOM_HEAD_JS_URL_ENC = _re.compile(
     _CUSTOM_HEAD_JS_ATTRS + r"j\s*a\s*v\s*a\s*s\s*c\s*r\s*i\s*p\s*t\s*:",
@@ -600,17 +631,22 @@ import urllib.parse as _urlparse
 
 
 def _sanitize_custom_html(html: str) -> str:
-    """移除 custom_head 中危险的 HTML（script 标签、事件处理器、JS URL 等）。"""
+    """移除 custom_head 中危险的 HTML（script 标签、事件处理器、JS URL、CSS 外链等）。"""
     if not html or not html.strip():
         return ""
+    if len(html) > 100_000:  # 100KB 上限，防 ReDoS
+        html = html[:100_000]
     # 递归解码 HTML 实体（最多 5 层），每层都过全量过滤器
     cleaned = html
     for _ in range(5):
         cleaned = _CUSTOM_HEAD_DENY.sub("", cleaned)
         cleaned = _CUSTOM_HEAD_ON_EVENT.sub(" data-removed=", cleaned)
         cleaned = _CUSTOM_HEAD_JS_URL.sub(" data-removed=", cleaned)
+        cleaned = _CUSTOM_HEAD_JS_URL_VB.sub(" data-removed=", cleaned)
         cleaned = _CUSTOM_HEAD_JS_URL_ENC.sub(" data-removed=", cleaned)
         cleaned = _CUSTOM_HEAD_JS_ENC_PCT.sub(" data-removed=", cleaned)
+        cleaned = _CUSTOM_HEAD_CSS_URL.sub(" data-removed(", cleaned)
+        cleaned = _CUSTOM_HEAD_CSS_IMPORT.sub("/* blocked */", cleaned)
         try:
             decoded = _html_mod.unescape(cleaned)
             if decoded == cleaned:
@@ -622,8 +658,11 @@ def _sanitize_custom_html(html: str) -> str:
     cleaned = _CUSTOM_HEAD_DENY.sub("", cleaned)
     cleaned = _CUSTOM_HEAD_ON_EVENT.sub(" data-removed=", cleaned)
     cleaned = _CUSTOM_HEAD_JS_URL.sub(" data-removed=", cleaned)
+    cleaned = _CUSTOM_HEAD_JS_URL_VB.sub(" data-removed=", cleaned)
     cleaned = _CUSTOM_HEAD_JS_URL_ENC.sub(" data-removed=", cleaned)
     cleaned = _CUSTOM_HEAD_JS_ENC_PCT.sub(" data-removed=", cleaned)
+    cleaned = _CUSTOM_HEAD_CSS_URL.sub(" data-removed(", cleaned)
+    cleaned = _CUSTOM_HEAD_CSS_IMPORT.sub("/* blocked */", cleaned)
     return cleaned
 
 
@@ -802,7 +841,6 @@ def _encrypt_api_value(plaintext: str) -> str:
     except ImportError:
         return plaintext
     return "fernet:" + Fernet(key).encrypt(plaintext.encode()).decode()
-    return "fernet:" + Fernet(key).encrypt(plaintext.encode()).decode()
 
 
 def _decrypt_api_value(ciphertext: str) -> str:
@@ -932,13 +970,22 @@ async def _auto_dismiss_reports_for_image(image_path: str):
 
 
 def _is_trusted_proxy(client_host: str) -> bool:
-    """仅当直连 IP 是本机/内网代理时才信任转发头部（防伪造）。"""
+    """仅当直连 IP 是信任的反代 IP 时才信任转发头部（防伪造）。
+    同时读取 TRUSTED_PROXY_IPS 环境变量，与 uvicorn forwarded-allow-ips 保持一致。"""
     if not client_host:
         return False
-    # localhost / IPv6 loopback
+    # 拒绝通配符（"*" 太危险，只允许内网 + 明确指定的 IP）
+    if TRUSTED_PROXY_IPS == "*":
+        return client_host in ("127.0.0.1", "::1") or client_host.startswith(
+            ("127.0.0.", "10.", "172.16.", "192.168.")
+        )
+    # 显式信任列表
+    trusted = {ip.strip() for ip in TRUSTED_PROXY_IPS.split(",") if ip.strip()}
+    if client_host in trusted:
+        return True
+    # 回退：localhost 和内网（CF Tunnel 等场景）
     if client_host in ("127.0.0.1", "::1") or client_host.startswith("127.0.0."):
         return True
-    # 常见内网网段（CF Tunnel 的 cloudflared 一般在 localhost 或内网设备上）
     if client_host.startswith(("10.", "172.16.", "172.17.", "172.18.", "172.19.",
                                "172.20.", "172.21.", "172.22.", "172.23.",
                                "172.24.", "172.25.", "172.26.", "172.27.",
@@ -1134,9 +1181,10 @@ def _get_maintenance_html(message: str, nonce: str = "") -> str:
             _MAINTENANCE_TEMPLATE = tpl_path.read_text(encoding="utf-8")
             _MAINTENANCE_TEMPLATE_MTIME = mt
     except Exception:
-        fallback = f"<html><body><h1>站点维护中</h1><p>{message}</p></body></html>"
+        safe_msg = _html_mod.escape(message)
+        fallback = f"<html><body><h1>站点维护中</h1><p>{safe_msg}</p></body></html>"
         return _inject_script_nonce(fallback, nonce) if nonce else fallback
-    safe = message.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    safe = _html_mod.escape(message).replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     html = _MAINTENANCE_TEMPLATE.replace("{{MESSAGE}}", safe)
     ch = _custom_head
     if ch.get("enabled") and ch.get("html", "").strip():
@@ -1156,7 +1204,7 @@ async def _maintenance_middleware(request: Request, call_next):
     # 维护模式下允许管理员通过 WebSocket 生图
     if path.startswith("/ws/"):
         try:
-            session_token = request.cookies.get("session_token", "")
+            session_token = request.cookies.get("session", "")
             if session_token:
                 sessions = _load_sessions()
                 sess = sessions.get(session_token, {})
@@ -1216,10 +1264,18 @@ async def _no_index_headers(request: Request, call_next):
     resp.headers["X-Frame-Options"] = "DENY"
     resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     resp.headers["X-XSS-Protection"] = "0"  # 废弃头，设为 0 禁用不安全的旧版过滤器
+    resp.headers["Permissions-Policy"] = (
+        "accelerometer=(), ambient-light-sensor=(), autoplay=(), battery=(), "
+        "camera=(), display-capture=(), document-domain=(), encrypted-media=(), "
+        "fullscreen=(), gamepad=(), geolocation=(), gyroscope=(), "
+        "magnetometer=(), microphone=(), midi=(), payment=(), "
+        "picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), "
+        "serial=(), usb=(), xr-spatial-tracking=()"
+    )
     nonce = getattr(request.state, "csp_nonce", "")
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        f"script-src 'self' 'nonce-{nonce}' https://cdn.tailwindcss.com https://cdn.jsdelivr.net; "
+        f"script-src 'self' 'nonce-{nonce}'; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob: https:; "
         "frame-src 'self'; "
@@ -1528,6 +1584,30 @@ async def _run_gc():
             pass
     cleaned["orphan_creator_entries"] = orphan_count
 
+    # 3b. 清理孤儿缩略图（原图已不存在的缓存）
+    orphan_thumbs = 0
+    if THUMB_CACHE_DIR.exists():
+        for tp in THUMB_CACHE_DIR.rglob("*.webp"):
+            if not tp.is_file():
+                continue
+            try:
+                rel_no_ext = tp.relative_to(THUMB_CACHE_DIR).with_suffix("")
+                rel_str = str(rel_no_ext).replace("\\", "/")
+                found = False
+                for ext in (".png", ".jpg", ".jpeg", ".gif"):
+                    src = (OUTPUT_DIR / str(rel_no_ext)).with_suffix(ext)
+                    if src.is_file():
+                        found = True
+                        break
+                if not found:
+                    tp.unlink()
+                    orphan_thumbs += 1
+            except Exception:
+                pass
+    if orphan_thumbs:
+        print(f"[gc] 清理孤儿缩略图: {orphan_thumbs} 个")
+    cleaned["orphan_thumbs"] = orphan_thumbs
+
     # 4. 重试清理标记删除但残留的文件（首次删除失败 / 服务重启丢失后台任务）
     deleted = _load_deleted_images()
     gc_deleted = 0
@@ -1543,6 +1623,7 @@ async def _run_gc():
             try:
                 if fp.is_file():
                     fp.unlink()
+                    _clean_thumb_for_path(rel_path)
                     print(f"[GC] 补删标记文件: {rel_path}")
                     gc_deleted += 1
                     ok = True
@@ -1596,9 +1677,10 @@ async def _run_gc():
         for ip in stale_admin:
             del _admin_rate_buckets[ip]
     # 6. 清理过期的 headless 完成记录（超过 1 小时）
-    stale_hc = [k for k, v in _headless_completed.items() if now - v.get("time", 0) > 3600]
-    for k in stale_hc:
-        del _headless_completed[k]
+    async with _headless_lock:
+        stale_hc = [k for k, v in _headless_completed.items() if now - v.get("time", 0) > 3600]
+        for k in stale_hc:
+            del _headless_completed[k]
     cleaned["headless_completed_entries"] = len(stale_hc)
 
     # 6. 清理过期会话
@@ -1654,7 +1736,7 @@ async def _backup_data_files():
 async def _gc_loop():
     """后台 GC 循环，按 gc_interval_hours 定时执行。"""
     while True:
-        interval_h = float(_limits.get("gc_interval_hours", 6))
+        interval_h = float(_limits.get("gc_interval_hours", 0.5))
         if interval_h <= 0:
             await asyncio.sleep(3600)
             continue
@@ -1711,6 +1793,51 @@ async def _cleanup_expired_access_keys():
         print(f"[startup] 清理过期密钥失败: {e}")
 
 
+
+async def _ensure_thumb_cache():
+    """启动时扫描 OUTPUT_DIR，为缺失缩略图的文件批量生成，mtime 倒序优先处理最新"""
+    if not OUTPUT_DIR.exists():
+        return
+    # 先清理孤儿缩略图（原图已不存在的缓存）
+    if THUMB_CACHE_DIR.exists():
+        orphan = 0
+        for tp in THUMB_CACHE_DIR.rglob("*.webp"):
+            if not tp.is_file():
+                continue
+            try:
+                rel_no_ext = tp.relative_to(THUMB_CACHE_DIR).with_suffix("")
+                found = False
+                for ext in (".png", ".jpg", ".jpeg", ".gif"):
+                    if (OUTPUT_DIR / str(rel_no_ext)).with_suffix(ext).is_file():
+                        found = True
+                        break
+                if not found:
+                    tp.unlink()
+                    orphan += 1
+            except Exception:
+                pass
+        if orphan:
+            print(f"[thumb] 启动清理孤儿缩略图: {orphan} 个")
+    # 再扫描缺失缩略图的文件
+    files = []
+    for p in OUTPUT_DIR.rglob("*"):
+        if not p.is_file():
+            continue
+        if p.suffix.lower() not in OUTPUT_IMAGE_EXTS:
+            continue
+        try:
+            rel = p.resolve().relative_to(OUTPUT_DIR.resolve()).as_posix()
+        except Exception:
+            continue
+        if not _thumb_exists(rel):
+            files.append((p.stat().st_mtime, rel))
+    if not files:
+        return
+    files.sort(key=lambda x: -x[0])
+    rels = [r for _, r in files]
+    print(f"[thumb] 启动扫描: 需生成 {len(rels)} 张缩略图")
+    _safe_task(_async_batch_generate_thumbs(rels, OUTPUT_DIR_STR), "startup_thumbs")
+
 async def _cleanup_stale_deleted_entries():
     """启动时同步 deleted_images.json：清理已不存在的文件记录，补删残留的磁盘文件。"""
     try:
@@ -1749,32 +1876,34 @@ async def _cleanup_stale_user_images():
     """启动时清理 user_images.json 中磁盘文件已不存在的死记录（手动删磁盘文件等场景）。"""
     try:
         output_dir = OUTPUT_DIR.resolve()
-        data = _load_user_images()
-        if not data:
-            return
         changed = False
         total_removed = 0
-        for uid in list(data.keys()):
-            entries = data[uid]
-            kept = []
-            for e in entries:
-                rel = (e.get("path") or "").replace("\\", "/")
-                try:
-                    fp = (OUTPUT_DIR / rel.lstrip("/")).resolve()
-                    if _is_safe_subpath(fp, output_dir) and fp.is_file():
+        async with _user_images_lock:
+            data = _load_user_images()
+            if not data:
+                return
+            for uid in list(data.keys()):
+                entries = data[uid]
+                kept = []
+                for e in entries:
+                    rel = (e.get("path") or "").replace("\\", "/")
+                    try:
+                        fp = (OUTPUT_DIR / rel.lstrip("/")).resolve()
+                        if _is_safe_subpath(fp, output_dir) and fp.is_file():
+                            kept.append(e)
+                        else:
+                            total_removed += 1
+                    except Exception:
                         kept.append(e)
-                    else:
-                        total_removed += 1
-                except Exception:
-                    kept.append(e)
-            if len(kept) < len(entries):
-                changed = True
-            if kept:
-                data[uid] = kept
-            else:
-                del data[uid]
+                if len(kept) < len(entries):
+                    changed = True
+                if kept:
+                    data[uid] = kept
+                else:
+                    del data[uid]
+            if changed:
+                _save_json(USER_IMAGES_FILE, data)
         if changed:
-            _save_json(USER_IMAGES_FILE, data)
             print(f"[startup] user_images.json 清理了 {total_removed} 条死记录")
     except Exception as e:
         print(f"[startup] 清理 user_images 失败: {e}")
@@ -1788,6 +1917,7 @@ async def _start_gc():
     _safe_task(_cleanup_stale_deleted_entries(), "cleanup_stale_deleted")
     _safe_task(_recover_queue_on_startup(), "recover_queue")
     _safe_task(_backup_data_files(), "startup_backup")
+    _safe_task(_ensure_thumb_cache(), "ensure_thumb_cache")
     _gc_task = _safe_task(_gc_loop(), "gc_loop")
 
 
@@ -1815,12 +1945,102 @@ _WEBP_CACHE: "Dict[Tuple[str, float, str], bytes]" = {}
 _WEBP_CACHE_MAX = 64  # LRU 上限，防止内存爆掉
 
 
+# ==================== 缩略图缓存 ====================
+
+def _thumb_cache_path(output_rel: str) -> Path:
+    """OUTPUT_DIR 相对路径 -> thumb_cache 下的 .webp 路径"""
+    p = Path(output_rel.replace("\\", "/")).with_suffix(".webp")
+    safe = str(p).lstrip("/").lstrip("\\")
+    if ".." in safe:
+        raise ValueError("invalid path")
+    full = (THUMB_CACHE_DIR / safe).resolve()
+    if not full.is_relative_to(THUMB_CACHE_DIR.resolve()):
+        raise ValueError("path escapes thumb cache dir")
+    return full
+
+
+def _thumb_exists(output_rel: str) -> bool:
+    return _thumb_cache_path(output_rel).is_file()
+
+
+def _generate_thumb(src_path: Path, output_rel: str, *, short_side: int = 512, quality: int = 80) -> bool:
+    """生成单张缩略图，返回是否成功，跑在线程池里"""
+    try:
+        from PIL import Image
+        Image.MAX_IMAGE_PIXELS = _PIL_MAX_PIXELS
+        im = Image.open(src_path)
+        if im.mode == "P":
+            im = im.convert("RGBA" if "transparency" in im.info else "RGB")
+        elif im.mode not in ("RGB", "RGBA", "L"):
+            im = im.convert("RGBA")
+        w, h = im.size
+        short = min(w, h)
+        if short > short_side:
+            ratio = short_side / short
+            im = im.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+        dst = _thumb_cache_path(output_rel)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        im.save(dst, format="WEBP", quality=quality, method=4)
+        return True
+    except Exception as e:
+        print(f"[thumb] 生成失败 {output_rel}: {e}")
+        return False
+
+
+def _clean_thumb_for_path(rel_path: str) -> bool:
+    """删除指定路径对应的缩略图缓存"""
+    try:
+        tp = _thumb_cache_path(rel_path)
+        if tp.is_file():
+            tp.unlink()
+            return True
+    except Exception:
+        pass
+    return False
+
+
+# ==================== 批量缩略图生成 ====================
+
+from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+
+_THUMB_WORKERS = 4
+
+
+def _batch_generate_thumbs(rels: List[str], output_dir_str: str) -> Tuple[int, int, int]:
+    """并发生成缩略图，返回 (success, fail, total)"""
+    output_dir = Path(output_dir_str)
+    tasks = []
+    for rel in rels:
+        if _thumb_exists(rel):
+            continue
+        src = (output_dir / rel.replace("/", os.sep)).resolve()
+        if src.is_file():
+            tasks.append((src, rel))
+    if not tasks:
+        return 0, 0, len(rels)
+    success = fail = 0
+    with ThreadPoolExecutor(max_workers=_THUMB_WORKERS) as ex:
+        futures = {ex.submit(_generate_thumb, s, r): r for s, r in tasks}
+        for f in _as_completed(futures):
+            if f.result():
+                success += 1
+            else:
+                fail += 1
+    return success, fail, len(tasks)
+
+
+async def _async_batch_generate_thumbs(rels: List[str], output_dir_str: str) -> Tuple[int, int, int]:
+    return await asyncio.to_thread(_batch_generate_thumbs, rels, output_dir_str)
+
+
 def _accepts_webp(request: Request) -> bool:
     return "image/webp" in (request.headers.get("accept", "") or "").lower()
 
 
 def _encode_webp(src_bytes: bytes, *, quality: int = 80, max_side: Optional[int] = None) -> bytes:
     """把任意图片字节编码为 webp。max_side 给定时按最长边等比缩放。"""
+    if len(src_bytes) > 50 * 1024 * 1024:  # 50MB 上限，防内存耗尽
+        raise ValueError("图片数据过大")
     from io import BytesIO
     from PIL import Image
     Image.MAX_IMAGE_PIXELS = _PIL_MAX_PIXELS  # 防解压炸弹
@@ -2451,6 +2671,7 @@ async def _llm_google(system: str, user: str, cfg: Dict[str, Any], on_chunk: Opt
     return full
 
 
+
 async def _llm_openai_compat(system: str, user: str, endpoint: str,
                              api_key: str, model: str, on_chunk: Optional[Any],
                              use_stream: bool = True) -> str:
@@ -2536,7 +2757,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="robots" content="noindex, nofollow" />
 <title>二次元绘梦</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="/static/tailwind.min.css" />
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
 <div class="bg-white rounded-xl shadow-lg max-w-md w-full p-8 text-center space-y-5">
@@ -2674,7 +2895,7 @@ async def auth_login(request: Request):
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>开发登录 · 二次元绘梦</title>
-<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="/static/tailwind.min.css" />
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center">
 <div class="bg-white rounded shadow p-8 w-full max-w-sm">
@@ -2717,7 +2938,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {{
     }
     qs = "&".join(f"{k}={v}" for k, v in params.items())
     resp = Response(status_code=302, headers={"Location": f"https://github.com/login/oauth/authorize?{qs}"})
-    resp.set_cookie("oauth_state", state, max_age=600, httponly=True, samesite="lax",
+    resp.set_cookie("oauth_state", state, max_age=600, httponly=True, samesite="strict",
                     secure=redirect_uri.startswith("https"))
     return resp
 
@@ -2754,8 +2975,8 @@ async def auth_callback(request: Request, code: str = "", error: str = "", state
     token_data = token_resp.json()
     access_token = token_data.get("access_token", "")
     if not access_token:
-        err_desc = token_data.get("error_description", token_data.get("error", "unknown"))
-        raise HTTPException(400, f"获取 access_token 失败: {err_desc}")
+        print(f"[OAuth] GitHub token 错误: {token_data.get('error', 'unknown')} - {token_data.get('error_description', '')}")
+        raise HTTPException(400, "GitHub 授权失败，请重新登录")
 
     # 2. 获取用户信息
     gh_user = await _github_api("/user", access_token)
@@ -3108,7 +3329,8 @@ async def api_output_list(request: Request, limit: int = 500, offset: int = 0):
         "exists": True,
         "total": total,
         "items": [
-            {"path": rel, "mtime": mt, "size": sz} for (mt, rel, sz) in sliced
+            {"path": rel, "mtime": mt, "size": sz, "thumb": f"/api/output/thumb?path={_urlparse.quote(rel, safe='')}"}
+            for (mt, rel, sz) in sliced
         ],
     }
 
@@ -3137,7 +3359,7 @@ async def api_output_featured(request: Request):
             mt = p.stat().st_mtime
         except Exception:
             mt = None
-        items.append({"path": rel, "mtime": mt})
+        items.append({"path": rel, "mtime": mt, "thumb": f"/api/output/thumb?path={_urlparse.quote(rel, safe='')}"})
     return {"items": items, "total": len(items), "tip": _limits.get("featured_tip", "")}
 
 
@@ -3161,6 +3383,42 @@ async def api_output_file(request: Request, path: str, full: int = 0):
         media = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, f"image/{ext}")
         return FileResponse(str(p), media_type=media)
     return _serve_image_maybe_webp(request, p, quality=82, max_side=1600)
+
+
+@app.get("/api/output/thumb")
+async def api_output_thumb(request: Request, path: str):
+    """返回缓存的缩略图（短边 512px WebP），鉴权同 /api/output/file"""
+    user = _get_user_from_session(request)
+    if not user:
+        raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
+    if user.get("role") != "admin":
+        # 普通用户：自己的作品或精选图片可看缩略图
+        github_id = str(user.get("github_id", ""))
+        user_images = _load_user_images().get(github_id, [])
+        owned = {i.get("path", "").replace("\\", "/") for i in user_images}
+        if path.replace("\\", "/") not in owned:
+            featured = set(_read_featured())
+            if path.replace("\\", "/") not in featured:
+                raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
+    if not _validate_rel_path(path):
+        raise HTTPException(400, "无效路径")
+    # 检查图片是否已被标记删除
+    deleted_paths: set = set()
+    for paths in _load_deleted_images().values():
+        for p in paths:
+            deleted_paths.add(p.replace("\\", "/"))
+    if path.replace("\\", "/") in deleted_paths:
+        raise HTTPException(404, "not found")
+    tp = _thumb_cache_path(path)
+    if not tp.is_file():
+        src = _resolve_output_path(path)
+        success = await asyncio.to_thread(_generate_thumb, src, path)
+        if not success:
+            raise HTTPException(404, "缩略图不可用")
+    if not tp.is_file() or tp.resolve() != tp:
+        raise HTTPException(404, "缩略图不可用")
+    return FileResponse(str(tp), media_type="image/webp",
+                        headers={"Cache-Control": "public, max-age=3600"})
 
 
 def _extract_positive_from_prompt_json(prompt_json: Dict[str, Any]) -> str:
@@ -3281,6 +3539,8 @@ def _read_png_text_chunk(path: Path, key: str) -> str:
                 if len(head) < 8:
                     return ""
                 length, ctype = struct.unpack(">I4s", head)
+                if length > 16 * 1024 * 1024:  # 单个 chunk 上限 16MB，防内存耗尽
+                    return ""
                 data = f.read(length)
                 f.read(4)  # crc
                 if ctype == b"IEND":
@@ -3369,12 +3629,15 @@ async def api_output_fork(request: Request, payload: Dict[str, Any]):
         raw_wf = _read_png_text_chunk(p, "prompt")
         fmt = "api"
     if not isinstance(raw_wf, str) or not raw_wf.strip():
-        keys = list(info.keys())
-        raise HTTPException(400, f"图片中没有 workflow / prompt 元信息（可读字段: {keys}）")
+        print(f"[fork] PNG 无 workflow/prompt 元信息 path={rel} keys={list(info.keys())}")
+        raise HTTPException(400, "图片中没有可提取的工作流信息，请使用 ComfyUI 生成的原图")
+    if len(raw_wf) > 2 * 1024 * 1024:
+        raise HTTPException(400, "工作流数据过大")
     try:
         wf_json = json.loads(raw_wf)
     except Exception as e:
-        raise HTTPException(400, f"workflow 元信息解析失败: {e}")
+        print(f"[fork] JSON 解析失败 path={rel}: {type(e).__name__}: {e}")
+        raise HTTPException(400, "工作流数据已损坏，无法解析")
 
     pd, positive_ref, negative_ref = workflow_to_prompt_api(wf_json)
     res = detect_default_resolution(pd)
@@ -3564,6 +3827,14 @@ def extract_loras(prompt_dict: Dict[str, Any]) -> List[str]:
 
 @app.get("/api/image")
 async def api_image(request: Request, filename: str, subfolder: str = "", type: str = "output"):
+    if not _validate_rel_path(filename):
+        raise HTTPException(400, "文件名不合法")
+    if subfolder and not _validate_rel_path(subfolder):
+        raise HTTPException(400, "子目录不合法")
+    if type not in ("output", "input", "temp"):
+        raise HTTPException(400, "type 参数不合法")
+    if len(filename) > 256 or len(subfolder) > 256:
+        raise HTTPException(400, "路径过长")
     # 所有权验证：普通用户只能看自己的图，管理员不受限
     user = _get_user_from_session(request)
     if user and user.get("role") != "admin":
@@ -3691,6 +3962,14 @@ async def api_translate(request: Request, payload: Dict[str, Any]):
     prompt = payload.get("prompt", "")
     if not prompt:
         raise HTTPException(400, "prompt required")
+    if len(prompt) > 3500:
+        raise HTTPException(400, "prompt 过长，最多 3500 字符")
+    orig = payload.get("original_prompt") or ""
+    neg = payload.get("negative_prompt") or ""
+    if len(orig) > 4000:
+        raise HTTPException(400, "original_prompt 过长，最多 4000 字符")
+    if len(neg) > 2000:
+        raise HTTPException(400, "negative_prompt 过长，最多 2000 字符")
     try:
         positive, negative = await translate_prompt(
             prompt,
@@ -3823,7 +4102,7 @@ async def api_img2img_upload(request: Request, image1: UploadFile, image2: Optio
             raise HTTPException(413, f"{label} 图片有问题，请换一张重新上传")
         ext = "jpg"  # 统一输出 jpg
         safe_name = f"img2img_{uuid.uuid4().hex[:12]}_{int(_time_module.time())}.{ext}"
-        uploads_dir = Path(__file__).parent / "static" / "uploads"
+        uploads_dir = Path(__file__).parent / "uploads"
         uploads_dir.mkdir(parents=True, exist_ok=True)
         (uploads_dir / safe_name).write_bytes(raw)
         async with httpx.AsyncClient(timeout=30) as client:
@@ -3863,20 +4142,46 @@ class RunRequest(BaseModel):
             raise ValueError("输入过长，最多 10000 字符")
         return v
 
+    @field_validator("image1_name", "image2_name")
+    @classmethod
+    def _check_image_name(cls, v: str) -> str:
+        if not v:
+            return v
+        if len(v) > 256:
+            raise ValueError("图片名过长")
+        if ".." in v or v.startswith(("/", "\\")):
+            raise ValueError("图片名包含非法字符")
+        if not _re.match(r'^[a-zA-Z0-9._\-]+$', v):
+            raise ValueError("图片名包含非法字符")
+        return v
+
+    @field_validator("workflow_path")
+    @classmethod
+    def _check_workflow_path(cls, v: str) -> str:
+        if len(v) > 512:
+            raise ValueError("工作流路径过长")
+        return v
+
 
 # 单一并发锁 + 任务队列
 _run_lock = asyncio.Lock()
 _queue_lock = asyncio.Lock()
 _task_queue: List[Dict[str, Any]] = []
 _queue_id_counter = 0
+_task_generation_seq = 0  # 递增计数器，配合 _cancel_flag TOCTOU 防护
+_current_run_task = None  # asyncio.Task | None — 正在执行的 _process_queue 任务引用，供 force-unlock 取消
 _MAX_QUEUE_SIZE = 500  # 任务队列上限，防止恶意提交耗尽内存
 QUEUE_STATE_FILE = Path(__file__).parent / "queue_state.json"
 # 广播：所有打开 /ws/status 的客户端
 _status_subscribers: "set[WebSocket]" = set()
 _ws_user_map: "dict[int, str]" = {}  # id(ws) → github_id，封禁时用于断开 WS
 _ws_ip_map: "dict[int, str]" = {}    # id(ws) → client_ip，IP 封禁时用于断开 WS
+_cooldown_tasks: Dict[str, asyncio.Task] = {}  # client_ip → 冷却到期推送任务
 _headless_completed: "dict[str, dict]" = {}  # github_id → 最近一次 headless 完成信息
 _ws_per_ip_lock = asyncio.Lock()  # 保护以下两个计数器
+_ws_sub_lock = asyncio.Lock()  # 保护 _status_subscribers / _ws_user_map / _ws_ip_map
+_headless_lock = asyncio.Lock()  # 保护 _headless_completed
+_event_lock = asyncio.Lock()  # 保护 _event_log / _active_status
 _ws_run_per_ip: Dict[str, int] = {}     # IP → /ws/run 连接数
 _ws_status_per_ip: Dict[str, int] = {}  # IP → /ws/status 连接数
 _WS_RUN_MAX_PER_IP = 3
@@ -3980,14 +4285,18 @@ async def _broadcast_queue() -> None:
 
 async def _broadcast(msg: Dict[str, Any]) -> None:
     """广播消息给所有状态订阅者，5s 超时自动踢掉死连接。"""
+    async with _ws_sub_lock:
+        snapshot = list(_status_subscribers)
     dead = []
-    for sub in list(_status_subscribers):
+    for sub in snapshot:
         try:
             await asyncio.wait_for(sub.send_json(msg), timeout=5)
         except (Exception, asyncio.TimeoutError):
             dead.append(sub)
-    for d in dead:
-        _status_subscribers.discard(d)
+    if dead:
+        async with _ws_sub_lock:
+            for d in dead:
+                _status_subscribers.discard(d)
 
 
 # emit() 不再广播任何业务事件给所有订阅者（防止隐私泄漏和 UI 混乱）
@@ -3995,12 +4304,38 @@ async def _broadcast(msg: Dict[str, Any]) -> None:
 _PUBLIC_EVENT_TYPES: set = set()
 
 
+async def _notify_cooldown_expired(client_ip: str) -> None:
+    """冷却到期后推送解锁消息给对应 IP 的状态 WebSocket。"""
+    async with _ws_sub_lock:
+        snapshot = [(sub, _ws_ip_map.get(id(sub))) for sub in _status_subscribers]
+    for sub, sub_ip in snapshot:
+        if sub_ip == client_ip:
+            try:
+                await asyncio.wait_for(sub.send_json({"type": "cooldown_done"}), timeout=5)
+            except (Exception, asyncio.TimeoutError):
+                pass
+
+
+def _schedule_cooldown_notify(client_ip: str, delay_sec: int) -> None:
+    """在 delay_sec 秒后通过状态 WS 通知前端冷却已结束。"""
+    old = _cooldown_tasks.pop(client_ip, None)
+    if old and not old.done():
+        old.cancel()
+
+    async def _wait_and_notify():
+        await asyncio.sleep(delay_sec)
+        await _notify_cooldown_expired(client_ip)
+
+    _cooldown_tasks[client_ip] = _safe_task(_wait_and_notify(), f"cooldown_{client_ip}")
+
+
 async def emit(ws: Optional[WebSocket], msg: Dict[str, Any]) -> None:
     """发送业务事件到指定 ws。仅公开事件写入回放日志并广播给 /ws/status 订阅者。"""
     if msg.get("type") in _PUBLIC_EVENT_TYPES:
-        _event_log.append(msg)
-        if len(_event_log) > 300:
-            _event_log[:] = _event_log[-300:]
+        async with _event_lock:
+            _event_log.append(msg)
+            if len(_event_log) > 300:
+                _event_log[:] = _event_log[-300:]
         await _broadcast({"type": "mirror", "event": msg})
     if ws is not None:
         try:
@@ -4012,14 +4347,15 @@ async def emit(ws: Optional[WebSocket], msg: Dict[str, Any]) -> None:
 async def _push_status(patch: Optional[Dict[str, Any]] = None, *, reset: bool = False) -> None:
     """更新 _active_status 并向所有订阅者广播。"""
     global _active_status
-    if reset:
-        _active_status = None
-        _event_log.clear()
-    elif patch:
-        if _active_status is None:
-            _active_status = {"busy": True}
-        _active_status.update(patch)
-    snap = {"type": "status", "online": len(_status_subscribers), "queue_size": len(_task_queue), **(_active_status or _idle_snapshot())}
+    async with _event_lock:
+        if reset:
+            _active_status = None
+            _event_log.clear()
+        elif patch:
+            if _active_status is None:
+                _active_status = {"busy": True}
+            _active_status.update(patch)
+        snap = {"type": "status", "online": len(_status_subscribers), "queue_size": len(_task_queue), **(_active_status or _idle_snapshot())}
     await _broadcast(snap)
 
 
@@ -4029,10 +4365,15 @@ def _check_csrf(request: Request) -> bool:
         return True
     origin = (request.headers.get("origin") or "").rstrip("/")
     referer = (request.headers.get("referer") or "").rstrip("/")
+    site = SITE_URL.rstrip("/")
+    path = request.url.path
+    # 对管理员路径：强制要求 Origin（不允许无头请求）
+    if not origin and path.startswith(("/admin", "/api/admin")):
+        return False
     # 非浏览器客户端通常不发送 Origin/Referer（如 curl、脚本），放行
+    # SameSite=Lax Cookie 已在浏览器层面提供 CSRF 防护
     if not origin and not referer:
         return True
-    site = SITE_URL.rstrip("/")
     # Origin 是最可靠的 CSRF 指标，优先使用
     if origin:
         return origin == site
@@ -4198,13 +4539,15 @@ async def ws_status(ws: WebSocket):
                 return
             if ws_ip:
                 _ws_status_per_ip[ws_ip] = _ws_status_per_ip.get(ws_ip, 0) + 1
-        _status_subscribers.add(ws)
-        _ws_user_map[id(ws)] = str(user.get("github_id", ""))
-        if ws_ip:
-            _ws_ip_map[id(ws)] = ws_ip
-        await _broadcast({"type": "online", "count": len(_status_subscribers)})
+        async with _ws_sub_lock:
+            _status_subscribers.add(ws)
+            _ws_user_map[id(ws)] = str(user.get("github_id", ""))
+            if ws_ip:
+                _ws_ip_map[id(ws)] = ws_ip
+            online_count = len(_status_subscribers)
+        await _broadcast({"type": "online", "count": online_count})
         try:
-            await ws.send_json({"type": "status", "online": len(_status_subscribers), **(_active_status or _idle_snapshot())})
+            await ws.send_json({"type": "status", "online": online_count, **(_active_status or _idle_snapshot())})
             # 回放最近事件（限制 200 条防止内存/带宽压力）
             for evt in _event_log[-200:]:
                 await ws.send_json({"type": "mirror", "event": evt})
@@ -4223,9 +4566,11 @@ async def ws_status(ws: WebSocket):
         except Exception:
             pass
         finally:
-            _status_subscribers.discard(ws)
-            _ws_user_map.pop(id(ws), None)
-            _ws_ip_map.pop(id(ws), None)
+            async with _ws_sub_lock:
+                _status_subscribers.discard(ws)
+                _ws_user_map.pop(id(ws), None)
+                _ws_ip_map.pop(id(ws), None)
+                online_count = len(_status_subscribers)
             if ws_ip:
                 async with _ws_per_ip_lock:
                     cnt = _ws_status_per_ip.get(ws_ip, 0) - 1
@@ -4233,7 +4578,7 @@ async def ws_status(ws: WebSocket):
                         _ws_status_per_ip.pop(ws_ip, None)
                     else:
                         _ws_status_per_ip[ws_ip] = cnt
-            await _broadcast({"type": "online", "count": len(_status_subscribers)})
+            await _broadcast({"type": "online", "count": online_count})
 
 
     finally:
@@ -4241,41 +4586,47 @@ async def ws_status(ws: WebSocket):
 
 async def _process_queue() -> None:
     """处理队列中的下一个任务。"""
-    global _cancel_flag, _current_task_info, _task_queue
-    if not _task_queue:
-        return
+    global _cancel_flag, _current_task_info, _task_queue, _current_run_task
+
     if _run_lock.locked():
         return
 
-    # 取出第一个等待中的任务
-    next_item = None
-    for qi in _task_queue:
-        if qi["status"] == "waiting":
-            next_item = qi
-            break
+    async with _queue_lock:
+        if not _task_queue:
+            return
 
-    if next_item is None:
-        # 清理已完成/失败的任务
-        _task_queue[:] = [qi for qi in _task_queue if qi["status"] == "waiting"]
-        _save_queue_state()
-        await _broadcast_queue()
-        return
+        # 取出第一个等待中的任务
+        next_item = None
+        for qi in _task_queue:
+            if qi["status"] == "waiting":
+                next_item = qi
+                break
 
+        if next_item is None:
+            # 清理已完成/失败的任务
+            _task_queue[:] = [qi for qi in _task_queue if qi["status"] == "waiting"]
+            _save_queue_state()
+            await _broadcast_queue()
+            return
+
+    # 获取锁并执行
     ws = next_item.get("ws")
     headless = ws is None
 
-    # 获取锁并执行（先快速判断避免无效排队，但两者间无 await 故无竞态窗口）
     if _run_lock.locked():
         return
     await _run_lock.acquire()
 
+    _current_run_task = asyncio.current_task()
     try:
         import time as _time
-        next_item["status"] = "running"
-        _save_queue_state()
-        await _broadcast_queue()
+        async with _queue_lock:
+            next_item["status"] = "running"
+            _save_queue_state()
+            await _broadcast_queue()
 
         _cancel_flag = asyncio.Event()
+        _task_generation_seq += 1
         _current_task_info = {
             "started_at": _time.time(),
             "client_ip": next_item.get("client_ip", "unknown"),
@@ -4326,16 +4677,19 @@ async def _process_queue() -> None:
             if headless:
                 gid = str(next_item.get("github_id", ""))
                 if gid:
-                    _headless_completed[gid] = {"time": _time.time()}
-                    # 限制内存：最多保留 200 条
-                    if len(_headless_completed) > 200:
-                        oldest = min(_headless_completed, key=lambda k: _headless_completed[k]["time"])
-                        del _headless_completed[oldest]
+                    async with _headless_lock:
+                        _headless_completed[gid] = {"time": _time.time()}
+                        # 限制内存：最多保留 200 条
+                        if len(_headless_completed) > 200:
+                            oldest = min(_headless_completed, key=lambda k: _headless_completed[k]["time"])
+                            del _headless_completed[oldest]
             _cancel_flag = None
             _current_task_info = {}
-            _task_queue[:] = [qi for qi in _task_queue if qi["id"] != next_item["id"]]
-            _save_queue_state()
-            await _broadcast_queue()
+            _current_run_task = None
+            async with _queue_lock:
+                _task_queue[:] = [qi for qi in _task_queue if qi["id"] != next_item["id"]]
+                _save_queue_state()
+                await _broadcast_queue()
             await _push_status(reset=True)
             # 清理密钥预扣跟踪（任务已完成，预扣已确认或已回滚）
             if not headless and ws is not None:
@@ -4558,12 +4912,17 @@ async def ws_run(ws: WebSocket):
                 if wait > 0:
                     should_reject = True
                     wait_msg = f"生图间隔限制：请 {int(wait) + 1}s 后再试"
+                    wait_sec = int(wait) + 1
                 elif ws_user.get("role") != "admin":
                     # 管理员不更新冷却计时器，避免阻塞同 IP 普通用户排队
                     _RATE_LAST_TS[client_ip] = now
+                    # 取消该 IP 的旧冷却推送（新提交意味着冷却周期重新开始）
+                    old_cd = _cooldown_tasks.pop(client_ip, None)
+                    if old_cd and not old_cd.done():
+                        old_cd.cancel()
             if should_reject:
                 try:
-                    await ws.send_json({"type": "error", "message": wait_msg})
+                    await ws.send_json({"type": "error", "message": wait_msg, "cooldown_remaining": wait_sec})
                 except Exception:
                     pass
                 try:
@@ -4585,13 +4944,15 @@ async def ws_run(ws: WebSocket):
                 # 回滚预扣的密钥次数
                 await _rollback_key_reservation(id(ws), claimed_key)
                 return
-        _ws_user_map[id(ws)] = github_id
-        if client_ip:
-            _ws_ip_map[id(ws)] = client_ip
+        async with _ws_sub_lock:
+            _ws_user_map[id(ws)] = github_id
+            if client_ip:
+                _ws_ip_map[id(ws)] = client_ip
 
         if reconnect_item is None:
             # 检查是否有 headless 完成的任务待通知
-            completed = _headless_completed.pop(github_id, None)
+            async with _headless_lock:
+                completed = _headless_completed.pop(github_id, None)
             if completed:
                 try:
                     await ws.send_json({"type": "headless_done", "message": "你之前断连的任务已在后台完成，请到「我的」查看结果"})
@@ -4647,8 +5008,9 @@ async def ws_run(ws: WebSocket):
                         _ws_run_per_ip.pop(client_ip, None)
                     else:
                         _ws_run_per_ip[client_ip] = cnt
-            _ws_user_map.pop(id(ws), None)
-            _ws_ip_map.pop(id(ws), None)
+            async with _ws_sub_lock:
+                _ws_user_map.pop(id(ws), None)
+                _ws_ip_map.pop(id(ws), None)
             # 清理密钥预扣跟踪（任务仍以 headless 模式运行，不撤回次数）
             _key_usage_reserved_ws.pop(id(ws), None)
     finally:
@@ -4863,12 +5225,6 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             node2["inputs"]["image"] = req.image2_name
             await emit(ws, {"type": "log", "message": f"图生图: LoadImage -> {req.image2_name}"})
 
-    # 管理员生图不更新冷却计时器，避免阻塞同 IP 普通用户排队
-    user_for_cd = _load_users().get(github_id)
-    if not user_for_cd or user_for_cd.get("role") != "admin":
-        async with _cooldown_lock:
-            _RATE_LAST_TS[client_ip] = _time.time()
-
     await emit(ws, {"type": "log", "message": "[3/4] 提交到 ComfyUI..."})
     prompt_id = await submit_prompt(prompt_dict)
     await emit(ws, {"type": "log", "message": f"prompt_id={prompt_id[:8]}"})
@@ -4930,7 +5286,22 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
 
     await _save_gen_log(github_id, "", sd_prompt, path, len(images), "success", client_ip)
     await _increment_key_usage(github_id)
-    await emit(ws, {"type": "done", "final_prompt": sd_prompt, "count": len(images)})
+    cooldown_sec = float(_limits.get("gen_cooldown_sec", 30))
+    cd_remain = max(0, int(cooldown_sec - (_time_module.time() - _RATE_LAST_TS.get(client_ip, 0)) + 0.5))
+    await emit(ws, {"type": "done", "final_prompt": sd_prompt, "count": len(images),
+                     "cooldown_remaining": cd_remain})
+    # 服务端冷却到期推送：到期后通过状态 WS 解锁前端按钮
+    if cd_remain > 0 and client_ip:
+        _schedule_cooldown_notify(client_ip, cd_remain)
+
+    # 异步生成缩略图（不阻塞 done 响应）
+    thumb_rels = []
+    for img in images:
+        sub = img.get("subfolder") or ""
+        rel = (sub + "/" + img["filename"]) if sub else img["filename"]
+        thumb_rels.append(rel.replace("\\", "/"))
+    if thumb_rels:
+        _safe_task(_async_batch_generate_thumbs(thumb_rels, OUTPUT_DIR_STR), "thumb_done_gen")
 
 
 async def _wait_for(prompt_id: str, ws: WebSocket, prompt_dict: Dict[str, Any],
@@ -5161,6 +5532,8 @@ async def api_admin_queue_cancel(request: Request):
     """管理员强制取消正在执行的任务或移除队列中的任务。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
+    # 快照当前任务序列号，防止 await 后任务切换导致的 TOCTOU 误取消
+    _cancel_seq_snapshot = _task_generation_seq
     body = await request.json() or {}
     item_id = body.get("item_id")
     if item_id is not None:
@@ -5188,6 +5561,8 @@ async def api_admin_queue_cancel(request: Request):
         raise HTTPException(404, f"未找到任务 #{item_id}")
     if not _run_lock.locked():
         raise HTTPException(400, "当前没有正在执行的任务")
+    if _task_generation_seq != _cancel_seq_snapshot:
+        raise HTTPException(409, "任务已切换（上个任务刚好完成，新任务已启动），请确认后重试")
     if not _cancel_flag:
         raise HTTPException(400, "无法取消：当前任务信息丢失（可能是刚启动）")
     if _cancel_flag.is_set():
@@ -5203,26 +5578,28 @@ async def api_admin_queue_cancel(request: Request):
 
 @app.post("/api/admin/queue/force-unlock")
 async def api_admin_queue_force_unlock(request: Request):
-    """管理员强制解锁（用于 WebSocket 异常导致锁卡死的场景）。"""
+    """管理员强制解锁（用于 ComfyUI 无响应导致锁卡死的场景）。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
-    global _run_lock, _cancel_flag, _current_task_info
+    global _run_lock, _cancel_flag, _current_task_info, _current_run_task
     was_locked = _run_lock.locked()
     if was_locked:
-        # 设置取消信号让运行中任务感知
         if _cancel_flag is not None:
             _cancel_flag.set()
         try:
             await interrupt_prompt()
         except Exception:
             pass
+        # 取消正在运行的 _process_queue 任务，触发 finally 块释放 _run_lock
+        if _current_run_task is not None and not _current_run_task.done():
+            _current_run_task.cancel()
     # 清空所有等待中任务
     async with _queue_lock:
         _task_queue[:] = [qi for qi in _task_queue if qi["status"] == "running"]
         _save_queue_state()
     await _broadcast_queue()
     await _push_status(reset=True)
-    return {"ok": True, "was_locked": was_locked, "message": "已发送取消信号并清空队列" if was_locked else "队列已清空"}
+    return {"ok": True, "was_locked": was_locked, "message": "已取消当前任务并清空队列" if was_locked else "队列已清空"}
 
 
 @app.get("/api/my-queue")
@@ -5286,10 +5663,61 @@ async def api_my_images(request: Request, limit: int = 30, offset: int = 0):
         result.append({
             "path": p,
             "url": f"/api/image?filename={quote(fn, safe='')}&subfolder={quote(sf, safe='')}&type=output",
+            "thumb": f"/api/output/thumb?path={quote(p, safe='')}",
             "prompt": it.get("prompt", "")[:100],
             "time": it.get("time", 0),
         })
     return {"items": result, "total": total}
+
+
+    return True
+
+
+# SSRF 防护：只拦截危险地址（本地回环 + 云元数据端点），允许内网 LLM 服务
+_SSRF_DENY_NETS = [
+    ipaddress.ip_network("127.0.0.0/8"),      # loopback（防止访问 ComfyUI 等本机服务）
+    ipaddress.ip_network("169.254.0.0/16"),   # link-local / 云元数据端点
+    ipaddress.ip_network("0.0.0.0/8"),        # "本网络"
+    ipaddress.ip_network("224.0.0.0/4"),      # multicast
+    ipaddress.ip_network("240.0.0.0/4"),      # reserved
+    ipaddress.ip_network("::1/128"),           # IPv6 loopback
+    ipaddress.ip_network("fe80::/10"),         # IPv6 link-local
+]
+# 明确放行的本地服务地址
+_SSRF_ALLOW_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+
+def _validate_endpoint_not_internal(endpoint: str) -> bool:
+    """检查 LLM endpoint 不指向内网地址（本地服务除外）。返回 True 表示安全。"""
+    if not endpoint:
+        return True
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(endpoint)
+    except Exception:
+        return False
+    host = parsed.hostname or ""
+    if not host:
+        return False
+    # 本地 LLM 服务（LM Studio / 本地推理）明确放行
+    if host in _SSRF_ALLOW_HOSTS:
+        return True
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        # 非 IP 地址（域名），解析后检查
+        try:
+            resolved = socket.getaddrinfo(host, None)
+            for r in resolved:
+                ip = ipaddress.ip_address(r[4][0])
+                if any(ip in net for net in _SSRF_DENY_NETS) and str(ip) not in _SSRF_ALLOW_HOSTS:
+                    return False
+        except socket.gaierror:
+            return False  # 无法解析的域名拒绝
+        return True
+    # 直接是 IP 地址
+    if any(addr in net for net in _SSRF_DENY_NETS) and str(addr) not in _SSRF_ALLOW_HOSTS:
+        return False
+    return True
 
 
 class DeleteImagePayload(BaseModel):
@@ -5300,7 +5728,10 @@ def _validate_rel_path(p: str) -> bool:
     """防路径穿越：拒绝绝对路径、上级引用、盘符、反斜杠、控制字符。"""
     if not p or p.startswith("/") or p.startswith("\\"):
         return False
-    if ".." in p or "\\" in p:
+    # Unicode 规范化防止绕过（如 U+2025 双点引导符在部分文件系统上可能被解析为 ..）
+    import unicodedata
+    normalized = unicodedata.normalize('NFKC', p)
+    if ".." in normalized or "\\" in normalized:
         return False
     if any(ord(c) < 32 for c in p):
         return False
@@ -5320,30 +5751,29 @@ async def api_delete_my_image(request: Request, payload: DeleteImagePayload):
     rel_path = str(payload.path or "").strip()
     if not _validate_rel_path(rel_path):
         raise HTTPException(400, "无效路径")
-    # 验证图片归属：只能删除自己的图片
-    user_images = _load_user_images()
-    owned = {i.get("path", "") for i in user_images.get(github_id, [])}
-    if rel_path not in owned:
-        raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
+    key = github_id
+    # 验证图片归属（在锁内完成，消除 TOCTOU 窗口）
+    async with _user_images_lock:
+        data = _load_user_images()
+        owned = {i.get("path", "") for i in data.get(github_id, [])}
+        if rel_path not in owned:
+            raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
+        # 从 user_images.json 中移除记录
+        if key in data:
+            data[key] = [i for i in data[key] if i.get("path", "") != rel_path]
+            try:
+                _save_json(USER_IMAGES_FILE, data)
+            except Exception:
+                pass
     # 标记删除
     async with _deleted_images_lock:
         deleted = _load_deleted_images()
-        key = github_id
         paths = deleted.get(key, [])
         if rel_path not in paths:
             paths.append(rel_path)
             deleted[key] = paths
             try:
                 _save_json(DELETED_IMAGES_FILE, deleted)
-            except Exception:
-                pass
-    # 从 user_images.json 中移除记录
-    async with _user_images_lock:
-        data = _load_user_images()
-        if key in data:
-            data[key] = [i for i in data[key] if i.get("path", "") != rel_path]
-            try:
-                _save_json(USER_IMAGES_FILE, data)
             except Exception:
                 pass
     # 清理精选列表
@@ -5408,6 +5838,7 @@ async def _bg_delete_files(paths: List[str], delay: float = 30.0) -> None:
         try:
             if fp.is_file():
                 fp.unlink()
+                _clean_thumb_for_path(rel_path)
                 print(f"[GC] 用户标记删除文件: {rel_path}")
         except Exception as e:
             print(f"[GC] 删除文件失败: {rel_path} — {e}")
@@ -5462,24 +5893,22 @@ async def _disconnect_banned_user(github_id: str):
     """断开被封禁用户的所有 WebSocket 连接并移除其排队任务。"""
     gid = str(github_id)
     # 关闭 /ws/status 和 /ws/run 中属于该用户的连接
-    to_close = []
-    for ws_id, uid in list(_ws_user_map.items()):
-        if uid == gid:
-            to_close.append(ws_id)
-    for ws_id in to_close:
-        _ws_user_map.pop(ws_id, None)
-        _ws_ip_map.pop(ws_id, None)
-    # 从 _status_subscribers 清理并关闭连接（WS 断开时 finally 块会自行清理计数器）
-    for ws_id in to_close:
-        for sub in list(_status_subscribers):
-            if id(sub) == ws_id:
-                _status_subscribers.discard(sub)
-                try:
-                    await sub.close()
-                except Exception:
-                    pass
-                break
+    async with _ws_sub_lock:
+        to_close = [ws_id for ws_id, uid in _ws_user_map.items() if uid == gid]
+        for ws_id in to_close:
+            _ws_user_map.pop(ws_id, None)
+            _ws_ip_map.pop(ws_id, None)
+        # 从 _status_subscribers 清理并关闭连接（WS 断开时 finally 块会自行清理计数器）
+        subs_to_close = [sub for sub in _status_subscribers if id(sub) in to_close]
+        for sub in subs_to_close:
+            _status_subscribers.discard(sub)
+    for sub in subs_to_close:
+        try:
+            await sub.close()
+        except Exception:
+            pass
     # 移除该用户的排队任务（waiting 状态），关闭其运行中任务的 WS
+    running_ws_to_close = []
     async with _queue_lock:
         for qi in list(_task_queue):
             if str(qi.get("github_id", "")) == gid:
@@ -5488,36 +5917,38 @@ async def _disconnect_banned_user(github_id: str):
                 elif qi["status"] == "running":
                     w = qi.get("ws")
                     if w:
-                        try:
-                            await w.send_json({"type": "error", "message": "你的账号已被管理员封禁"})
-                        except Exception:
-                            pass
-                        try:
-                            await w.close()
-                        except Exception:
-                            pass
+                        running_ws_to_close.append(w)
                         # 转为 headless：任务继续运行但不发送后续消息
                         qi["ws"] = None
         _save_queue_state()
+    # 在锁外执行 I/O，避免阻塞其他队列操作
+    for w in running_ws_to_close:
+        try:
+            await w.send_json({"type": "error", "message": "你的账号已被管理员封禁"})
+        except Exception:
+            pass
+        try:
+            await w.close()
+        except Exception:
+            pass
     await _broadcast_queue()
 
 
 async def _disconnect_banned_ip(ip: str):
     """断开被封禁 IP 的所有 WebSocket 连接。"""
-    to_close = []
-    for ws_id, ws_ip in list(_ws_ip_map.items()):
-        if ws_ip == ip:
-            to_close.append(ws_id)
-    for ws_id in to_close:
-        _ws_user_map.pop(ws_id, None)
-        _ws_ip_map.pop(ws_id, None)
-    for sub in list(_status_subscribers):
-        if id(sub) in to_close:
+    async with _ws_sub_lock:
+        to_close = [ws_id for ws_id, ws_ip2 in _ws_ip_map.items() if ws_ip2 == ip]
+        for ws_id in to_close:
+            _ws_user_map.pop(ws_id, None)
+            _ws_ip_map.pop(ws_id, None)
+        subs_to_close = [sub for sub in _status_subscribers if id(sub) in to_close]
+        for sub in subs_to_close:
             _status_subscribers.discard(sub)
-            try:
-                await sub.close()
-            except Exception:
-                pass
+    for sub in subs_to_close:
+        try:
+            await sub.close()
+        except Exception:
+            pass
     # 从 _task_queue 中关闭该 IP 的 WS 连接
     async with _queue_lock:
         for qi in _task_queue:
@@ -5738,6 +6169,7 @@ async def api_admin_delete(request: Request, payload: Dict[str, Any]):
         raise HTTPException(404, "not found")
     try:
         p.unlink()
+        _clean_thumb_for_path(rel)
     except Exception as e:
         print(f"[ERROR] 管理员删除文件失败: {rel} — {type(e).__name__}: {e}")
         raise HTTPException(500, "文件删除失败")
@@ -5837,6 +6269,7 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
             p = _resolve_output_path(rel)
             if p.is_file():
                 p.unlink()
+                _clean_thumb_for_path(rel)
                 deleted.append(rel)
             else:
                 failed.append(rel)
@@ -6536,6 +6969,10 @@ async def api_admin_llm_set(request: Request, payload: Dict[str, Any]):
         "custom_model": str(payload.get("custom_model", _llm_config.get("custom_model", ""))).strip(),
         "llm_stream": payload.get("llm_stream", _llm_config.get("llm_stream", True)) in (True, "true", 1),
     }
+    # SSRF 防护：自定义端点不得指向内网地址（本地 LLM 服务除外）
+    if new_state["provider"] == "custom" and new_state["custom_endpoint"]:
+        if not _validate_endpoint_not_internal(new_state["custom_endpoint"]):
+            raise HTTPException(400, "自定义 endpoint 不允许指向内网地址")
     if not await _save_llm_config(new_state):
         raise HTTPException(500, "写入 llm_config.json 失败")
     _llm_config.clear()
@@ -6705,6 +7142,7 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
             p = _resolve_output_path(image_path)
             if p.is_file():
                 p.unlink()
+                _clean_thumb_for_path(image_path)
         except Exception:
             pass
         key = image_path.replace("\\", "/")
@@ -6936,28 +7374,36 @@ async def api_admin_access_keys_enable(request: Request, payload: Dict[str, Any]
 
 @app.post("/api/admin/access-keys/reveal")
 async def api_admin_access_keys_reveal(request: Request, payload: Dict[str, Any]):
-    """根据 key_preview 返回完整密钥（仅管理员）。入参 {key_preview: "abc12345...xyz9"}。"""
+    """根据 key_preview 返回完整密钥（仅管理员）。入参 {key_preview: "abc12345...xyz9"}。
+    每次调用记录审计日志，且仅支持前缀+后缀双因子匹配（拒绝单因子前缀匹配）。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
+    user = _get_user_from_session(request)
+    admin_login = user.get("login", "?") if user else "?"
     raw = str((payload or {}).get("key_preview") or "").strip()
     if not raw:
         raise HTTPException(400, "key_preview required")
+    # 拒绝单因子匹配（仅前缀或仅后缀）
+    if "..." not in raw:
+        raise HTTPException(400, "key_preview 格式无效（需包含 ...）")
     async with _access_keys_lock:
         data = _load_access_keys()
         keys = data.get("keys", {})
         target_key = None
-        if raw in keys:
-            target_key = raw
-        else:
-            parts = raw.split("...")
-            if len(parts) == 2 and parts[0] and parts[1]:
-                prefix, suffix = parts[0], parts[1]
-                for k in keys:
-                    if k.startswith(prefix) and k.endswith(suffix):
-                        target_key = k
-                        break
+        parts = raw.split("...")
+        if len(parts) == 2 and parts[0] and parts[1]:
+            prefix, suffix = parts[0], parts[1]
+            # 前缀和后缀至少各 4 字符，防止暴力匹配
+            if len(prefix) < 4 or len(suffix) < 4:
+                raise HTTPException(400, "key_preview 前缀/后缀长度不足")
+            for k in keys:
+                if k.startswith(prefix) and k.endswith(suffix):
+                    target_key = k
+                    break
         if target_key is None:
+            print(f"[AUDIT] 密钥查看失败 admin={admin_login} preview={raw} ip={_client_ip_from_request(request)}")
             raise HTTPException(404, "密钥不存在")
+    print(f"[AUDIT] 密钥已查看 admin={admin_login} key_preview={raw} ip={_client_ip_from_request(request)}")
     return {"ok": True, "key": target_key}
 
 
