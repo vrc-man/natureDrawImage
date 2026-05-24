@@ -4,7 +4,7 @@
 
 基于 [afoim/natureDrawImage](https://github.com/afoim/natureDrawImage) 二次开发，在原有基础上增加了 GitHub OAuth 登录、用户系统、图生图、访问密钥、生图日志等功能。
 
-—— 单文件 FastAPI 后端 + Tailwind CDN 前端，无构建步骤。
+—— 单文件 FastAPI 后端 + Tailwind CSS 前端（已编译为 tailwind.min.css），无构建步骤。
 
 ## 与原项目的区别
 
