@@ -269,6 +269,13 @@
         </label>
         <span class="text-[10px] text-gray-500">关闭后使用普通请求，适用于不支持 SSE 的网络环境。</span>
       </div>
+      <div class="mt-3 flex items-center gap-3 flex-wrap text-sm">
+        <label class="flex items-center gap-1">
+          <span>最大 Token:</span>
+          <input id="llm-max-tokens" type="number" min="1" max="32768" value="1024" class="border rounded px-2 py-1 text-xs w-24" />
+        </label>
+        <span class="text-[10px] text-gray-500">LLM 返回的正负向提示词总上限（1-32768）。</span>
+      </div>
       <div class="mt-3 flex items-center gap-2 flex-wrap">
         <button id="btn-save-llm" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">保存</button>
         <button id="btn-test-llm" class="px-3 py-1 bg-emerald-500 text-white rounded hover:bg-emerald-600 text-sm">测试连接</button>
@@ -477,9 +484,20 @@
       </div>
     </div>
     <div id="gen-logs-body" class="hidden">
-      <p class="text-xs text-gray-500 mb-2">记录每次生图的用户、prompt、工作流、状态等信息，最多保留 2000 条。</p>
+      <p class="text-xs text-gray-500 mb-2">记录每次生图的用户、prompt、工作流、状态等信息，最多保留 20000 条。</p>
+      <div class="flex gap-2 mb-2 items-center text-xs">
+        <label class="text-gray-500">日期筛选:</label>
+        <input id="gen-logs-date-from" type="date" class="border rounded px-2 py-1 text-xs" title="开始日期" />
+        <span class="text-gray-400">—</span>
+        <input id="gen-logs-date-to" type="date" class="border rounded px-2 py-1 text-xs" title="结束日期" />
+        <button id="btn-gen-logs-filter" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
+        <button id="btn-gen-logs-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
+      </div>
       <div id="gen-logs-list" class="text-sm max-h-96 overflow-y-auto">加载中...</div>
-      <div id="gen-logs-status" class="text-xs text-gray-500 mt-1"></div>
+      <div class="flex items-center gap-2 mt-2">
+        <button id="btn-gen-logs-more" class="hidden text-xs px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">加载更多</button>
+        <span id="gen-logs-status" class="text-xs text-gray-500"></span>
+      </div>
     </div>
   </div>
 
@@ -594,6 +612,32 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const escHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function _copyText(text, btn) {
+  const orig = btn.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓ 已复制';
+    btn.classList.add('bg-green-100', 'text-green-600');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('bg-green-100', 'text-green-600'); }, 1500);
+  }).catch(() => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      btn.textContent = '✓ 已复制';
+      btn.classList.add('bg-green-100', 'text-green-600');
+      setTimeout(() => { btn.textContent = orig; btn.classList.remove('bg-green-100', 'text-green-600'); }, 1500);
+    } catch (e2) {
+      btn.textContent = '✗ 失败';
+      btn.classList.add('bg-red-100', 'text-red-600');
+      setTimeout(() => { btn.textContent = orig; btn.classList.remove('bg-red-100', 'text-red-600'); }, 2000);
+    }
+  });
+}
 
 async function api(method, url, body) {
   const opt = { method, headers: {} };
@@ -716,7 +760,7 @@ function rowHTML(it) {
     ? `<button class="btn-unfeat-row mt-1 w-full text-[10px] bg-amber-500 text-white rounded px-1 py-0.5 hover:bg-amber-600" data-path="${escHtml(it.path)}">★ 已精选 (取消)</button>`
     : `<button class="btn-feat-row mt-1 w-full text-[10px] bg-yellow-100 text-amber-700 border border-amber-300 rounded px-1 py-0.5 hover:bg-yellow-200" data-path="${escHtml(it.path)}">☆ 加入精选</button>`;
   return `<div class="border rounded p-1 bg-gray-50" data-row-path="${escHtml(it.path)}">
-    <img src="/api/output/file?path=${encodeURIComponent(it.path)}" loading="lazy"
+    <img src="/api/output/thumb?path=${encodeURIComponent(it.path)}" loading="lazy"
       class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer"
       data-path="${escHtml(it.path)}" data-mtime="${it.mtime || ''}" data-ip="${escHtml(it.ip || '?')}" />
     <div class="text-[10px] mt-1 break-all">${escHtml(it.path)}</div>
@@ -794,7 +838,7 @@ function _renderFeaturedSlice() {
   }
   $('featured-list').innerHTML = '<div id="featured-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">' +
     items.map(p => `<div class="border rounded p-1 bg-amber-50 cursor-move" draggable="true" data-feat-path="${escHtml(p)}">
-      <img src="/api/output/file?path=${encodeURIComponent(p)}" loading="lazy"
+      <img src="/api/output/thumb?path=${encodeURIComponent(p)}" loading="lazy"
         class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer"
         data-path="${escHtml(p)}" data-mtime="" data-ip="" />
       <div class="text-[10px] mt-1 break-all">${escHtml(p)}</div>
@@ -1537,6 +1581,7 @@ async function loadLLM() {
     $('llm-custom-key-hint').textContent = c.custom_api_key_masked ? `当前: ${c.custom_api_key_masked}，留空不修改` : '留空则不修改已保存的密钥。';
     $('llm-custom-model').value = c.custom_model || '';
     $('llm-stream').checked = c.llm_stream !== false;
+    $('llm-max-tokens').value = c.llm_max_tokens || 1024;
     _llmBadge(provider);
     $('llm-status').textContent = '';
   } catch (e) { $('llm-status').textContent = '加载失败: ' + e.message; }
@@ -1552,6 +1597,7 @@ async function saveLLM() {
     custom_endpoint: $('llm-custom-endpoint').value,
     custom_model: $('llm-custom-model').value,
     llm_stream: $('llm-stream').checked,
+    llm_max_tokens: parseInt($('llm-max-tokens').value) || 1024,
   };
   const gKey = $('llm-google-key').value;
   if (gKey) payload.google_api_key = gKey;
@@ -1578,6 +1624,7 @@ function _llmPayload() {
     custom_endpoint: $('llm-custom-endpoint').value,
     custom_model: $('llm-custom-model').value,
     llm_stream: $('llm-stream').checked,
+    llm_max_tokens: parseInt($('llm-max-tokens').value) || 1024,
   };
   const gKey = $('llm-google-key').value;
   if (gKey) p.google_api_key = gKey;
@@ -1662,7 +1709,7 @@ document.querySelectorAll('[data-toggle]').forEach(h => {
 // ── 举报管理 ──
 function reportCardHTML(rpt) {
   const t = rpt.timestamp ? new Date(rpt.timestamp * 1000).toLocaleString('zh-CN') : '?';
-  const imgUrl = '/api/output/file?path=' + encodeURIComponent(rpt.image_path);
+  const imgUrl = '/api/output/thumb?path=' + encodeURIComponent(rpt.image_path);
   const exists = rpt.image_exists !== false;
   return `<div class="border rounded p-3 bg-gray-50 flex gap-3" data-report-id="${escHtml(rpt.id)}">
     <div class="w-24 h-24 flex-shrink-0">
@@ -1760,7 +1807,7 @@ async function showIpImages(ip) {
         <div class="absolute top-2 left-2 z-10">
           <input type="checkbox" class="ip-img-check w-4 h-4 cursor-pointer" data-path="${escHtml(it.path)}" />
         </div>
-        <img src="/api/output/file?path=${encodeURIComponent(it.path)}" loading="lazy"
+        <img src="/api/output/thumb?path=${encodeURIComponent(it.path)}" loading="lazy"
           class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer"
           data-path="${escHtml(it.path)}" data-mtime="${it.mtime || ''}" data-ip="${escHtml(ip)}" />
         <div class="text-[10px] mt-1 break-all">${escHtml(it.path)}</div>
@@ -1833,7 +1880,7 @@ const lbState = { items: [], index: 0 };
 function collectLightboxItems() {
   const imgs = document.querySelectorAll('.lb-thumb');
   return Array.from(imgs).map(img => ({
-    url: img.src,
+    url: '/api/output/file?path=' + encodeURIComponent(img.dataset.path || ''),
     path: img.dataset.path || '',
     mtime: img.dataset.mtime || '',
     ip: img.dataset.ip || '',
@@ -1879,8 +1926,8 @@ document.addEventListener('click', (e) => {
   e.preventDefault();
   e.stopPropagation();
   lbState.items = collectLightboxItems();
-  const url = img.src;
-  lbState.index = Math.max(0, lbState.items.findIndex(it => it.url === url));
+  const path = img.dataset.path || '';
+  lbState.index = Math.max(0, lbState.items.findIndex(it => it.path === path));
   showLightbox();
 });
 
@@ -2180,7 +2227,7 @@ async function loadImages(reset = true) {
     $('images-grid').classList.remove('hidden');
     const frag = document.createDocumentFragment();
     d.items.forEach(it => {
-      const url = '/api/output/file?path=' + encodeURIComponent(it.path);
+      const url = '/api/output/thumb?path=' + encodeURIComponent(it.path);
       const safe = escHtml(it.path);
       const ip = it.creator_ip ? `IP: ${escHtml(it.creator_ip)}` : '';
       const gh = it.github_user ? ` | GH: ${escHtml(it.github_user)}` : '';
@@ -2410,48 +2457,112 @@ $('btn-gen-access-keys').addEventListener('click', async () => {
 });
 
 // ==================== 生图日志 ====================
-async function loadGenLogs() {
-  $('gen-logs-list').textContent = '加载中...';
+let _genLogsOffset = 0;
+let _genLogsTotal = 0;
+let _genLogsItems = [];
+
+function _genLogsDateParams() {
+  const from = $('gen-logs-date-from').value;
+  const to = $('gen-logs-date-to').value;
+  const params = [];
+  if (from) params.push('date_from=' + (new Date(from + 'T00:00:00').getTime() / 1000));
+  if (to) params.push('date_to=' + (new Date(to + 'T23:59:59').getTime() / 1000));
+  return params.join('&');
+}
+
+// 复制按钮事件代理
+$('gen-logs-list').addEventListener('click', (e) => {
+  const btn = e.target.closest('.btn-copy-positive, .btn-copy-negative');
+  if (!btn) return;
+  e.stopPropagation();
+  _copyText(btn.getAttribute('data-copy-text') || '', btn);
+});
+
+async function loadGenLogs(reset = true) {
+  if (reset) {
+    _genLogsOffset = 0;
+    _genLogsItems = [];
+    $('gen-logs-list').textContent = '加载中...';
+  }
   try {
-    const d = await api('GET', '/api/admin/gen-logs?limit=100');
+    let url = '/api/admin/gen-logs?limit=20&offset=' + _genLogsOffset;
+    const dateParams = _genLogsDateParams();
+    if (dateParams) url += '&' + dateParams;
+    const d = await api('GET', url);
     const items = d.items || [];
-    $('gen-logs-count').textContent = d.total || 0;
-    if (!items.length) {
+    _genLogsTotal = d.total || 0;
+    $('gen-logs-count').textContent = _genLogsTotal;
+    if (reset) {
+      _genLogsItems = items;
+    } else {
+      _genLogsItems = _genLogsItems.concat(items);
+    }
+    if (!_genLogsItems.length) {
       $('gen-logs-list').innerHTML = '<div class="text-gray-400">暂无日志</div>';
+      $('btn-gen-logs-more').classList.add('hidden');
       return;
     }
-    $('gen-logs-list').innerHTML = items.map(it => {
+    $('gen-logs-list').innerHTML = _genLogsItems.map(it => {
       const t = new Date((it.created_at || 0) * 1000).toLocaleString('zh-CN');
       const stColor = it.status === 'success' ? 'text-green-600' : 'text-red-600';
       const stLabel = it.status === 'success' ? '✓' : '✗';
       const loginInfo = escHtml(it.login || it.github_id || '?');
-      const promptText = escHtml((it.prompt || '').substring(0, 80));
+      const promptFull = it.prompt || '';
+      const promptText = escHtml(promptFull.substring(0, 80));
+      const negPromptFull = it.negative_prompt || '';
+      const negPromptText = escHtml(negPromptFull.substring(0, 80));
       const wf = escHtml((it.workflow || '').split('/').pop() || '-');
       return `<div class="border-b border-gray-100 py-1.5 text-[10px]">
-        <div class="flex justify-between text-gray-400">
-          <span>${t}</span>
-          <span class="${stColor}">${stLabel} ${it.count}张</span>
+        <div class="flex justify-between items-center text-gray-400">
+          <div class="flex items-center gap-2">
+            <span>${t}</span>
+            <button data-copy-text="${escHtml(promptFull)}" title="复制正面提示词" class="btn-copy-positive text-[9px] px-1.5 py-0.5 bg-pink-50 hover:bg-pink-100 text-pink-500 rounded whitespace-nowrap">📋正面</button>
+            ${negPromptFull ? `<button data-copy-text="${escHtml(negPromptFull)}" title="复制负面提示词" class="btn-copy-negative text-[9px] px-1.5 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded whitespace-nowrap">📋负面</button>` : ''}
+          </div>
+          <span class="${stColor} shrink-0">${stLabel} ${it.count}张</span>
         </div>
         <div class="flex justify-between">
           <span class="text-gray-700">👤 ${loginInfo}</span>
           <span class="text-gray-400">📁 ${wf}</span>
         </div>
         <div class="text-gray-500 truncate">💬 ${promptText}</div>
+        ${negPromptFull ? `<div class="text-gray-500 truncate">⚠️ ${negPromptText}</div>` : ''}
       </div>`;
     }).join('');
-    $('gen-logs-status').textContent = '';
+    $('gen-logs-status').textContent = `显示 ${_genLogsItems.length} / ${_genLogsTotal} 条`;
+    const moreBtn = $('btn-gen-logs-more');
+    if (_genLogsItems.length < _genLogsTotal) {
+      moreBtn.classList.remove('hidden');
+      moreBtn.textContent = '加载更多';
+    } else {
+      moreBtn.classList.add('hidden');
+    }
   } catch (e) {
     $('gen-logs-list').textContent = '加载失败: ' + e.message;
   }
 }
 
-$('btn-refresh-gen-logs').addEventListener('click', loadGenLogs);
+$('btn-refresh-gen-logs').addEventListener('click', () => loadGenLogs(true));
+$('btn-gen-logs-filter').addEventListener('click', () => loadGenLogs(true));
+$('btn-gen-logs-reset').addEventListener('click', () => {
+  $('gen-logs-date-from').value = '';
+  $('gen-logs-date-to').value = '';
+  loadGenLogs(true);
+});
+$('btn-gen-logs-more').addEventListener('click', () => {
+  _genLogsOffset += 20;
+  loadGenLogs(false);
+});
 $('btn-clear-gen-logs').addEventListener('click', async () => {
-  if (!confirm('确认清空所有生图日志？此操作不可恢复。')) return;
+  const dateParams = _genLogsDateParams();
+  const msg = dateParams ? '确认清空当前日期范围内的生图日志？此操作不可恢复。' : '确认清空所有生图日志？此操作不可恢复。';
+  if (!confirm(msg)) return;
   try {
-    await api('DELETE', '/api/admin/gen-logs');
-    $('gen-logs-status').textContent = '✓ 日志已清空';
-    loadGenLogs();
+    let url = '/api/admin/gen-logs';
+    if (dateParams) url += '?' + dateParams;
+    const d = await api('DELETE', url);
+    $('gen-logs-status').textContent = '✓ ' + (d.message || '日志已清空');
+    loadGenLogs(true);
   } catch (e) {
     $('gen-logs-status').textContent = '清空失败: ' + e.message;
   }

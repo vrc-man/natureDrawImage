@@ -120,7 +120,7 @@ _key_usage_reserved_ws: Dict[int, str] = {}
 # 生图日志 {log_id: {github_id, login, prompt, workflow, count, status, client_ip, created_at}}
 GEN_LOG_FILE = Path(__file__).parent / "gen_log.json"
 _gen_log_lock = asyncio.Lock()
-_GEN_LOG_MAX = 2000  # 最多保留 2000 条日志
+_GEN_LOG_MAX = 20000  # 最多保留 20000 条日志
 
 def _load_gen_logs() -> Dict[str, Any]:
     try:
@@ -131,7 +131,8 @@ def _load_gen_logs() -> Dict[str, Any]:
     return {}
 
 async def _save_gen_log(github_id: str, _login: str, prompt: str, workflow: str,
-                       count: int, status: str, client_ip: str):
+                       count: int, status: str, client_ip: str,
+                       negative_prompt: str = ""):
     """追加一条生图日志，超出上限自动清理旧记录。"""
     import time as _t
     login = _login
@@ -144,7 +145,8 @@ async def _save_gen_log(github_id: str, _login: str, prompt: str, workflow: str,
         logs[log_id] = {
             "github_id": github_id,
             "login": login or github_id,
-            "prompt": prompt[:500],
+            "prompt": prompt[:25000],
+            "negative_prompt": negative_prompt[:25000] if negative_prompt else "",
             "workflow": workflow or "",
             "count": count,
             "status": status,
@@ -803,6 +805,7 @@ DEFAULT_LLM_CONFIG = {
     "custom_api_key": "",
     "custom_model": "",
     "llm_stream": True,            # True=SSE 流式，False=普通请求（所有 provider 通用）
+    "llm_max_tokens": 1024,        # LLM 最大输出 token 数
 }
 
 _GOOGLE_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
@@ -908,6 +911,7 @@ def _load_llm_config() -> Dict[str, Any]:
             "custom_api_key": _decrypt_api_value(str(d.get("custom_api_key") or "")),
             "custom_model": str(d.get("custom_model") or ""),
             "llm_stream": bool(d.get("llm_stream", True)),
+            "llm_max_tokens": int(d.get("llm_max_tokens", 1024)),
         }
     except Exception:
         return dict(DEFAULT_LLM_CONFIG)
@@ -1298,6 +1302,13 @@ _image_rate_lock = asyncio.Lock()
 async def _image_rate_limit(request: Request, call_next):
     if not request.url.path.startswith(_IMAGE_RATE_PATHS):
         return await call_next(request)
+    # 管理员豁免图片接口限流
+    try:
+        u = _get_user_from_session(request)
+        if u and u.get("role") == "admin":
+            return await call_next(request)
+    except Exception:
+        pass
     window = float(_limits.get("image_rate_window_sec", 60))
     cap = int(_limits.get("image_rate_max", 120))
     if window <= 0 or cap <= 0:
@@ -1489,8 +1500,8 @@ async def _auth_middleware(request: Request, call_next):
                 media_type="application/json",
             )
 
-    # Admin API 限流：每 IP 每分钟最多 120 次
-    if path.startswith("/api/admin/") and path != "/api/admin/whoami":
+    # Admin API 限流：每 IP 每分钟最多 120 次（管理员豁免）
+    if user.get("role") != "admin" and path.startswith("/api/admin/") and path != "/api/admin/whoami":
         admin_ip = _client_ip_from_request(request)
         if admin_ip:
             import time as _t2
@@ -2550,7 +2561,7 @@ async def _llm_google(system: str, user: str, cfg: Dict[str, Any], on_chunk: Opt
 
     body = {
         "contents": [{"role": "user", "parts": [{"text": f"{system}\n\n{user}"}]}],
-        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024},
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": cfg.get("llm_max_tokens", 1024)},
         "safetySettings": [
             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
             {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -2685,7 +2696,7 @@ async def _llm_openai_compat(system: str, user: str, endpoint: str,
     body: Dict[str, Any] = {
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": 0.7,
-        "max_tokens": 1024,
+        "max_tokens": _llm_config.get("llm_max_tokens", 1024),
         "stream": use_stream,
     }
     if model:
@@ -3587,17 +3598,19 @@ async def api_output_fork(request: Request, payload: Dict[str, Any]):
     出参：{"workflow": <dict>, "summary": {...}, "default_width": int|None, "default_height": int|None,
           "builtin_prompt": str, "loras": [str], "format": "api"|"editor"}
     """
-    # fork 独立限流：每 IP 每分钟最多 10 次（PNG 解码重操作）
-    fork_ip = _client_ip_from_request(request)
-    if fork_ip:
-        now_fork = _time_module.time()
-        async with _translate_rate_lock:
-            bucket = _TRANSLATE_RATE.get(f"fork:{fork_ip}") or []
-            bucket = [t for t in bucket if now_fork - t < 60]
-            if len(bucket) >= 10:
-                raise HTTPException(429, "fork 请求过于频繁，请稍后再试")
-            bucket.append(now_fork)
-            _TRANSLATE_RATE[f"fork:{fork_ip}"] = bucket
+    # fork 独立限流：每 IP 每分钟最多 10 次（PNG 解码重操作，管理员豁免）
+    user_fork = _get_user_from_session(request)
+    if not (user_fork and user_fork.get("role") == "admin"):
+        fork_ip = _client_ip_from_request(request)
+        if fork_ip:
+            now_fork = _time_module.time()
+            async with _translate_rate_lock:
+                bucket = _TRANSLATE_RATE.get(f"fork:{fork_ip}") or []
+                bucket = [t for t in bucket if now_fork - t < 60]
+                if len(bucket) >= 10:
+                    raise HTTPException(429, "fork 请求过于频繁，请稍后再试")
+                bucket.append(now_fork)
+                _TRANSLATE_RATE[f"fork:{fork_ip}"] = bucket
 
     rel = (payload or {}).get("path", "")
     if not rel:
@@ -3948,17 +3961,19 @@ async def api_gpu():
 
 @app.post("/api/translate")
 async def api_translate(request: Request, payload: Dict[str, Any]):
-    # 翻译限流：每 IP 每分钟最多 10 次
-    ip = _client_ip_from_request(request)
-    now = _time_module.time()
-    window = 60.0
-    async with _translate_rate_lock:
-        bucket = _TRANSLATE_RATE.get(ip) or []
-        bucket = [t for t in bucket if now - t < window]
-        if len(bucket) >= 10:
-            raise HTTPException(429, "翻译请求过于频繁，请稍后再试")
-        bucket.append(now)
-        _TRANSLATE_RATE[ip] = bucket
+    # 翻译限流：每 IP 每分钟最多 10 次（管理员豁免）
+    user = _get_user_from_session(request)
+    if not (user and user.get("role") == "admin"):
+        ip = _client_ip_from_request(request)
+        now = _time_module.time()
+        window = 60.0
+        async with _translate_rate_lock:
+            bucket = _TRANSLATE_RATE.get(ip) or []
+            bucket = [t for t in bucket if now - t < window]
+            if len(bucket) >= 10:
+                raise HTTPException(429, "翻译请求过于频繁，请稍后再试")
+            bucket.append(now)
+            _TRANSLATE_RATE[ip] = bucket
     prompt = payload.get("prompt", "")
     if not prompt:
         raise HTTPException(400, "prompt required")
@@ -4063,16 +4078,18 @@ def _compress_image(img_bytes: bytes, max_bytes: int = 480 * 1024, max_dim: int 
 @app.post("/api/img2img/upload")
 async def api_img2img_upload(request: Request, image1: UploadFile, image2: Optional[UploadFile] = None):
     """上传图片到 ComfyUI input 目录（图生图）。前端有压缩，后端做校验兜底。"""
-    # 上传限流：每 IP 每分钟最多 10 张
-    ip = _client_ip_from_request(request)
-    now = _time_module.time()
-    async with _translate_rate_lock:
-        bucket = _TRANSLATE_RATE.get(f"upload:{ip}") or []
-        bucket = [t for t in bucket if now - t < 60]
-        if len(bucket) >= 10:
-            raise HTTPException(429, "上传过于频繁，请稍后再试")
-        bucket.append(now)
-        _TRANSLATE_RATE[f"upload:{ip}"] = bucket
+    # 上传限流：每 IP 每分钟最多 10 张（管理员豁免）
+    user_up = _get_user_from_session(request)
+    if not (user_up and user_up.get("role") == "admin"):
+        ip = _client_ip_from_request(request)
+        now = _time_module.time()
+        async with _translate_rate_lock:
+            bucket = _TRANSLATE_RATE.get(f"upload:{ip}") or []
+            bucket = [t for t in bucket if now - t < 60]
+            if len(bucket) >= 10:
+                raise HTTPException(429, "上传过于频繁，请稍后再试")
+            bucket.append(now)
+            _TRANSLATE_RATE[f"upload:{ip}"] = bucket
 
     UPLOAD_MAX_RAW = 10 * 1024 * 1024  # 原始文件上限 10MB（防 DoS）
     UPLOAD_MAX_COMPRESSED = 1536 * 1024  # 压缩后上限 1.5MB
@@ -4138,8 +4155,8 @@ class RunRequest(BaseModel):
     @field_validator("direct_prompt", "nl_prompt", "style_tags", "negative_prompt")
     @classmethod
     def _check_length(cls, v: str) -> str:
-        if len(v) > 10000:
-            raise ValueError("输入过长，最多 10000 字符")
+        if len(v) > 25000:
+            raise ValueError("输入过长，最多 25000 字符")
         return v
 
     @field_validator("image1_name", "image2_name")
@@ -4586,7 +4603,7 @@ async def ws_status(ws: WebSocket):
 
 async def _process_queue() -> None:
     """处理队列中的下一个任务。"""
-    global _cancel_flag, _current_task_info, _task_queue, _current_run_task
+    global _cancel_flag, _current_task_info, _task_queue, _current_run_task, _task_generation_seq
 
     if _run_lock.locked():
         return
@@ -5166,11 +5183,10 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
 
     prompt_dict[node_id]["inputs"][input_name] = sd_prompt
 
-    if negative_ref:
-        neg_text = req.negative_prompt.strip() or llm_negative if req.nl_prompt else req.negative_prompt.strip()
-        if neg_text:
-            neg_node_id, neg_input_name = negative_ref
-            prompt_dict[neg_node_id]["inputs"][neg_input_name] = neg_text
+    neg_text = req.negative_prompt.strip() or (llm_negative if req.nl_prompt else "")
+    if negative_ref and neg_text:
+        neg_node_id, neg_input_name = negative_ref
+        prompt_dict[neg_node_id]["inputs"][neg_input_name] = neg_text
 
     if req.width and req.height and req.width > 0 and req.height > 0:
         presets = _resolutions.get("presets", [])
@@ -5257,7 +5273,7 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             })
 
     if not images:
-        await _save_gen_log(github_id, "", sd_prompt, path, 0, "failed", client_ip)
+        await _save_gen_log(github_id, "", sd_prompt, path, 0, "failed", client_ip, negative_prompt=neg_text)
         await emit(ws, {"type": "error", "message": "无图片输出"})
         return
 
@@ -5284,10 +5300,18 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             "image_type": img["type"],
         })
 
-    await _save_gen_log(github_id, "", sd_prompt, path, len(images), "success", client_ip)
+    await _save_gen_log(github_id, "", sd_prompt, path, len(images), "success", client_ip, negative_prompt=neg_text)
     await _increment_key_usage(github_id)
     cooldown_sec = float(_limits.get("gen_cooldown_sec", 30))
-    cd_remain = max(0, int(cooldown_sec - (_time_module.time() - _RATE_LAST_TS.get(client_ip, 0)) + 0.5))
+    # 管理员豁免冷却
+    user_role = ""
+    if github_id:
+        users = _load_users()
+        user_role = users.get(github_id, {}).get("role", "")
+    if user_role == "admin":
+        cd_remain = 0
+    else:
+        cd_remain = max(0, int(cooldown_sec - (_time_module.time() - _RATE_LAST_TS.get(client_ip, 0)) + 0.5))
     await emit(ws, {"type": "done", "final_prompt": sd_prompt, "count": len(images),
                      "cooldown_remaining": cd_remain})
     # 服务端冷却到期推送：到期后通过状态 WS 解锁前端按钮
@@ -6851,7 +6875,7 @@ async def api_admin_workflow_rename(request: Request, payload: Dict[str, Any]):
         raise HTTPException(400, "old 和 new 不能为空")
     if old == new:
         return {"ok": True}
-    if ".." in old or ".." in new:
+    if not _validate_rel_path(old) or not _validate_rel_path(new):
         raise HTTPException(400, "路径不合法")
     root = Path(COMFYUI_WORKFLOWS_DIR)
     old_path = (root / old).resolve()
@@ -6968,6 +6992,7 @@ async def api_admin_llm_set(request: Request, payload: Dict[str, Any]):
         "custom_api_key": str(payload.get("custom_api_key", _llm_config.get("custom_api_key", ""))).strip(),
         "custom_model": str(payload.get("custom_model", _llm_config.get("custom_model", ""))).strip(),
         "llm_stream": payload.get("llm_stream", _llm_config.get("llm_stream", True)) in (True, "true", 1),
+        "llm_max_tokens": max(1, min(32768, int(payload.get("llm_max_tokens", _llm_config.get("llm_max_tokens", 1024))))),
     }
     # SSRF 防护：自定义端点不得指向内网地址（本地 LLM 服务除外）
     if new_state["provider"] == "custom" and new_state["custom_endpoint"]:
@@ -7217,7 +7242,7 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
 @app.get("/api/admin/access-keys")
 async def api_admin_access_keys(request: Request):
     """列出所有访问密钥及使用状态。"""
-    if not request.state.is_admin:
+    if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     import time as _time
     now = _time.time()
@@ -7410,14 +7435,26 @@ async def api_admin_access_keys_reveal(request: Request, payload: Dict[str, Any]
 # ==================== 生图日志管理 ====================
 
 @app.get("/api/admin/gen-logs")
-async def api_admin_gen_logs(request: Request, limit: int = 100, offset: int = 0):
-    """分页查询生图日志（仅管理员）。"""
+async def api_admin_gen_logs(request: Request, limit: int = 20, offset: int = 0,
+                              date_from: float = 0, date_to: float = 0):
+    """分页查询生图日志（仅管理员），支持日期筛选。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     limit = max(1, min(limit, 200))  # 上限 200 条
     offset = max(0, offset)
     async with _gen_log_lock:
         logs = _load_gen_logs()
+    # 日期筛选
+    if date_from or date_to:
+        filtered = {}
+        for lid, entry in logs.items():
+            ts = entry.get("created_at", 0)
+            if date_from and ts < date_from:
+                continue
+            if date_to and ts > date_to:
+                continue
+            filtered[lid] = entry
+        logs = filtered
     sorted_ids = sorted(logs.keys(), key=lambda k: logs[k].get("created_at", 0), reverse=True)
     total = len(sorted_ids)
     page_ids = sorted_ids[offset:offset + limit]
@@ -7429,6 +7466,7 @@ async def api_admin_gen_logs(request: Request, limit: int = 100, offset: int = 0
             "github_id": entry.get("github_id", ""),
             "login": entry.get("login", ""),
             "prompt": entry.get("prompt", ""),
+            "negative_prompt": entry.get("negative_prompt", ""),
             "workflow": entry.get("workflow", ""),
             "count": entry.get("count", 0),
             "status": entry.get("status", "success"),
@@ -7439,13 +7477,28 @@ async def api_admin_gen_logs(request: Request, limit: int = 100, offset: int = 0
 
 
 @app.delete("/api/admin/gen-logs")
-async def api_admin_gen_logs_clear(request: Request):
-    """清空所有生图日志（仅管理员）。"""
+async def api_admin_gen_logs_clear(request: Request, date_from: float = 0, date_to: float = 0):
+    """清空生图日志（仅管理员），可选日期范围。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     async with _gen_log_lock:
-        GEN_LOG_FILE.unlink(missing_ok=True)
-    return {"ok": True, "message": "日志已清空"}
+        logs = _load_gen_logs()
+        if date_from or date_to:
+            removed = 0
+            for lid in list(logs.keys()):
+                ts = logs[lid].get("created_at", 0)
+                if date_from and ts < date_from:
+                    continue
+                if date_to and ts > date_to:
+                    continue
+                del logs[lid]
+                removed += 1
+            if removed:
+                _save_json(GEN_LOG_FILE, logs)
+            return {"ok": True, "message": f"已清空 {removed} 条日志"}
+        else:
+            GEN_LOG_FILE.unlink(missing_ok=True)
+            return {"ok": True, "message": "日志已清空"}
 
 
 if __name__ == "__main__":
