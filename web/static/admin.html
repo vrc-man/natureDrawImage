@@ -18,6 +18,9 @@
   #lb-next { right: 8px; }
   #lb-close { position: absolute; top: 8px; right: 12px; background: transparent; color: #fff; border: 0; font-size: 28px; cursor: pointer; z-index: 1; }
   #lb-title { color: #ddd; font-size: 12px; margin-right: auto; word-break: break-all; }
+/* 删除记录：预览模式下隐藏编辑控件 */
+.del-log-preview .del-log-check,
+.del-log-preview .btn-clear-deletion-record { display: none; }
 </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
@@ -501,6 +504,39 @@
     </div>
   </div>
 
+  <!-- 删除记录 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="deletion-log-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="deletion-log-body">▸</span>
+        🗑️ 删除记录
+        <span class="text-xs text-gray-500 font-normal">(<span id="deletion-log-count">0</span>)</span>
+      </h2>
+      <div class="flex gap-2">
+        <button id="btn-refresh-deletion-log" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+        <button id="btn-edit-del-log" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">编辑</button>
+        <button id="btn-auto-del-log" class="text-sm px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">自动刷新: 关</button>
+        <button id="btn-clear-deletion-log" class="text-sm px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 hidden">清空全部</button>
+      </div>
+    </div>
+    <div id="deletion-log-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">用户或管理员删除的图片存档，可查看缩略图确认后清理。最多保留 20000 条。</p>
+      <div class="flex gap-2 mb-2 items-center text-xs">
+        <label class="text-gray-500">日期筛选:</label>
+        <input id="del-log-date-from" type="date" class="border rounded px-2 py-1 text-xs" title="开始日期" />
+        <span class="text-gray-400">—</span>
+        <input id="del-log-date-to" type="date" class="border rounded px-2 py-1 text-xs" title="结束日期" />
+        <button id="btn-del-log-filter" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
+        <button id="btn-del-log-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
+      </div>
+      <div id="del-log-batch-bar" class="hidden flex gap-2 mb-2 items-center text-xs">
+        <button id="btn-del-log-select-all" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">全选</button>
+        <button id="btn-del-log-del-selected" class="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs">🗑 删除选中 (<span id="del-log-sel-count">0</span>)</button>
+      </div>
+      <div id="deletion-log-grid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 del-log-preview"></div>
+    </div>
+  </div>
+
   <!-- 封禁列表 -->
   <div class="bg-white rounded shadow p-4 mb-4">
     <div class="flex items-center justify-between mb-2">
@@ -707,15 +743,19 @@ async function loadUsers() {
         const rowCls = banned ? 'bg-red-100' : 'bg-gray-50';
         const banLabel = banned ? '✓ 已封禁' : '封禁';
         const banCls = banned ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600';
-        return `<div class="flex items-center gap-2 ${rowCls} rounded px-2 py-1 text-xs">
-          <span class="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 ${onlineGithubIds.has(u.github_id) ? 'bg-green-500' : 'bg-gray-300'}" title="${onlineGithubIds.has(u.github_id) ? '在线' : '离线'}"></span>
-          <span class="font-mono text-gray-600 w-20 truncate" title="${escHtml(u.github_id)}">${escHtml(u.github_id)}</span>
-          <span class="font-medium">${escHtml(u.login || '?')}</span>
-          ${u.email ? `<span class="text-gray-400 text-[10px]">${escHtml(u.email)}</span>` : ''}
-          <span class="text-[10px] px-1 rounded ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-200 text-gray-500'}">${escHtml(u.role || 'user')}</span>
-          ${u.created_at ? `<span class="text-gray-400 text-[10px]">${formatTime(u.created_at)}</span>` : ''}
-          ${banned ? `<span class="text-red-500 text-[10px]">原因: ${escHtml(u.banned_reason || '未说明')}</span>` : ''}
-          <button data-gid="${escHtml(u.github_id)}" data-banned="${banned}" class="btn-toggle-user-ban ml-auto text-[10px] px-2 py-0.5 text-white rounded ${banCls}">${banLabel}</button>
+        return `<div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 ${rowCls} rounded px-2 py-1 text-xs">
+          <div class="flex items-center gap-2">
+            <span class="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 ${onlineGithubIds.has(u.github_id) ? 'bg-green-500' : 'bg-gray-300'}" title="${onlineGithubIds.has(u.github_id) ? '在线' : '离线'}"></span>
+            <span class="font-mono text-gray-600 truncate" title="ID: ${escHtml(u.github_id)}">${escHtml(u.github_id)}</span>
+            <span class="font-medium">${escHtml(u.login || '?')}</span>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            ${u.email ? `<span class="text-gray-400 text-[10px]">${escHtml(u.email)}</span>` : ''}
+            <span class="text-[10px] px-1 rounded ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-200 text-gray-500'}">${escHtml(u.role || 'user')}</span>
+            ${u.created_at ? `<span class="text-gray-400 text-[10px]">${formatTime(u.created_at)}</span>` : ''}
+            ${banned ? `<span class="text-red-500 text-[10px]">原因: ${escHtml(u.banned_reason || '未说明')}</span>` : ''}
+            <button data-gid="${escHtml(u.github_id)}" data-banned="${banned}" class="btn-toggle-user-ban text-[10px] px-2 py-0.5 text-white rounded ${banCls}">${banLabel}</button>
+          </div>
         </div>`;
       }).join('') + '</div>';
     document.querySelectorAll('.btn-toggle-user-ban').forEach(b => {
@@ -988,14 +1028,42 @@ $('btn-refresh-featured').addEventListener('click', loadFeatured);
 $('btn-refresh-limits').addEventListener('click', loadLimits);
 $('btn-save-limits').addEventListener('click', saveLimits);
 $('btn-run-gc').addEventListener('click', async () => {
-  $('lim-status').textContent = 'GC 执行中…';
+  const backup = confirm('是否先将待删除文件备份到临时目录？\n\n点"确定"=先备份再删除，点"取消"=直接删除不备份');
+  if (!confirm(`确认执行 GC？${backup ? '将先备份再清理。' : '将直接清理文件。'}此操作不可恢复。`)) return;
+  const input = prompt(`${backup ? '备份后' : ''}即将执行 GC 清理，请输入"确认清理"以继续：`);
+  if (input !== '确认清理') { alert('输入不匹配，已取消'); return; }
+  $('lim-status').textContent = 'GC 已触发，后台执行中…';
   try {
-    const d = await api('POST', '/api/admin/gc');
-    const c = d.cleaned || {};
-    $('lim-status').textContent = `✓ GC 完成：举报 ${c.resolved_reports || 0}，限流 ${(c.report_rate_entries||0)+(c.gen_cooldown_entries||0)+(c.image_rate_entries||0)}，孤儿映射 ${c.orphan_creator_entries||0}`;
-    setTimeout(() => { $('lim-status').textContent = ''; }, 5000);
+    const body = backup ? { backup: true } : {};
+    await api('POST', '/api/admin/gc', body);
+    // 轮询等待完成
+    let retries = 0;
+    const poll = setInterval(async () => {
+      try {
+        const s = await api('GET', '/api/admin/gc/status');
+        if (s.status === 'done') {
+          clearInterval(poll);
+          const c = s.cleaned || {};
+          const parts = [];
+          if (c.resolved_reports) parts.push(`举报 ${c.resolved_reports}`);
+          if (c.orphan_thumbs) parts.push(`孤儿缩略图 ${c.orphan_thumbs}`);
+          if (c.orphan_creator_entries) parts.push(`孤儿映射 ${c.orphan_creator_entries}`);
+          if (c.retry_delete_success) parts.push(`清理文件 ${c.retry_delete_success}`);
+          if (c.stale_featured) parts.push(`精选死链 ${c.stale_featured}`);
+          if (c.stale_user_images) parts.push(`用户记录同步`);
+          $('lim-status').textContent = '✓ GC 完成' + (parts.length ? '：' + parts.join('，') : '');
+          setTimeout(() => { $('lim-status').textContent = ''; }, 8000);
+        } else if (s.status === 'error') {
+          clearInterval(poll);
+          $('lim-status').textContent = 'GC 失败: ' + (s.error || '未知');
+        } else if (++retries > 60) {
+          clearInterval(poll);
+          $('lim-status').textContent = 'GC 超时，请查看控制台日志';
+        }
+      } catch {}
+    }, 1000);
   } catch (e) {
-    $('lim-status').textContent = 'GC 失败: ' + e.message;
+    $('lim-status').textContent = '触发 GC 失败: ' + e.message;
   }
 });
 function _annBadge(enabled) {
@@ -1046,17 +1114,21 @@ let adminRes = {presets: []};
 function renderResEntries() {
   const container = $('res-entries');
   container.innerHTML = adminRes.presets.map((p, i) => {
-    return `<div class="flex items-center gap-2 p-2 border rounded bg-gray-50" data-idx="${i}">
-      <input type="number" value="${p.w}" min="64" step="8" placeholder="宽"
-        class="res-w w-20 border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
-      <span class="text-gray-400">×</span>
-      <input type="number" value="${p.h}" min="64" step="8" placeholder="高"
-        class="res-h w-20 border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
-      <input type="text" value="${escHtml(p.label || '')}" placeholder="标签（可选）"
-        class="res-label flex-1 border rounded px-2 py-1 text-xs" data-idx="${i}" />
-      <button class="res-up text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
-      <button class="res-down text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === adminRes.presets.length - 1 ? 'disabled' : ''}>▼</button>
-      <button class="res-del text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600" data-idx="${i}">✕</button>
+    return `<div class="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 p-2 border rounded bg-gray-50" data-idx="${i}">
+      <div class="flex items-center gap-2">
+        <input type="number" value="${p.w}" min="64" step="8" placeholder="宽"
+          class="res-w w-16 sm:w-20 border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
+        <span class="text-gray-400 text-xs">×</span>
+        <input type="number" value="${p.h}" min="64" step="8" placeholder="高"
+          class="res-h w-16 sm:w-20 border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
+      </div>
+      <div class="flex items-center gap-2 flex-1 min-w-0">
+        <input type="text" value="${escHtml(p.label || '')}" placeholder="标签（可选）"
+          class="res-label flex-1 min-w-0 border rounded px-2 py-1 text-xs" data-idx="${i}" />
+        <button class="res-up text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 shrink-0" data-idx="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
+        <button class="res-down text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 shrink-0" data-idx="${i}" ${i === adminRes.presets.length - 1 ? 'disabled' : ''}>▼</button>
+        <button class="res-del text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 shrink-0" data-idx="${i}">✕</button>
+      </div>
     </div>`;
   }).join('');
   container.querySelectorAll('.res-w').forEach(el => {
@@ -1687,6 +1759,7 @@ $('ban-input').addEventListener('keydown', e => { if (e.key === 'Enter') ban($('
 
 // 折叠：点击带 data-toggle 的标题，切换对应 id 的显隐 + 箭头
 const _toggleLoaded = {};
+let _delLogPollTimer = null;
 document.querySelectorAll('[data-toggle]').forEach(h => {
   h.addEventListener('click', e => {
     // 点到右侧的「刷新」按钮等不触发折叠
@@ -1702,6 +1775,15 @@ document.querySelectorAll('[data-toggle]').forEach(h => {
       _toggleLoaded[id] = true;
       if (id === 'access-keys-body') loadAccessKeys();
       if (id === 'gen-logs-body') loadGenLogs();
+      if (id === 'deletion-log-body') loadDeletionLog();
+    }
+    // 删除记录：展开时才根据按钮状态决定是否轮询，折叠时停止
+    if (id === 'deletion-log-body') {
+      if (collapsed) {
+        if (_delLogPollTimer) { clearInterval(_delLogPollTimer); _delLogPollTimer = null; }
+      } else {
+        _updateDelLogPoll();
+      }
     }
   });
 });
@@ -1880,7 +1962,9 @@ const lbState = { items: [], index: 0 };
 function collectLightboxItems() {
   const imgs = document.querySelectorAll('.lb-thumb');
   return Array.from(imgs).map(img => ({
-    url: '/api/output/file?path=' + encodeURIComponent(img.dataset.path || ''),
+    url: img.dataset.delThumb
+      ? img.dataset.delThumb
+      : '/api/output/file?path=' + encodeURIComponent(img.dataset.path || ''),
     path: img.dataset.path || '',
     mtime: img.dataset.mtime || '',
     ip: img.dataset.ip || '',
@@ -2282,7 +2366,7 @@ $('btn-images-select-all').addEventListener('click', () => {
 
 $('btn-images-del-selected').addEventListener('click', async () => {
   if (!imagesSelected.size) return;
-  if (!confirm(`确定删除选中的 ${imagesSelected.size} 张图片？标记后 30 秒内后台静默删除磁盘文件。`)) return;
+  if (!confirm(`确定删除选中的 ${imagesSelected.size} 张图片？将标记删除，文件待 GC 清理。`)) return;
   const paths = Array.from(imagesSelected);
   try {
     await api('POST', '/api/admin/mark_delete_batch', { paths });
@@ -2557,6 +2641,8 @@ $('btn-clear-gen-logs').addEventListener('click', async () => {
   const dateParams = _genLogsDateParams();
   const msg = dateParams ? '确认清空当前日期范围内的生图日志？此操作不可恢复。' : '确认清空所有生图日志？此操作不可恢复。';
   if (!confirm(msg)) return;
+  const input = prompt('请输入"确认删除生图日志"以继续：');
+  if (input !== '确认删除生图日志') { alert('输入不匹配，已取消'); return; }
   try {
     let url = '/api/admin/gen-logs';
     if (dateParams) url += '?' + dateParams;
@@ -2566,6 +2652,184 @@ $('btn-clear-gen-logs').addEventListener('click', async () => {
   } catch (e) {
     $('gen-logs-status').textContent = '清空失败: ' + e.message;
   }
+});
+
+// ==================== 删除记录 ====================
+function _delLogDateParams() {
+  const from = $('del-log-date-from').value;
+  const to = $('del-log-date-to').value;
+  const params = [];
+  if (from) params.push('date_from=' + (new Date(from + 'T00:00:00').getTime() / 1000));
+  if (to) params.push('date_to=' + (new Date(to + 'T23:59:59').getTime() / 1000));
+  return params.join('&');
+}
+
+async function loadDeletionLog() {
+  $('deletion-log-grid').textContent = '加载中...';
+  try {
+    let url = '/api/admin/deletion-log';
+    const dp = _delLogDateParams();
+    if (dp) url += '?' + dp;
+    const d = await api('GET', url);
+    const items = d.items || [];
+    $('deletion-log-count').textContent = d.total || 0;
+    if (!items.length) {
+      $('deletion-log-grid').innerHTML = '<div class="text-gray-400 text-xs col-span-full">暂无删除记录</div>';
+      return;
+    }
+    $('deletion-log-grid').innerHTML = items.map(it => {
+      const t = it.deleted_at ? new Date(it.deleted_at * 1000).toLocaleString('zh-CN') : (it.time ? new Date(it.time * 1000).toLocaleString('zh-CN') : '?');
+      const thumb = it.thumb_url
+        ? `<img src="${escHtml(it.thumb_url)}" loading="lazy"
+            class="lb-thumb w-full aspect-square object-cover rounded bg-gray-100 cursor-pointer"
+            data-path="${escHtml(it.path)}" data-del-thumb="${escHtml(it.thumb_url)}" />`
+        : '<div class="w-full aspect-square rounded bg-gray-200 flex items-center justify-center text-gray-400 text-xs">无缩略图</div>';
+      const creator = it.creator_login
+        ? `生图: ${escHtml(it.creator_login)}${it.creator_ip ? ' (' + escHtml(it.creator_ip) + ')' : ''}`
+        : (it.creator_ip ? `生图 IP: ${escHtml(it.creator_ip)}` : '');
+      return `<div class="border rounded p-1 bg-red-50 relative" data-del-path="${escHtml(it.path)}">
+        <input type="checkbox" class="del-log-check absolute top-0.5 left-0.5 w-3 h-3 cursor-pointer z-10" data-path="${escHtml(it.path)}" />
+        ${thumb}
+        <div class="text-[9px] mt-1 text-gray-500">👤 删除: ${escHtml(it.deleted_by_login || it.login || '?')}</div>
+        ${creator ? `<div class="text-[9px] text-gray-500">🎨 ${creator}</div>` : ''}
+        <div class="text-[9px] text-gray-400">${t}</div>
+        <div class="text-[9px] text-gray-400 truncate">📁 ${escHtml(it.path.split('/').pop() || it.path)}</div>
+        <button class="btn-clear-deletion-record mt-1 w-full text-[10px] bg-white border border-red-300 text-red-500 rounded px-1 py-0.5 hover:bg-red-100" data-path="${escHtml(it.path)}">清理记录</button>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    $('deletion-log-grid').textContent = '加载失败: ' + e.message;
+  }
+}
+
+$('btn-refresh-deletion-log').addEventListener('click', () => loadDeletionLog());
+$('btn-edit-del-log').addEventListener('click', () => {
+  const grid = $('deletion-log-grid');
+  const editing = grid.classList.toggle('del-log-preview');
+  const btn = $('btn-edit-del-log');
+  const clearBtn = $('btn-clear-deletion-log');
+  const batchBar = $('del-log-batch-bar');
+  if (editing) {
+    btn.textContent = '编辑';
+    btn.classList.remove('bg-orange-500'); btn.classList.add('bg-gray-200');
+    clearBtn.classList.add('hidden');
+    batchBar.classList.add('hidden');
+    _delLogSelected.clear();
+    document.querySelectorAll('.del-log-check').forEach(c => c.checked = false);
+  } else {
+    btn.textContent = '退出编辑';
+    btn.classList.remove('bg-gray-200'); btn.classList.add('bg-orange-500');
+    clearBtn.classList.remove('hidden');
+    _updateDelLogSelection();
+  }
+});
+$('btn-auto-del-log').addEventListener('click', () => {
+  const btn = $('btn-auto-del-log');
+  if (_delLogPollTimer) {
+    clearInterval(_delLogPollTimer);
+    _delLogPollTimer = null;
+    btn.textContent = '自动刷新: 关';
+    btn.classList.remove('bg-emerald-500');
+    btn.classList.add('bg-blue-500');
+  } else {
+    _updateDelLogPoll();
+  }
+});
+function _updateDelLogPoll() {
+  const btn = $('btn-auto-del-log');
+  const body = $('deletion-log-body');
+  if (!body || body.classList.contains('hidden')) return;
+  if (!_delLogPollTimer) {
+    _delLogPollTimer = setInterval(loadDeletionLog, 10000);
+    btn.textContent = '自动刷新: 开';
+    btn.classList.remove('bg-blue-500');
+    btn.classList.add('bg-emerald-500');
+  }
+}
+$('btn-del-log-filter').addEventListener('click', () => loadDeletionLog());
+$('btn-del-log-reset').addEventListener('click', () => {
+  $('del-log-date-from').value = '';
+  $('del-log-date-to').value = '';
+  loadDeletionLog();
+});
+$('btn-clear-deletion-log').addEventListener('click', async () => {
+  const dp = _delLogDateParams();
+  const msg = dp ? '确认清空当前日期范围内的删除记录？' : '确认清空全部删除记录？';
+  if (!confirm(msg)) return;
+  const input = prompt('请输入"确认删除删除记录"以继续：');
+  if (input !== '确认删除删除记录') { alert('输入不匹配，已取消'); return; }
+  try {
+    const body = {};
+    if (dp) {
+      const from = $('del-log-date-from').value;
+      const to = $('del-log-date-to').value;
+      if (from) body.date_from = new Date(from + 'T00:00:00').getTime() / 1000;
+      if (to) body.date_to = new Date(to + 'T23:59:59').getTime() / 1000;
+    }
+    const d = await api('POST', '/api/admin/deletion-log/clear', body);
+    alert(d.message || '已清空');
+    loadDeletionLog();
+  } catch (e) {
+    alert('清空失败: ' + e.message);
+  }
+});
+$('deletion-log-grid').addEventListener('click', async (e) => {
+  // 勾选框
+  const cb = e.target.closest('.del-log-check');
+  if (cb) {
+    _updateDelLogSelection();
+    return;
+  }
+  const btn = e.target.closest('.btn-clear-deletion-record');
+  if (!btn) return;
+  const path = btn.dataset.path;
+  if (!confirm('确认清理此条删除记录？缩略图将一并删除。')) return;
+  try {
+    await api('POST', '/api/admin/deletion-log/clear', { path });
+    loadDeletionLog();
+  } catch (err) {
+    alert('清理失败: ' + err.message);
+  }
+});
+
+// 删除记录批量选择
+let _delLogSelected = new Set();
+function _updateDelLogSelection() {
+  _delLogSelected.clear();
+  document.querySelectorAll('.del-log-check:checked').forEach(c => _delLogSelected.add(c.dataset.path));
+  $('del-log-sel-count').textContent = _delLogSelected.size;
+  const bar = $('del-log-batch-bar');
+  if (_delLogSelected.size > 0) {
+    bar.classList.remove('hidden');
+  } else {
+    bar.classList.add('hidden');
+  }
+}
+$('btn-del-log-select-all').addEventListener('click', () => {
+  const checks = document.querySelectorAll('.del-log-check');
+  const allChecked = Array.from(checks).every(c => c.checked);
+  checks.forEach(c => { c.checked = !allChecked; });
+  _updateDelLogSelection();
+});
+$('btn-del-log-del-selected').addEventListener('click', async () => {
+  if (!_delLogSelected.size) return;
+  if (!confirm(`确定清理选中的 ${_delLogSelected.size} 条删除记录？`)) return;
+  const input = prompt(`请输入"确认删除删除记录"以继续清理 ${_delLogSelected.size} 条记录：`);
+  if (input !== '确认删除删除记录') { alert('输入不匹配，已取消'); return; }
+  const paths = Array.from(_delLogSelected);
+  let done = 0;
+  for (const p of paths) {
+    try {
+      await api('POST', '/api/admin/deletion-log/clear', { path: p });
+      done++;
+    } catch (err) {
+      alert(`清理 ${p} 失败: ${err.message}`);
+      break;
+    }
+  }
+  _delLogSelected.clear();
+  _updateDelLogSelection();
+  loadDeletionLog();
 });
 
 </script>

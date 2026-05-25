@@ -20,7 +20,7 @@
   pre, code { white-space: pre-wrap; }
   img, video, canvas, iframe { max-width: 100%; height: auto; }
 
-  /* 樱花粉白渐变背景 + 花瓣 */
+  /* 樱花粉白渐变背景 */
   body {
     background: linear-gradient(135deg, #fef2f4 0%, #fdf2f8 25%, #faf5ff 50%, #fff1f2 75%, #fef2f4 100%);
     background-size: 400% 400%;
@@ -31,24 +31,9 @@
     50%  { background-position: 100% 50%; }
     100% { background-position: 0% 50%; }
   }
-  /* 樱花花瓣飘落 */
-  @keyframes sakuraFall {
-    0%   { transform: translateY(-10vh) rotate(0deg) translateX(0); opacity: 0.9; }
-    100% { transform: translateY(110vh) rotate(720deg) translateX(80px); opacity: 0; }
-  }
-  @keyframes sakuraSway {
-    0%, 100% { margin-left: 0; }
-    50%      { margin-left: 30px; }
-  }
-  body::before {
-    content: '🌸 🌸 🌸 🌸 🌸 🌸 🌸 🌸';
-    position: fixed; inset: 0;
-    font-size: 24px; white-space: pre;
-    pointer-events: none; z-index: 0; opacity: 0;
-  }
+  /* 静态散布花瓣 — 飘落动画的某一帧定格 */
   .sakura-petal {
-    position: fixed; top: -40px; z-index: 0; pointer-events: none;
-    font-size: 18px; animation: sakuraFall linear infinite, sakuraSway ease-in-out infinite;
+    position: fixed; z-index: 0; pointer-events: none; user-select: none;
   }
 
   /* 浅色滚动条 */
@@ -151,6 +136,16 @@
   /* 响应式表单 */
   .prompt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   @media (min-width: 640px) { .prompt-grid { gap: 14px; } }
+  .prompt-label { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 4px; }
+  .prompt-label .collapse-arrow { display: inline-block; transition: transform .2s; font-size: 10px; color: #9ca3af; }
+  .prompt-label.collapsed .collapse-arrow { transform: rotate(-90deg); }
+  .prompt-body { transition: max-height .3s ease, opacity .2s; max-height: 200px; overflow: hidden; }
+  .prompt-body.collapsed { max-height: 0; opacity: 0; margin-top: 0; }
+  /* 点击提示气泡 */
+  .tip-btn { cursor: pointer; color: #9ca3af; font-weight: 700; }
+  .tip-popup { position: fixed; z-index: 9999; background: #1f2937; color: #fff; font-size: 12px;
+    padding: 8px 12px; border-radius: 10px; max-width: 260px; line-height: 1.5;
+    box-shadow: 0 4px 16px rgba(0,0,0,.25); pointer-events: none; white-space: pre-line; }
   .img2img-row { display: flex; flex-direction: column; gap: 16px; }
   @media (min-width: 640px) { .img2img-row { flex-direction: row; } }
 
@@ -225,12 +220,12 @@
     <h3 class="text-lg font-bold mb-3 text-red-500">⚠️ 生图前必读公告</h3>
     <div class="text-sm text-gray-700 leading-relaxed space-y-2 mb-4">
       <p>您了解并已知晓自己即将进行生图操作，<strong>您的 IP 将会被记录</strong>。</p>
-      <p>若您恶意生图、滥用 API、生成鬼图、恶心图片，<strong>有可能会遭到不定处罚</strong>。</p>
+      <p><strong>严禁生成未成年色情、成人露骨及其他违法内容</strong>，后果自负。</p>
+      <p>若您恶意生图、滥用 API、生成违规内容，<strong>有可能会遭到封禁</strong>。</p>
       <p>本站<strong>有权随时将您永久禁止生图</strong>，并移除您的所有违规图片。</p>
+      <p class="text-xs text-gray-500">本站有权保留违规证据（IP、用户名、邮箱、违规内容）。</p>
+      <p class="text-xs text-gray-500">若用户违规行为引发法律问题，本站有义务配合执法机关提供相关证据。</p>
       <p>若您为生图小白，请严格按照教程学习正确的生图姿势。<strong>不要随意生图</strong>，</p>
-      <hr class="border-gray-200" />
-      <p>本站为公益服务，<strong>不保证持续稳定运行</strong>，服务可能随时中断或数据丢失。</p>
-      <p>生成的图片请<strong>及时下载备份</strong>，本站会随时清理缓存，图片丢失不补。</p>
       <p class="text-xs text-gray-400">该弹窗仅在本次会话首次生图时提示。</p>
     </div>
     <div class="flex gap-2 justify-end">
@@ -248,7 +243,7 @@
     <div class="flex items-center justify-between">
       <h1 class="text-xl sm:text-2xl font-bold text-gray-800">🎨 二次元绘梦 <span id="online-count" class="font-normal text-sm text-gray-400"></span></h1>
       <div class="flex items-center gap-2 text-xs">
-        <span id="user-label" class="px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 cursor-pointer font-medium inline-block" onclick="location.href='/auth/login'">登录</span>
+        <span id="user-label" class="px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 cursor-pointer font-medium" onclick="location.href='/auth/login'">登录</span>
         <a id="admin-link" href="/admin" class="hidden px-2 py-1 rounded-full bg-red-50 text-red-500 font-medium">管理</a>
       </div>
     </div>
@@ -310,14 +305,22 @@
     <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 space-y-5">
       <div class="prompt-grid">
         <div>
-          <label class="block text-sm font-semibold mb-1.5 text-gray-600">正面提示词</label>
-          <textarea id="direct" rows="3" placeholder="英文 tags，选择工作流后自动填入"
-            class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all resize-y"></textarea>
+          <label class="block text-sm font-semibold mb-1.5 text-gray-600 prompt-label" data-collapse="direct-body">
+            <span class="collapse-arrow">▼</span> 正面提示词
+          </label>
+          <div id="direct-body" class="prompt-body">
+            <textarea id="direct" rows="3"
+              class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all resize-y"></textarea>
+          </div>
         </div>
         <div>
-          <label class="block text-sm font-semibold mb-1.5 text-gray-600">负面提示词</label>
-          <textarea id="negative_prompt" rows="3" placeholder="如: worst quality, low quality, blurry"
-            class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all resize-y"></textarea>
+          <label class="block text-sm font-semibold mb-1.5 text-gray-600 prompt-label" data-collapse="neg-body">
+            <span class="collapse-arrow">▼</span> 负面提示词
+          </label>
+          <div id="neg-body" class="prompt-body">
+            <textarea id="negative_prompt" rows="3"
+              class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all resize-y"></textarea>
+          </div>
         </div>
       </div>
 
@@ -330,7 +333,7 @@
       <div class="flex items-center flex-wrap gap-3">
         <label class="flex items-center gap-1.5 text-sm font-medium text-gray-600 cursor-pointer select-none">
           <input type="checkbox" id="rewrite" checked class="w-4 h-4 accent-pink-500" /> 改写
-          <span class="text-gray-400 cursor-help" title="改写：LLM 基于「直接 Tag」结合「自然语言描述」整体重写 prompt&#10;不勾选：LLM 翻译后追加到原 prompt 后面">?</span>
+          <button type="button" class="text-gray-400 tip-btn ml-2 px-1 text-base bg-transparent border-0 cursor-pointer" data-tip="改写：LLM 基于「直接 Tag」结合「自然语言描述」整体重写 prompt&#10;不勾选：LLM 翻译后追加到原 prompt 后面">?</button>
         </label>
         <div class="flex flex-wrap gap-1.5" id="res-presets"></div>
       </div>
@@ -478,19 +481,22 @@
       <div class="text-sm text-gray-600 leading-relaxed space-y-2">
         <p>使用本站服务即表示您同意：</p>
         <ul class="list-disc list-inside space-y-1">
-          <li>您应对自己生成的图片内容承担全部责任</li>
-          <li>请遵守当地法律法规，不得生成违法、侵权或不当内容</li>
-          <li>您的 IP 地址将被记录，违规行为将被追溯</li>
-          <li>本站保留对违规用户进行封禁的权利</li>
-          <li>本站为公益服务，不保证持续稳定运行，服务可能随时中断或数据丢失</li>
-          <li>生成的图片请及时下载备份，本站会随时清理缓存，图片丢失不补</li>
+          <li>本站通过 GitHub OAuth 登录，<strong>仅获取您的用户名、用户ID及GitHub OAuth提供的邮箱信息</strong>，仅用于账户识别与违规追溯，不用于其他用途</li>
+          <li>您的 <strong>IP 地址将被记录</strong>，违规行为将被追溯</li>
+          <li>您应对自己生成的图片内容承担<strong>全部法律责任</strong></li>
+          <li>请遵守当地法律法规，<strong>不得生成违法、侵权或不当内容</strong></li>
+          <li>您的作品<strong>仅自己可见</strong>，本站不会擅自公开</li>
+          <li>本站有权<strong>保留违规用户的相关证据</strong>（IP、用户名、邮箱、违规内容）以保护自身合法权益</li>
+          <li>本站为个人非商业项目，不提供可用性保证</li>
+          <li>本站将尽力保护您的数据安全，但因不可抗力、第三方攻击或法律要求导致的数据泄露，不承担责任</li>
+          <li>本站保留对违规用户进行<strong>封禁</strong>的权利</li>
         </ul>
       </div>
     </div>
 
     <!-- 来源声明 -->
     <div class="text-center text-xs text-gray-400 py-2">
-      本项目基于 <a href="https://github.com/afoim/natureDrawImage" target="_blank" rel="noopener" class="text-gray-500 hover:text-gray-700 underline">natureDrawImage</a> 二次修改
+      本项目基于 <a href="https://github.com/afoim/natureDrawImage" target="_blank" rel="noopener" class="text-gray-500 hover:text-gray-700 underline">natureDrawImage</a> 二次修改，<a href="https://github.com/vrc-man/natureDrawImage" target="_blank" rel="noopener" class="text-gray-500 hover:text-gray-700 underline">源码地址</a>
     </div>
   </div>
 </div>
@@ -1233,15 +1239,33 @@ function handleMsg(m) {
 }
 
 let _pendingCooldownSec = -1;  // 服务端返回的实际剩余冷却秒数，-1 表示用默认值
+let _cooldownTimer = null;    // 前端每秒倒计时 interval ID
 function startCooldown(seconds) {
   const el = $('cooldown-timer');
-  if (!el) return;
+  if (!el || seconds <= 0) return;
+  stopCooldown();
   $('btn-run').disabled = true;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  const wait = m > 0 ? m + '分' + s + '秒' : s + '秒';
-  el.textContent = '⏳ 冷却等待中，预计 ' + wait + ' 后可提交';
-  el.classList.remove('hidden');
+  let remaining = seconds;
+  const tick = () => {
+    if (remaining <= 0) {
+      stopCooldown();
+      $('btn-run').disabled = false;
+      return;
+    }
+    const m = Math.floor(remaining / 60);
+    const s = remaining % 60;
+    const wait = m > 0 ? m + '分' + s + '秒' : s + '秒';
+    el.textContent = '⏳ 冷却等待中，预计 ' + wait + ' 后可提交';
+    el.classList.remove('hidden');
+    remaining--;
+  };
+  tick();
+  _cooldownTimer = setInterval(tick, 1000);
+}
+function stopCooldown() {
+  if (_cooldownTimer) { clearInterval(_cooldownTimer); _cooldownTimer = null; }
+  const el = $('cooldown-timer');
+  if (el) el.classList.add('hidden');
 }
 
 let _finishing = false;
@@ -1303,11 +1327,13 @@ $('btn-submit-key').addEventListener('click', async () => {
       $('access-key-error').classList.remove('hidden');
       $('access-key-error').textContent = d.error || '密钥无效';
       $('btn-submit-key').disabled = false;
+      try { localStorage.removeItem('cached_key'); } catch {}
       return;
     }
     $('access-key-success').classList.remove('hidden');
     $('access-key-success').textContent = '✓ 密钥验证成功，正在解锁...';
-    // 延迟一下再显示主界面
+    // 缓存密钥到浏览器，后续自动提交
+    try { localStorage.setItem('cached_key', key); } catch {}
     setTimeout(() => {
       $('access-page').classList.add('hidden');
       $('generate-main').classList.remove('hidden');
@@ -1369,7 +1395,7 @@ function connectStatus() {
       }
     }
     else if (m.type === 'cooldown_done') {
-      $('cooldown-timer').classList.add('hidden');
+      stopCooldown();
       $('btn-run').disabled = false;
     }
     else if (m.type === 'mirror') { if (activeWS) return; handleMsg(m.event); }
@@ -1423,7 +1449,16 @@ function showLightbox() {
   if (it.relPath) { rptBtn.classList.remove('hidden'); rptBtn.dataset.rel = it.relPath; }
   else { rptBtn.classList.add('hidden'); rptBtn.dataset.rel = ''; }
   const dl = $('lb-download');
-  if (dl) { let u = it.url; if (u.startsWith('/api/output/file')) u += (u.includes('?') ? '&' : '?') + 'full=1'; dl.href = u; dl.download = it.title || ''; }
+  if (dl) {
+    let u;
+    if (it.relPath) {
+      u = '/api/output/file?path=' + encodeURIComponent(it.relPath) + '&full=1';
+    } else {
+      u = it.url;
+      if (u.startsWith('/api/output/file')) u += (u.includes('?') ? '&' : '?') + 'full=1';
+    }
+    dl.href = u; dl.download = it.title || '';
+  }
   if (it.relPath && _currentUser && _currentUser.is_admin) {
     fetch('/api/output/creator?path=' + encodeURIComponent(it.relPath)).then(r => r.json()).then(d => { if (d && d.creator_ip) $('lb-creator').textContent = 'IP: ' + d.creator_ip; }).catch(() => {});
   }
@@ -1638,6 +1673,13 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
         $('access-page').classList.remove('hidden');
         $('generate-main').classList.add('hidden');
         $('tab-bar').classList.add('hidden');
+        // 自动提交缓存的密钥
+        let cachedKey = '';
+        try { cachedKey = localStorage.getItem('cached_key') || ''; } catch {}
+        if (cachedKey) {
+          $('access-key-input').value = cachedKey;
+          $('btn-submit-key').click();
+        }
       } else {
         $('access-page').classList.add('hidden');
         $('generate-main').classList.remove('hidden');
@@ -1667,7 +1709,7 @@ async function pollMyQueue() {
     const list = $('my-queue-items');
     if (!items.length && !(activeWS && activeWS.readyState === WebSocket.OPEN)) {
       card.classList.add('hidden');
-      if (!activeWS) $('btn-run').disabled = false;
+      if (!activeWS && !_cooldownTimer) $('btn-run').disabled = false;
     } else {
       card.classList.remove('hidden');
       const waiting = items.filter(i => i.status === 'waiting');
@@ -1693,8 +1735,59 @@ async function pollMyQueue() {
     }
   } catch {}
 }
-setInterval(pollMyQueue, 8000);
+setInterval(pollMyQueue, 2000);
 pollMyQueue();
+
+// ── 提示词折叠 ──
+document.addEventListener('click', (e) => {
+  const label = e.target.closest('.prompt-label');
+  if (!label) return;
+  const targetId = label.dataset.collapse;
+  if (!targetId) return;
+  const body = document.getElementById(targetId);
+  if (!body) return;
+  body.classList.toggle('collapsed');
+  label.classList.toggle('collapsed');
+});
+
+// ── 点击提示（手机友好） ──
+let _activePopup = null;
+let _popupTimer = null;
+document.addEventListener('click', (e) => {
+  const tip = e.target.closest('.tip-btn');
+  if (!tip) return;
+  // 如果点的是同一个按钮，不重复创建
+  if (_activePopup && tip === _activePopup._tipRef) return;
+  if (_activePopup) { _activePopup.remove(); _activePopup = null; }
+  if (_popupTimer) { clearTimeout(_popupTimer); _popupTimer = null; }
+  const popup = document.createElement('div');
+  popup.className = 'tip-popup';
+  popup.textContent = tip.dataset.tip || '';
+  popup._tipRef = tip;
+  document.body.appendChild(popup);
+  _activePopup = popup;
+  const tipRect = tip.getBoundingClientRect();
+  const popW = Math.min(popup.offsetWidth || 260, window.innerWidth - 16);
+  let left = tipRect.left;
+  if (left + popW > window.innerWidth - 8) left = window.innerWidth - popW - 8;
+  if (left < 0) left = 4;
+  popup.style.left = left + 'px';
+  if (tipRect.bottom + 80 > window.innerHeight) {
+    popup.style.top = Math.max(4, tipRect.top - (popup.offsetHeight || 60) - 4) + 'px';
+  } else {
+    popup.style.top = (tipRect.bottom + 6) + 'px';
+  }
+  _popupTimer = setTimeout(() => {
+    if (_activePopup === popup) { _activePopup.remove(); _activePopup = null; }
+    _popupTimer = null;
+  }, 3000);
+});
+// 点其他地方关闭提示
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.tip-btn')) return;
+  if (_activePopup) { _activePopup.remove(); _activePopup = null; }
+  if (_popupTimer) { clearTimeout(_popupTimer); _popupTimer = null; }
+});
 
 loadResolutions();
 loadStyles();
@@ -1704,7 +1797,7 @@ loadList().then(() => {
   if (!getCurrentPath()) toggleWfList(true);
 });
 
-// ==================== 樱花飘落动画 ====================
+// ==================== 静态花瓣（飘落动画某一帧定格） ====================
 (function initSakura() {
   const petalCount = 7;
   const frag = document.createDocumentFragment();
@@ -1712,11 +1805,11 @@ loadList().then(() => {
     const petal = document.createElement('div');
     petal.className = 'sakura-petal';
     petal.textContent = '🌸';
-    petal.style.left = (Math.random() * 94) + '%';
-    petal.style.animationDuration = (12 + Math.random() * 18) + 's';
-    petal.style.animationDelay = (Math.random() * 15) + 's';
-    petal.style.fontSize = (14 + Math.random() * 16) + 'px';
-    petal.style.opacity = (0.3 + Math.random() * 0.5);
+    petal.style.left = (Math.random() * 92) + '%';
+    petal.style.top = (Math.random() * 85) + '%';
+    petal.style.fontSize = (14 + Math.random() * 18) + 'px';
+    petal.style.opacity = (0.15 + Math.random() * 0.3);
+    petal.style.transform = 'rotate(' + (Math.random() * 360) + 'deg)';
     frag.appendChild(petal);
   }
   document.body.appendChild(frag);

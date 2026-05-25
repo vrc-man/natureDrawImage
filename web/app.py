@@ -132,7 +132,7 @@ def _load_gen_logs() -> Dict[str, Any]:
 
 async def _save_gen_log(github_id: str, _login: str, prompt: str, workflow: str,
                        count: int, status: str, client_ip: str,
-                       negative_prompt: str = ""):
+                       negative_prompt: str = "", file_paths: list = None):
     """追加一条生图日志，超出上限自动清理旧记录。"""
     import time as _t
     login = _login
@@ -152,6 +152,7 @@ async def _save_gen_log(github_id: str, _login: str, prompt: str, workflow: str,
             "status": status,
             "client_ip": client_ip,
             "created_at": _t.time(),
+            "file_paths": [p.replace("\\", "/") for p in (file_paths or [])],
         }
         # 超出上限时删除最旧的
         if len(logs) > _GEN_LOG_MAX:
@@ -1622,6 +1623,7 @@ async def _run_gc():
     # 4. 重试清理标记删除但残留的文件（首次删除失败 / 服务重启丢失后台任务）
     deleted = _load_deleted_images()
     gc_deleted = 0
+    del_set: set = set()  # 成功删除的路径，用于同步清理 gen_log
     still_failed: Dict[str, List[str]] = {}
     for github_id, paths in deleted.items():
         for rel_path in paths:
@@ -1641,6 +1643,7 @@ async def _run_gc():
             except Exception as e:
                 print(f"[GC] 补删失败: {rel_path} — {e}")
             if ok:
+                del_set.add(rel_path.replace("\\", "/"))
                 # 清理 creator_ips.txt 映射
                 try:
                     async with _creator_map_lock:
@@ -1667,6 +1670,21 @@ async def _run_gc():
                     _save_json(DELETED_IMAGES_FILE, {})
             except Exception:
                 pass
+        # 同步清理 gen_log.json 中对应文件路径的记录
+        async with _gen_log_lock:
+            try:
+                gen_logs = _load_gen_logs()
+                gen_log_removed = 0
+                for lid in list(gen_logs.keys()):
+                    fps = gen_logs[lid].get("file_paths", [])
+                    if fps and all(fp in del_set for fp in fps):
+                        del gen_logs[lid]
+                        gen_log_removed += 1
+                if gen_log_removed:
+                    _save_json(GEN_LOG_FILE, gen_logs)
+                    cleaned["gen_log_cleaned"] = gen_log_removed
+            except Exception:
+                pass
     cleaned["retry_delete_success"] = gc_deleted
     cleaned["retry_delete_failed"] = sum(len(v) for v in still_failed.values())
 
@@ -1676,6 +1694,17 @@ async def _run_gc():
         cleaned["stale_user_images"] = 1
     except Exception:
         cleaned["stale_user_images"] = 0
+
+    # 4c. 清理 featured.txt 中磁盘已不存在的死路径
+    try:
+        feats = _read_featured()
+        if feats:
+            kept = [f for f in feats if (OUTPUT_DIR / f).resolve().is_file()]
+            if len(kept) < len(feats):
+                await _write_featured(kept)
+                cleaned["stale_featured"] = len(feats) - len(kept)
+    except Exception:
+        cleaned["stale_featured"] = 0
 
     # 5. 清理过期的 whoami 限流记录（超过 120 秒）
     async with _whoami_rate_lock:
@@ -1753,8 +1782,44 @@ async def _gc_loop():
             continue
         await asyncio.sleep(interval_h * 3600)
         try:
+            await _backup_files_for_gc()
             await _run_gc()
             await _cleanup_expired_access_keys()
+        except Exception:
+            pass
+
+
+async def _backup_files_for_gc() -> Optional[Path]:
+    """GC 前备份待删除文件到 gcbackups/。返回备份目录路径。"""
+    import shutil as _shutil
+    output_dir = Path(OUTPUT_DIR_STR)
+    ts = _time_module.strftime("%Y%m%d_%H%M%S", _time_module.localtime())
+    backup_dir = Path(__file__).parent.parent / "gcbackups" / f"gc_backup_{ts}"
+    deleted = _load_deleted_images()
+    backed = 0
+    for key, paths in deleted.items():
+        for rel_path in paths:
+            src = (output_dir / rel_path).resolve()
+            try:
+                if src.is_file() and _is_safe_subpath(src, output_dir):
+                    dst = backup_dir / rel_path.replace("\\", "/").replace("/", "_")
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    _shutil.copy2(str(src), str(dst))
+                    backed += 1
+            except Exception:
+                pass
+    if backed:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[GC] 定时备份 {backed} 个文件到 {backup_dir}")
+        return backup_dir
+    return None
+
+
+async def _backup_loop():
+    """后台备份循环，4 小时一次，独立于 GC。"""
+    while True:
+        await asyncio.sleep(7200)  # 2 小时
+        try:
             await _backup_data_files()
         except Exception:
             pass
@@ -1850,14 +1915,13 @@ async def _ensure_thumb_cache():
     _safe_task(_async_batch_generate_thumbs(rels, OUTPUT_DIR_STR), "startup_thumbs")
 
 async def _cleanup_stale_deleted_entries():
-    """启动时同步 deleted_images.json：清理已不存在的文件记录，补删残留的磁盘文件。"""
+    """启动时同步 deleted_images.json：清理磁盘已不存在的过期记录。文件删除统一由 GC 处理。"""
     try:
         output_dir = Path(OUTPUT_DIR_STR)
         deleted = _load_deleted_images()
         if not deleted:
             return
         changed = False
-        pending_delete: list[str] = []  # 文件还在磁盘上，但 bg_delete 任务丢失了
         for key in list(deleted.keys()):
             paths = deleted[key]
             kept = []
@@ -1865,10 +1929,9 @@ async def _cleanup_stale_deleted_entries():
                 fp = (output_dir / rel_path).resolve()
                 if _is_safe_subpath(fp, output_dir) and fp.is_file():
                     kept.append(rel_path)
-                    pending_delete.append(rel_path)
                 else:
                     changed = True
-                    print(f"[startup] 清理过期删除记录: {rel_path}")
+                    print(f"[startup] 清理过期删除记录（文件已不存在）: {rel_path}")
             if kept:
                 deleted[key] = kept
             else:
@@ -1876,9 +1939,6 @@ async def _cleanup_stale_deleted_entries():
         if changed:
             _save_json(DELETED_IMAGES_FILE, deleted)
             print("[startup] deleted_images.json 过期记录已清理")
-        if pending_delete:
-            print(f"[startup] 补触发 {len(pending_delete)} 个待删除文件的后台清理")
-            _safe_task(_bg_delete_files(pending_delete, delay=5.0), "bg_startup_cleanup")
     except Exception as e:
         print(f"[startup] 清理 deleted_images 失败: {e}")
 
@@ -1930,6 +1990,7 @@ async def _start_gc():
     _safe_task(_backup_data_files(), "startup_backup")
     _safe_task(_ensure_thumb_cache(), "ensure_thumb_cache")
     _gc_task = _safe_task(_gc_loop(), "gc_loop")
+    _safe_task(_backup_loop(), "backup_loop")
 
 
 @app.on_event("shutdown")
@@ -1956,7 +2017,82 @@ _WEBP_CACHE: "Dict[Tuple[str, float, str], bytes]" = {}
 _WEBP_CACHE_MAX = 64  # LRU 上限，防止内存爆掉
 
 
-# ==================== 缩略图缓存 ====================
+# ==================== 删除记录 & 缩略图存档 ====================
+
+DELETION_LOG_FILE = Path(__file__).parent / "deletion_log.json"
+DELETION_THUMBS_DIR = Path(__file__).parent / "deletion_thumbs"
+_deletion_log_lock = asyncio.Lock()
+
+def _load_deletion_log() -> List[Dict[str, Any]]:
+    try:
+        if DELETION_LOG_FILE.is_file():
+            return json.loads(DELETION_LOG_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return []
+
+async def _record_deletion(rel_path: str, github_id: str, login: str):
+    """将删除图片的缩略图移动到存档目录，并记录删除日志"""
+    import uuid as _uuid, shutil as _shutil
+    uid = _uuid.uuid4().hex[:12]
+    dst = None
+    try:
+        src_thumb = _thumb_cache_path(rel_path)
+        if src_thumb.is_file():
+            DELETION_THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+            dst = DELETION_THUMBS_DIR / f"{uid}.webp"
+            _shutil.move(str(src_thumb), str(dst))
+    except Exception:
+        dst = None
+    # 查找生图者信息
+    creator_ip = ""
+    creator_github_id = ""
+    creator_login = ""
+    try:
+        key = rel_path.replace("\\", "/")
+        # 从 creator_ips.txt 查 IP
+        if CREATOR_MAP_FILE.is_file():
+            for ln in CREATOR_MAP_FILE.read_text(encoding="utf-8").splitlines():
+                if ln and "\t" in ln and ln.split("\t", 1)[0] == key:
+                    creator_ip = ln.split("\t", 1)[1].strip()
+                    break
+        # 从 user_images.json 查原始生图者
+        ui = _load_user_images()
+        for uid_, entries in ui.items():
+            for e in entries:
+                if (e.get("path", "")).replace("\\", "/") == key:
+                    creator_github_id = uid_
+                    break
+            if creator_github_id:
+                break
+        if creator_github_id:
+            users_ = _load_users()
+            creator_login = users_.get(creator_github_id, {}).get("login", creator_github_id)
+    except Exception:
+        pass
+    entry = {
+        "path": rel_path.replace("\\", "/"),
+        "thumb_file": dst.name if dst else "",
+        "deleted_by_github_id": github_id,
+        "deleted_by_login": login or github_id,
+        "deleted_at": _time_module.time(),
+        "creator_ip": creator_ip,
+        "creator_github_id": creator_github_id,
+        "creator_login": creator_login,
+    }
+    async with _deletion_log_lock:
+        log = _load_deletion_log()
+        log.append(entry)
+        if len(log) > 20000:
+            for old in log[:-20000]:
+                if old.get("thumb_file"):
+                    tp = DELETION_THUMBS_DIR / old["thumb_file"]
+                    try:
+                        tp.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            log = log[-20000:]
+        _save_json(DELETION_LOG_FILE, log)
 
 def _thumb_cache_path(output_rel: str) -> Path:
     """OUTPUT_DIR 相对路径 -> thumb_cache 下的 .webp 路径"""
@@ -2768,24 +2904,69 @@ _WELCOME_HTML = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="robots" content="noindex, nofollow" />
 <title>二次元绘梦</title>
-<link rel="stylesheet" href="/static/tailwind.min.css" />
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #fef2f4 0%, #fdf2f8 25%, #faf5ff 50%, #fff1f2 75%, #fef2f4 100%);
+    background-size: 400% 400%; animation: bgShift 30s ease infinite;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 20px;
+  }
+  @keyframes bgShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+  .card {
+    background: linear-gradient(180deg, rgba(255,245,247,0.98) 0%, rgba(255,255,255,0.96) 50%, rgba(255,241,242,0.95) 100%);
+    border: 1px solid rgba(244,114,182,0.12);
+    border-radius: 24px;
+    box-shadow: 0 4px 30px rgba(244,114,182,0.15), 0 0 80px rgba(244,114,182,0.06);
+    max-width: 460px; width: 100%; padding: 36px 28px; text-align: center;
+  }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; color: #1f2937; }
+  .subtitle { font-size: 13px; color: #9ca3af; margin-bottom: 20px; }
+  .notice {
+    background: rgba(255,241,242,0.6); border: 1px solid rgba(244,114,182,0.15);
+    border-radius: 16px; padding: 18px; text-align: left; margin-bottom: 20px;
+  }
+  .notice h3 { font-size: 14px; font-weight: 600; color: #be185d; margin-bottom: 10px; }
+  .notice ul { list-style: none; padding: 0; }
+  .notice li { font-size: 13px; color: #4b5563; line-height: 1.7; padding: 2px 0 2px 16px; position: relative; }
+  .notice li::before { content: '•'; position: absolute; left: 2px; color: #f472b6; }
+  .notice li strong { color: #374151; }
+  .login-btn {
+    display: block; width: 100%; background: linear-gradient(135deg, #f472b6, #fb7185);
+    color: #fff; border: 0; border-radius: 16px; padding: 12px; font-size: 15px; font-weight: 600;
+    cursor: pointer; text-decoration: none; transition: all .2s;
+    box-shadow: 0 4px 20px rgba(244,114,182,0.3);
+  }
+  .login-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 28px rgba(244,114,182,0.4); }
+  .footer { margin-top: 20px; font-size: 11px; color: #c4b5c0; }
+  .footer a { color: #9ca3af; text-decoration: underline; }
+</style>
 </head>
-<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
-<div class="bg-white rounded-xl shadow-lg max-w-md w-full p-8 text-center space-y-5">
-  <h1 class="text-2xl font-bold">二次元绘梦</h1>
-  <div class="bg-red-50 border border-red-200 rounded-lg p-4 text-left space-y-2">
-    <p class="text-sm font-semibold text-red-700">隐私提示</p>
-    <p class="text-xs text-red-600 leading-relaxed">
-      登录即表示同意本站收集你的 <strong>GitHub 用户名、邮箱</strong> 及 <strong>生图时 IP 地址</strong>，以上信息仅用于身份识别与生图溯源。
-    </p>
+<body>
+<div class="card">
+  <h1>🌸 二次元绘梦</h1>
+  <p class="subtitle">使用前请阅读以下声明</p>
+  <div class="notice">
+    <h3>📋 使用协议与免责声明</h3>
+    <ul>
+      <li>登录即表示您同意本站通过 GitHub OAuth <strong>获取您的用户名、用户ID及邮箱信息</strong>，仅用于<strong>账户识别与违规追溯</strong></li>
+      <li>您的 <strong>IP 地址将被记录</strong>，违规行为将被追溯</li>
+      <li>您应对自己生成的图片内容承担<strong>全部法律责任</strong></li>
+      <li>请遵守当地法律法规，<strong>不得生成违法、侵权或不当内容</strong></li>
+      <li>您的作品<strong>仅自己可见</strong>，本站不会擅自公开</li>
+      <li>本站有权<strong>保留违规证据</strong>（IP、用户名、邮箱、违规内容）</li>
+      <li>本站为个人非商业项目，不提供可用性保证</li>
+    </ul>
   </div>
-  <a href="/auth/login"
-     class="block w-full bg-gray-900 text-white rounded-lg py-3 font-semibold hover:bg-gray-700 transition">
-    GitHub 登录
-  </a>
-  <p class="text-[10px] text-gray-400">
-    点击上方按钮将跳转至 GitHub 进行授权
-  </p>
+  <a href="/auth/login" class="login-btn">GitHub 登录</a>
+  <div class="footer">
+    本项目基于 <a href="https://github.com/afoim/natureDrawImage">natureDrawImage</a> 二次修改 · <a href="https://github.com/vrc-man/natureDrawImage">源码地址</a>
+  </div>
 </div>
 </body>
 </html>"""
@@ -3119,10 +3300,26 @@ async def api_auth_claim_key(request: Request):
         if max_uses_v > 0 and entry.get("used_count", 0) >= max_uses_v:
             return _JR({"error": "密钥无效或不可用"}, status_code=403)
         if entry.get("used_by", ""):
-            return _JR({"error": "密钥无效或不可用"}, status_code=403)
-        # 绑定密钥到当前用户
-        entry["used_by"] = github_id
-        _save_access_keys(data)
+            # 同用户重复认领 → 只更新会话，不修改密钥绑定
+            if str(entry["used_by"]) != github_id:
+                return _JR({"error": "密钥无效或不可用"}, status_code=403)
+            # 同用户，放行到后面更新 session
+        else:
+            # 检查用户是否已持有其他有效密钥（一个用户只能持有一个）
+            for k2, v2 in keys.items():
+                if str(v2.get("used_by", "")) == github_id:
+                    if not v2.get("disabled_at", 0):
+                        expires2 = v2.get("expires_at", 0)
+                        max2 = v2.get("max_uses", 0)
+                        used2 = v2.get("used_count", 0)
+                        if not (expires2 and now > expires2 + 60) and not (max2 > 0 and used2 >= max2):
+                            return _JR({"error": "你已绑定其他有效密钥，请使用原密钥或等待到期"}, status_code=403)
+                    # 旧密钥已失效（禁用/过期/耗尽），清除绑定
+                    v2["used_by"] = ""
+                    break
+            # 绑定新密钥
+            entry["used_by"] = github_id
+            _save_access_keys(data)
     # 更新会话：标记已验证并记录使用的密钥
     token = request.cookies.get("session", "")
     if token:
@@ -3301,6 +3498,14 @@ async def api_output_list(request: Request, limit: int = 500, offset: int = 0):
         return {"items": [], "total": 0, "output_dir": str(OUTPUT_DIR), "exists": False}
     base = OUTPUT_DIR.resolve()
     MAX_SCAN = 50000  # 防止超大目录 DoS
+    # 加载已标记删除的路径
+    deleted_set: set = set()
+    try:
+        for paths in _load_deleted_images().values():
+            for p2 in paths:
+                deleted_set.add(p2.replace("\\", "/"))
+    except Exception:
+        pass
 
     def _scan():
         items: List[Tuple[float, str, int]] = []
@@ -3315,6 +3520,8 @@ async def api_output_list(request: Request, limit: int = 500, offset: int = 0):
             try:
                 rel = p.resolve().relative_to(base).as_posix()
             except Exception:
+                continue
+            if rel in deleted_set:
                 continue
             try:
                 st = p.stat()
@@ -3378,11 +3585,15 @@ async def api_output_featured(request: Request):
 async def api_output_file(request: Request, path: str, full: int = 0):
     user = _get_user_from_session(request)
     if not user:
-        raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
+        raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
     if user.get("role") != "admin":
-        featured = set(_read_featured())
-        if path.replace("\\", "/") not in featured:
-            raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
+        github_id = str(user.get("github_id", ""))
+        user_images = _load_user_images().get(github_id, [])
+        owned = {i.get("path", "").replace("\\", "/") for i in user_images}
+        if path.replace("\\", "/") not in owned:
+            featured = set(_read_featured())
+            if path.replace("\\", "/") not in featured:
+                raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
     p = _resolve_output_path(path)
     if not p.is_file():
         raise HTTPException(404, "not found")
@@ -3401,7 +3612,7 @@ async def api_output_thumb(request: Request, path: str):
     """返回缓存的缩略图（短边 512px WebP），鉴权同 /api/output/file"""
     user = _get_user_from_session(request)
     if not user:
-        raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
+        raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
     if user.get("role") != "admin":
         # 普通用户：自己的作品或精选图片可看缩略图
         github_id = str(user.get("github_id", ""))
@@ -3410,16 +3621,17 @@ async def api_output_thumb(request: Request, path: str):
         if path.replace("\\", "/") not in owned:
             featured = set(_read_featured())
             if path.replace("\\", "/") not in featured:
-                raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
+                raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
     if not _validate_rel_path(path):
         raise HTTPException(400, "无效路径")
-    # 检查图片是否已被标记删除
-    deleted_paths: set = set()
-    for paths in _load_deleted_images().values():
-        for p in paths:
-            deleted_paths.add(p.replace("\\", "/"))
-    if path.replace("\\", "/") in deleted_paths:
-        raise HTTPException(404, "not found")
+    # 检查图片是否已被标记删除（管理员可查看）
+    if user.get("role") != "admin":
+        deleted_paths: set = set()
+        for paths in _load_deleted_images().values():
+            for p in paths:
+                deleted_paths.add(p.replace("\\", "/"))
+        if path.replace("\\", "/") in deleted_paths:
+            raise HTTPException(404, "not found")
     tp = _thumb_cache_path(path)
     if not tp.is_file():
         src = _resolve_output_path(path)
@@ -3857,7 +4069,7 @@ async def api_image(request: Request, filename: str, subfolder: str = "", type: 
         data = _load_user_images()
         user_paths = {it.get("path", "") for it in data.get(github_id, [])}
         if rel not in user_paths:
-            raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
+            raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
     try:
         content, ct = await download_image(filename, subfolder, type)
     except Exception as e:
@@ -5273,11 +5485,24 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             })
 
     if not images:
-        await _save_gen_log(github_id, "", sd_prompt, path, 0, "failed", client_ip, negative_prompt=neg_text)
-        await emit(ws, {"type": "error", "message": "无图片输出"})
+        await _save_gen_log(github_id, "", sd_prompt, path, 0, "failed", client_ip, negative_prompt=neg_text, file_paths=[])
+        # 无图片输出也计入冷却（已消耗 GPU）
+        cooldown_sec = float(_limits.get("gen_cooldown_sec", 30))
+        _role = _load_users().get(github_id, {}).get("role", "") if github_id else ""
+        if _role != "admin":
+            now = _time_module.time()
+            async with _cooldown_lock:
+                _RATE_LAST_TS[client_ip] = now
+            cd_remain = int(cooldown_sec + 0.5)
+        else:
+            cd_remain = 0
+        await emit(ws, {"type": "error", "message": "无图片输出", "cooldown_remaining": cd_remain})
+        if cd_remain > 0 and client_ip:
+            _schedule_cooldown_notify(client_ip, cd_remain)
         return
 
     # 写入映射：<相对路径> -> <IP> 和 <GitHub用户>
+    image_paths = []
     for img in images:
         if img.get("type") != "output":
             continue
@@ -5285,6 +5510,7 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             sub = img.get("subfolder") or ""
             rel = (sub + "/" + img["filename"]) if sub else img["filename"]
             rel = rel.replace("\\", "/")
+            image_paths.append(rel)
             await _creator_map_set(rel, client_ip)
             await _save_user_image(github_id, rel, sd_prompt)
         except Exception as e:
@@ -5300,7 +5526,7 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             "image_type": img["type"],
         })
 
-    await _save_gen_log(github_id, "", sd_prompt, path, len(images), "success", client_ip, negative_prompt=neg_text)
+    await _save_gen_log(github_id, "", sd_prompt, path, len(images), "success", client_ip, negative_prompt=neg_text, file_paths=image_paths)
     await _increment_key_usage(github_id)
     cooldown_sec = float(_limits.get("gen_cooldown_sec", 30))
     # 管理员豁免冷却
@@ -5311,7 +5537,11 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
     if user_role == "admin":
         cd_remain = 0
     else:
-        cd_remain = max(0, int(cooldown_sec - (_time_module.time() - _RATE_LAST_TS.get(client_ip, 0)) + 0.5))
+        # 冷却从完成时刻重新算，保证完整冷却时长
+        now = _time_module.time()
+        async with _cooldown_lock:
+            _RATE_LAST_TS[client_ip] = now
+        cd_remain = int(cooldown_sec + 0.5)
     await emit(ws, {"type": "done", "final_prompt": sd_prompt, "count": len(images),
                      "cooldown_remaining": cd_remain})
     # 服务端冷却到期推送：到期后通过状态 WS 解锁前端按钮
@@ -5815,8 +6045,9 @@ async def api_delete_my_image(request: Request, payload: DeleteImagePayload):
             report_changed = True
     if report_changed:
         await _save_reports(reports)
-    # 后台延迟删除磁盘文件（避免阻塞当前请求）
-    _safe_task(_bg_delete_files([rel_path]), "bg_delete")
+    # 记录删除日志（缩略图移入存档目录）
+    await _record_deletion(rel_path, github_id, user.get("login", github_id))
+    # 文件由 GC / 启动清理统一处理，此处仅标记
     return {"ok": True}
 
 
@@ -6149,6 +6380,14 @@ async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0):
     raw: List[Tuple[float, str, float]] = []  # (mtime, rel, mtime_for_sort)
     MAX_ADMIN_SCAN = 100000  # 管理员端点扫描上限
     admin_scanned = 0
+    # 加载已标记删除的路径，过滤掉不在列表显示
+    deleted_set: set = set()
+    try:
+        for paths in _load_deleted_images().values():
+            for p2 in paths:
+                deleted_set.add(p2.replace("\\", "/"))
+    except Exception:
+        pass
     try:
         for p in OUTPUT_DIR.rglob("*"):
             if not p.is_file():
@@ -6159,6 +6398,11 @@ async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0):
                 break
             try:
                 rel = str(p.resolve().relative_to(base)).replace("\\", "/")
+            except Exception:
+                continue
+            if rel in deleted_set:
+                continue
+            try:
                 mt = p.stat().st_mtime
             except Exception:
                 continue
@@ -6191,14 +6435,24 @@ async def api_admin_delete(request: Request, payload: Dict[str, Any]):
     p = _resolve_output_path(rel)
     if not p.is_file():
         raise HTTPException(404, "not found")
+    # 仅标记删除，文件由 GC / 启动统一清理
     try:
-        p.unlink()
-        _clean_thumb_for_path(rel)
+        await _record_deletion(rel, "__admin__", "admin")
     except Exception as e:
-        print(f"[ERROR] 管理员删除文件失败: {rel} — {type(e).__name__}: {e}")
-        raise HTTPException(500, "文件删除失败")
-    # 同步清理映射
+        print(f"[ERROR] 管理员标记删除失败: {rel} — {type(e).__name__}: {e}")
+        raise HTTPException(500, "标记删除失败")
     key = rel.replace("\\", "/")
+    # 标记到 deleted_images.json
+    async with _deleted_images_lock:
+        deleted = _load_deleted_images()
+        paths = deleted.get("__admin__", [])
+        if key not in paths:
+            paths.append(key)
+            deleted["__admin__"] = paths
+            try:
+                _save_json(DELETED_IMAGES_FILE, deleted)
+            except Exception:
+                pass
     async with _creator_map_lock:
         try:
             if CREATOR_MAP_FILE.is_file():
@@ -6292,15 +6546,27 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
         try:
             p = _resolve_output_path(rel)
             if p.is_file():
-                p.unlink()
-                _clean_thumb_for_path(rel)
+                await _record_deletion(rel, "__admin__", "admin")
                 deleted.append(rel)
             else:
                 failed.append(rel)
         except Exception:
             failed.append(rel)
+    # 标记到 deleted_images.json
+    if deleted:
+        del_set = set(r.replace("\\", "/") for r in deleted)
+        async with _deleted_images_lock:
+            _del = _load_deleted_images()
+            paths = _del.get("__admin__", [])
+            for d in del_set:
+                if d not in paths:
+                    paths.append(d)
+            _del["__admin__"] = paths
+            try:
+                _save_json(DELETED_IMAGES_FILE, _del)
+            except Exception:
+                pass
     # 批量清理 creator_ips.txt 映射
-    del_set = set(r.replace("\\", "/") for r in deleted)
     if del_set:
         async with _creator_map_lock:
             try:
@@ -6420,7 +6686,7 @@ async def api_admin_images(request: Request, limit: int = 50, offset: int = 0):
 
 @app.post("/api/admin/mark_delete_batch")
 async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any]):
-    """批量标记删除图片：立即标记 + 后台静默延迟真删除磁盘文件。"""
+    """批量标记删除图片：仅标记，文件由 GC 统一清理。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     paths = (payload or {}).get("paths", [])
@@ -6434,6 +6700,12 @@ async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any])
     if not valid:
         return {"ok": True, "marked": 0}
     del_set = set(valid)
+    # 记录删除日志 + 归档缩略图
+    for p in valid:
+        try:
+            await _record_deletion(p, "__admin__", "admin")
+        except Exception:
+            pass
     # 1. 添加到 deleted_images.json
     async with _deleted_images_lock:
         deleted = _load_deleted_images()
@@ -6500,8 +6772,6 @@ async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any])
             report_changed = True
     if report_changed:
         await _save_reports(reports)
-    # 6. 后台延迟删除磁盘文件（30 秒后）
-    _safe_task(_bg_delete_files(valid, delay=30.0), "bg_admin_delete_batch")
     return {"ok": True, "marked": len(valid)}
 
 
@@ -6605,11 +6875,44 @@ async def api_admin_limits_set(request: Request, payload: Dict[str, Any]):
 
 @app.post("/api/admin/gc")
 async def api_admin_gc_run(request: Request):
-    """手动触发一次 GC。"""
+    """手动触发一次 GC（后台异步执行），可选跳过备份。"""
+    global _last_gc_result
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
-    result = await _run_gc()
-    return {"ok": True, "cleaned": result}
+    try:
+        body = await request.json() or {}
+    except Exception:
+        body = {}
+    do_backup = body.get("backup", True) in (True, "true", 1)  # 手动默认备份
+    _last_gc_result = {"status": "running", "cleaned": {}, "time": _time_module.time()}
+    async def _gc_with_result():
+        global _last_gc_result
+        backup_dir = None
+        try:
+            if do_backup:
+                backup_dir = await _backup_files_for_gc()
+            result = await _run_gc()
+            if backup_dir:
+                result["backup_dir"] = str(backup_dir)
+            _last_gc_result = {"status": "done", "cleaned": result, "time": _time_module.time()}
+        except Exception as e:
+            _last_gc_result = {"status": "error", "error": str(e), "time": _time_module.time()}
+    _safe_task(_gc_with_result(), "manual_gc")
+    msg = "GC 已触发，后台执行中"
+    if do_backup:
+        msg += "（先备份再清理）"
+    return {"ok": True, "message": msg}
+
+
+_last_gc_result: Dict[str, Any] = {}
+
+
+@app.get("/api/admin/gc/status")
+async def api_admin_gc_status(request: Request):
+    """查询最近一次 GC 状态。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    return _last_gc_result or {"status": "idle", "cleaned": {}}
 
 
 
@@ -7166,11 +7469,21 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
         try:
             p = _resolve_output_path(image_path)
             if p.is_file():
-                p.unlink()
-                _clean_thumb_for_path(image_path)
+                await _record_deletion(image_path, "__admin__", "admin")
         except Exception:
             pass
         key = image_path.replace("\\", "/")
+        # 标记到 deleted_images.json
+        async with _deleted_images_lock:
+            _del = _load_deleted_images()
+            paths2 = _del.get("__admin__", [])
+            if key not in paths2:
+                paths2.append(key)
+                _del["__admin__"] = paths2
+                try:
+                    _save_json(DELETED_IMAGES_FILE, _del)
+                except Exception:
+                    pass
         async with _creator_map_lock:
             try:
                 if CREATOR_MAP_FILE.is_file():
@@ -7499,6 +7812,110 @@ async def api_admin_gen_logs_clear(request: Request, date_from: float = 0, date_
         else:
             GEN_LOG_FILE.unlink(missing_ok=True)
             return {"ok": True, "message": "日志已清空"}
+
+
+# ==================== 删除记录（回收站） ====================
+
+@app.get("/api/admin/deletion-log")
+async def api_admin_deletion_log(request: Request, date_from: float = 0, date_to: float = 0):
+    """列出删除记录（仅管理员），支持日期筛选。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    from urllib.parse import quote
+    log = _load_deletion_log()
+    # 日期筛选
+    if date_from or date_to:
+        filtered = []
+        for e in log:
+            ts = e.get("deleted_at") or e.get("time", 0)
+            if date_from and ts < date_from:
+                continue
+            if date_to and ts > date_to:
+                continue
+            filtered.append(e)
+        log = filtered
+    for e in log:
+        ts = e.get("deleted_at") or e.get("time", 0)
+        e["sort_ts"] = ts
+        e["file_url"] = f"/api/output/file?path={quote(e.get('path', ''), safe='')}"
+        if e.get("thumb_file"):
+            e["thumb_url"] = f"/api/admin/deletion-thumb/{e['thumb_file']}"
+        else:
+            e["thumb_url"] = ""
+    log.sort(key=lambda e: e.get("sort_ts", 0), reverse=True)
+    return {"items": log, "total": len(log)}
+
+
+@app.get("/api/admin/deletion-thumb/{filename}")
+async def api_admin_deletion_thumb(request: Request, filename: str):
+    """获取删除记录缩略图（仅管理员）。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(400)
+    fp = (DELETION_THUMBS_DIR / filename).resolve()
+    if not fp.is_relative_to(DELETION_THUMBS_DIR.resolve()) or not fp.is_file():
+        raise HTTPException(404)
+    return FileResponse(str(fp), media_type="image/webp",
+                        headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.post("/api/admin/deletion-log/clear")
+async def api_admin_deletion_log_clear(request: Request, payload: Dict[str, Any] = {}):
+    """清理删除记录，支持按 path、日期范围或全部清理。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    target_path = str(payload.get("path", "")).strip() if payload else ""
+    date_from = float(payload.get("date_from") or 0) if payload else 0
+    date_to = float(payload.get("date_to") or 0) if payload else 0
+    async with _deletion_log_lock:
+        log = _load_deletion_log()
+        if target_path:
+            kept = []
+            removed = 0
+            for e in log:
+                if e.get("path", "") == target_path:
+                    if e.get("thumb_file"):
+                        tp = DELETION_THUMBS_DIR / e["thumb_file"]
+                        try:
+                            tp.unlink(missing_ok=True)
+                        except Exception:
+                            pass
+                    removed += 1
+                else:
+                    kept.append(e)
+            _save_json(DELETION_LOG_FILE, kept)
+            return {"ok": True, "message": f"已清理 {removed} 条记录"}
+        elif date_from or date_to:
+            kept = []
+            removed = 0
+            for e in log:
+                ts = e.get("deleted_at") or e.get("time", 0)
+                if date_from and ts < date_from:
+                    kept.append(e)
+                    continue
+                if date_to and ts > date_to:
+                    kept.append(e)
+                    continue
+                if e.get("thumb_file"):
+                    tp = DELETION_THUMBS_DIR / e["thumb_file"]
+                    try:
+                        tp.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+                removed += 1
+            _save_json(DELETION_LOG_FILE, kept)
+            return {"ok": True, "message": f"已清理 {removed} 条记录"}
+        else:
+            for e in log:
+                if e.get("thumb_file"):
+                    tp = DELETION_THUMBS_DIR / e["thumb_file"]
+                    try:
+                        tp.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            _save_json(DELETION_LOG_FILE, [])
+            return {"ok": True, "message": f"已清空 {len(log)} 条记录"}
 
 
 if __name__ == "__main__":

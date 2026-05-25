@@ -1,5 +1,7 @@
 # ── 环境 & 编辑器 ──
 .env
+.env.example
+claude.bat
 .venv
 .claude/settings.local.json
 .vscode/settings.json
@@ -7,6 +9,7 @@ __pycache__
 
 # ── 开发 ──
 dev
+sync_to_proxy.py
 
 # ── 运行时数据 ──
 web/__pycache__
@@ -33,7 +36,21 @@ web/user_images.json
 web/deleted_images.json
 
 # ── 运行时图片 & 资源 ──
+web/deletion_log.json
+web/deletion_thumbs
 web/thumbnails
 web/style_thumbnails
 web/lora_links
 web/backups
+web/uploads
+web/static/uploads
+web/static/tailwind.min.css
+thumb_cache
+backups
+gcbackups
+
+# ── 临时文件 ──
+*.tmp
+
+# ── Playwright ──
+.playwright-mcp
