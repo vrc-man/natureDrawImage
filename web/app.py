@@ -1216,7 +1216,8 @@ async def _no_index_headers(request: Request, call_next):
         "serial=(), usb=(), xr-spatial-tracking=()"
     )
     nonce = getattr(request.state, "csp_nonce", "")
-    resp.headers["Content-Security-Policy"] = (
+    if "Content-Security-Policy" not in resp.headers:
+        resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         f"script-src 'self' 'nonce-{nonce}' https://challenges.cloudflare.com https://cdn.tailwindcss.com; "
         "style-src 'self' 'unsafe-inline'; "
