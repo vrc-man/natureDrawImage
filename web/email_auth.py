@@ -500,8 +500,11 @@ def init_email_auth():
         if now > sess.get("expires_at", 0):
             return None
         uid = str(sess.get("github_id", ""))
+        print(f'[email_auth] session uid={uid}')
         if uid.startswith("email:"):
-            return get_email_user(uid)
+            eu = get_email_user(uid)
+            print(f'[email_auth] email user found: {eu is not None}')
+            return eu
         return None
 
     import web.app as _app_mod
