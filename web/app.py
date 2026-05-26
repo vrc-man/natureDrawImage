@@ -1540,26 +1540,15 @@ async def _run_gc():
 
     # 3. 清理孤儿 creator 映射（图片已不存在）
     orphan_count = 0
-    async with _creator_map_lock:
-        try:
-            if CREATOR_MAP_FILE.is_file():
-                kept = []
-                for ln in CREATOR_MAP_FILE.read_text(encoding="utf-8").splitlines():
-                    if not ln or "\t" not in ln:
-                        continue
-                    rel = ln.split("\t", 1)[0]
-                    p = OUTPUT_DIR / rel.replace("/", os.sep)
-                    if p.is_file():
-                        kept.append(ln)
-                    else:
-                        orphan_count += 1
-                if orphan_count > 0:
-                    tmp = CREATOR_MAP_FILE.with_suffix(".txt.tmp")
-                    with open(tmp, "w", encoding="utf-8") as f:
-                        f.write("\n".join(kept) + ("\n" if kept else ""))
-                    os.replace(tmp, CREATOR_MAP_FILE)
-        except Exception:
-            pass
+    try:
+        creator_map = db.load_creator_map()
+        for rel_path in list(creator_map.keys()):
+            p = OUTPUT_DIR / rel_path.replace("/", os.sep)
+            if not p.is_file():
+                db.remove_creator_ip(rel_path)
+                orphan_count += 1
+    except Exception:
+        pass
     cleaned["orphan_creator_entries"] = orphan_count
 
     # 3b. 清理孤儿缩略图（原图已不存在的缓存）
