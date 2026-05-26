@@ -1098,51 +1098,23 @@ def _creator_key(p: Path) -> str:
 
 
 def _creator_map_get(rel: str) -> str:
-    if not CREATOR_MAP_FILE.is_file():
-        return ""
-    try:
-        with open(CREATOR_MAP_FILE, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.rstrip("\r\n")
-                if not line or "\t" not in line:
-                    continue
-                k, _, v = line.partition("\t")
-                if k == rel:
-                    return v
-    except Exception:
-        return ""
-    return ""
+    """从 SQLite 查询生图者 IP。"""
+    return db.lookup_creator_ip(rel) or ""
 
 
 async def _creator_map_set(rel: str, ip: str) -> bool:
-    """每行 `<rel>\\t<ip>`，同 key 去重保留最新；原子替换。"""
+    """写入生图者 IP 映射到 SQLite。"""
     if not rel or not ip:
         return False
-    # 防止 TSV 注入：拒绝含 \t \n \r 的值
     if "\t" in ip or "\n" in ip or "\r" in ip:
         return False
     if "\t" in rel or "\n" in rel or "\r" in rel:
         return False
-    async with _creator_map_lock:
-        try:
-            lines: list[str] = []
-            if CREATOR_MAP_FILE.is_file():
-                with open(CREATOR_MAP_FILE, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.rstrip("\r\n")
-                        if not line or "\t" not in line:
-                            continue
-                        if line.split("\t", 1)[0] == rel:
-                            continue
-                        lines.append(line)
-            lines.append(f"{rel}\t{ip}")
-            tmp = CREATOR_MAP_FILE.with_suffix(".txt.tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write("\n".join(lines) + "\n")
-            os.replace(tmp, CREATOR_MAP_FILE)
-            return True
-        except Exception:
-            return False
+    try:
+        db.set_creator_ip(rel, ip)
+        return True
+    except Exception:
+        return False
 
 app = FastAPI(title="二次元绘梦")
 # 文本响应（JSON / HTML / JS / CSS）做轻量级 gzip 压缩；图片字节走另一条路（webp 转码）
