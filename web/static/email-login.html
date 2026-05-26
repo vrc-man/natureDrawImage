@@ -78,7 +78,7 @@
   <div id="panel-register" class="form-panel">
     <input id="er-email" type="email" placeholder="邮箱地址" autocomplete="email" />
     <input id="er-pwd" type="password" placeholder="密码（至少6位）" autocomplete="new-password" />
-    <input id="er-code" type="text" placeholder="邀请码" autocomplete="off" />
+    <input id="er-code" type="text" placeholder="邀请码（可选，有码无需邮箱验证）" autocomplete="off" />
     <div id="turnstile-container"></div>
     <button id="btn-register" class="btn btn-register">注册</button>
     <span id="register-status" class="status"></span>
@@ -152,7 +152,7 @@ document.getElementById('btn-register').addEventListener('click', async function
     if (turnstileWidget && typeof turnstile !== 'undefined') {
       token = turnstile.getResponse(turnstileWidget);
     }
-    if (!token && turnstileWidget) {
+    if (!token && turnstileWidget && document.getElementById('turnstile-container').querySelector('iframe')) {
       s.textContent = '请先完成人机验证';
       s.className = 'status error';
       return;

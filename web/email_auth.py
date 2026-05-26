@@ -233,28 +233,40 @@ def init_email_auth():
         limit_msg = _check_rate_limit(client_ip, email)
         if limit_msg:
             raise HTTPException(429, limit_msg)
-        async with _invite_lock:
-            codes = _load_invite_codes()
-            entry = codes.get(invite_code)
-            if not entry:
-                raise HTTPException(400, "无效邀请码")
-            if entry["used_count"] >= entry.get("max_uses", 1):
-                raise HTTPException(400, "邀请码已被用完")
-            entry["used_count"] += 1
-            _save_invite_codes(codes)
+        # 邀请码（可选）：有有效邀请码则直接激活
+        has_invite = False
+        if invite_code:
+            async with _invite_lock:
+                codes = _load_invite_codes()
+                entry = codes.get(invite_code)
+                if entry and entry["used_count"] < entry.get("max_uses", 1):
+                    entry["used_count"] += 1
+                    _save_invite_codes(codes)
+                    has_invite = True
+                elif entry:
+                    raise HTTPException(400, "邀请码已被用完")
+                else:
+                    raise HTTPException(400, "无效邀请码")
         async with _email_users_lock:
             email_users = _load_email_users()
             if email in email_users:
                 raise HTTPException(400, "邮箱已注册")
+            verify_token = "" if has_invite else secrets.token_urlsafe(32)
             email_users[email] = {
                 "password_hash": _hash_password(password),
                 "role": "user", "banned": False, "banned_reason": "",
-                "created_at": time.time(), "verified": True,
-                "verify_token": "", "totp_secret": "", "totp_enabled": False,
+                "created_at": time.time(), "verified": has_invite,
+                "verify_token": verify_token, "totp_secret": "", "totp_enabled": False,
             }
             _save_email_users(email_users)
         _record_rate_limit(client_ip, email)
-        return {"ok": True, "message": "注册成功！请返回登录。"}
+        if has_invite:
+            return {"ok": True, "message": "注册成功！请返回登录。"}
+        else:
+            vu = f"{SITE_URL}/api/auth/verify-email?token={verify_token}&email={email}"
+            await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
+                f"<p>感谢注册！请点击以下链接验证邮箱：</p><p><a href='{vu}'>{vu}</a></p>")
+            return {"ok": True, "message": "注册成功！请查收验证邮件并点击链接激活账号。"}
 
     @app.post("/api/auth/login-email")
     async def api_login_email(request: Request, payload: Dict[str, Any]):
