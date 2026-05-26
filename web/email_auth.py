@@ -264,9 +264,12 @@ def init_email_auth():
             return {"ok": True, "message": "注册成功！请返回登录。"}
         else:
             vu = f"{SITE_URL}/api/auth/verify-email?token={verify_token}&email={email}"
-            await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
+            mail_ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
                 f"<p>感谢注册！请点击以下链接验证邮箱：</p><p><a href='{vu}'>{vu}</a></p>")
-            return {"ok": True, "message": "注册成功！请查收验证邮件并点击链接激活账号。"}
+            if mail_ok:
+                return {"ok": True, "message": "注册成功！请查收验证邮件并点击链接激活账号。"}
+            else:
+                return {"ok": True, "message": "注册成功！验证邮件发送失败，请联系管理员。验证链接: " + vu}
 
     @app.post("/api/auth/login-email")
     async def api_login_email(request: Request, payload: Dict[str, Any]):
