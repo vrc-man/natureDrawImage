@@ -2894,7 +2894,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
       <input id="el-totp" type="text" placeholder="2FA码（未开启请留空）" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <button id="btn-email-login" style="width:100%;padding:10px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">登录</button>
       <span id="el-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
-      <p style="text-align:center;margin:6px 0"><a href="#" onclick="showRegisterForm();return false" style="font-size:12px;color:#9ca3af;text-decoration:none">没有账号？注册</a></p>
+      <p style="text-align:center;margin:6px 0"><a href="#" id="link-show-register2" style="font-size:12px;color:#9ca3af;text-decoration:none">没有账号？注册</a></p>
     </div>
     <div id="email-register-form" style="display:none">
       <input id="er-email" type="email" placeholder="邮箱" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
@@ -2903,7 +2903,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
       <div id="turnstile-container" style="margin-bottom:8px"></div>
       <button id="btn-email-register" style="width:100%;padding:10px;background:linear-gradient(135deg,#34d399,#16a34a);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">注册</button>
       <span id="er-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
-      <p style="text-align:center;margin:6px 0"><a href="#" onclick="showLoginForm();return false" style="font-size:12px;color:#9ca3af;text-decoration:none">返回登录</a></p>
+      <p style="text-align:center;margin:6px 0"><a href="#" id="link-show-login2" style="font-size:12px;color:#9ca3af;text-decoration:none">返回登录</a></p>
     </div>
   </div>
   <div class="footer">
@@ -2921,6 +2921,26 @@ document.addEventListener('DOMContentLoaded', function() {
 
   var regLink = document.getElementById('link-show-register');
   if (regLink) regLink.addEventListener('click', function(e) {
+    e.preventDefault();
+    document.getElementById('email-login-form').style.display = 'none';
+    document.getElementById('email-register-form').style.display = 'block';
+    var c = document.getElementById('turnstile-container');
+    if (c && typeof turnstile !== 'undefined') {
+      c.innerHTML = '';
+      turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' });
+    }
+  });
+
+  var loginLink2 = document.getElementById('link-show-login2');
+  if (loginLink2) loginLink2.addEventListener('click', function(e) {
+    e.preventDefault();
+    document.getElementById('email-register-form').style.display = 'none';
+    document.getElementById('email-login-form').style.display = 'block';
+    if (typeof turnstile !== 'undefined') turnstile.reset('#turnstile-container');
+  });
+
+  var regLink2 = document.getElementById('link-show-register2');
+  if (regLink2) regLink2.addEventListener('click', function(e) {
     e.preventDefault();
     document.getElementById('email-login-form').style.display = 'none';
     document.getElementById('email-register-form').style.display = 'block';
