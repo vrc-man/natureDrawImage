@@ -265,8 +265,10 @@ def _save_user_images_to_db(data):
                     "INSERT INTO user_images (github_id, path, prompt, time) VALUES (?,?,?,?)",
                     (gid, e.get("path", ""), e.get("prompt", ""), e.get("time", 0)))
         db._db().commit()
-    except Exception:
-        pass
+    except Exception as _se:
+        print(f'[_save_sessions] ERROR: {type(_se).__name__}: {_se}')
+        import traceback as _stb
+        _stb.print_exc()
 def _load_json(path: Path) -> dict:
     try:
         if path.is_file():
@@ -283,8 +285,10 @@ def save_user_images_bulk(data):
             for e in entries:
                 db._db().execute("INSERT INTO user_images (github_id,path,prompt,time) VALUES (?,?,?,?)", (gid, e.get("path",""), e.get("prompt",""), e.get("time",0)))
         db._db().commit()
-    except Exception:
-        pass
+    except Exception as _se:
+        print(f'[_save_sessions] ERROR: {type(_se).__name__}: {_se}')
+        import traceback as _stb
+        _stb.print_exc()
 
 def _load_users() -> dict:
     return db.load_users()  # SQLite
@@ -295,8 +299,10 @@ async def _save_users(users: dict) -> None:
         for gid, u in users.items():
             db.save_user(gid, u.get("login",""), u.get("email",""), u.get("avatar_url",""), u.get("role","user"))
         db._db().commit()
-    except Exception:
-        pass
+    except Exception as _se:
+        print(f'[_save_sessions] ERROR: {type(_se).__name__}: {_se}')
+        import traceback as _stb
+        _stb.print_exc()
 
 def _load_sessions() -> dict:
     return db.load_sessions()  # SQLite
@@ -308,8 +314,10 @@ async def _save_sessions(sessions: dict) -> None:
             db._db().execute("INSERT INTO sessions VALUES (?,?,?,?,?)",
                 (token, s.get("github_id",""), s.get("expires_at",0), s.get("access_granted",0), s.get("claimed_key","")))
         db._db().commit()
-    except Exception:
-        pass
+    except Exception as _se:
+        print(f'[_save_sessions] ERROR: {type(_se).__name__}: {_se}')
+        import traceback as _stb
+        _stb.print_exc()
 
 async def _create_session(github_id: str) -> str:
     """创建会话，返回 token。管理员自动获得 access_granted。"""

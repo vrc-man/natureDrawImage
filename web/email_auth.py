@@ -259,6 +259,12 @@ def init_email_auth():
                     "verify_token": verify_token, "totp_secret": "", "totp_enabled": False,
                 }
                 _save_email_users(email_users)
+            # 同步写入 users 表（sessions 表有外键约束）
+            db2 = get_db()
+            db2.execute("""INSERT OR IGNORE INTO users (github_id, login, email, avatar_url, role, banned, banned_reason, created_at)
+                VALUES (?,?,?,?,?,?,?,?)""",
+                ("email:" + email, email.split("@")[0], email, "", "user", 0, "", time.time()))
+            db2.commit()
             _record_rate_limit(client_ip, email)
             if has_invite:
                 return {"ok": True, "message": "注册成功！请返回登录。"}
