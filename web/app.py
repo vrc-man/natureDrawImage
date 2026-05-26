@@ -329,7 +329,7 @@ async def _create_session(github_id: str) -> str:
             "expires_at": now + SESSION_MAX_AGE_SEC,
             "access_granted": is_admin,  # 管理员自动放行
         }
-        _save_sessions(sessions)
+        await _save_sessions(sessions)
     return token
 
 def _get_user_from_session(request: Request) -> Optional[dict]:
@@ -392,7 +392,7 @@ async def _ensure_user(user_data: dict) -> dict:
                 "banned_reason": "",
                 "created_at": _time_module.time(),
             }
-        _save_users(users)
+        await _save_users(users)
         return dict(users[github_id])
 
 # ---------------- 管理员 / 封禁列表 / 精选 ----------------
@@ -2894,16 +2894,16 @@ _WELCOME_HTML = """<!DOCTYPE html>
       <input id="el-totp" type="text" placeholder="2FA码（未开启请留空）" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <button onclick="emailLogin()" style="width:100%;padding:10px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">登录</button>
       <span id="el-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
-      <p style="text-align:center;margin:6px 0"><a href="#" onclick="document.getElementById('email-register-form').style.display='block';document.getElementById('email-login-form').style.display='none';return false" style="font-size:12px;color:#9ca3af;text-decoration:none">没有账号？注册</a></p>
+      <p style="text-align:center;margin:6px 0"><a href="#" onclick="showRegisterForm();return false" style="font-size:12px;color:#9ca3af;text-decoration:none">没有账号？注册</a></p>
     </div>
     <div id="email-register-form" style="display:none">
       <input id="er-email" type="email" placeholder="邮箱" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <input id="er-pwd" type="password" placeholder="密码（至少6位）" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <input id="er-code" type="text" placeholder="邀请码" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
-      <div class="cf-turnstile" data-sitekey="0x4AAAAAADWvaKWEsnuGl7oU" style="margin-bottom:8px"></div>
+      <div id="turnstile-container" style="margin-bottom:8px"></div>
       <button onclick="emailRegister()" style="width:100%;padding:10px;background:linear-gradient(135deg,#34d399,#16a34a);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">注册</button>
       <span id="er-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
-      <p style="text-align:center;margin:6px 0"><a href="#" onclick="document.getElementById('email-login-form').style.display='block';document.getElementById('email-register-form').style.display='none';return false" style="font-size:12px;color:#9ca3af;text-decoration:none">返回登录</a></p>
+      <p style="text-align:center;margin:6px 0"><a href="#" onclick="showLoginForm();return false" style="font-size:12px;color:#9ca3af;text-decoration:none">返回登录</a></p>
     </div>
   </div>
   <div class="footer">
@@ -2912,13 +2912,32 @@ _WELCOME_HTML = """<!DOCTYPE html>
 </div>
 <script>
 async function apiPost(url, body) {
-  const r = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-  const d = await r.json();
-  if (!r.ok) throw new Error(d.detail || d.error || 'Error');
-  return d;
+  const s = document.getElementById('er-status') || document.getElementById('el-status');
+  try {
+    const r = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || d.error || 'Error');
+    return d;
+  } catch(e) { if (s) s.textContent = e.message; throw e; }
+}
+function showRegisterForm() {
+  document.getElementById('email-login-form').style.display = 'none';
+  document.getElementById('email-register-form').style.display = 'block';
+  // 显式渲染 Turnstile
+  var container = document.getElementById('turnstile-container');
+  if (container && typeof turnstile !== 'undefined') {
+    container.innerHTML = '';
+    turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' });
+  }
+}
+function showLoginForm() {
+  document.getElementById('email-register-form').style.display = 'none';
+  document.getElementById('email-login-form').style.display = 'block';
+  // 重置 Turnstile
+  if (typeof turnstile !== 'undefined') turnstile.reset('#turnstile-container');
 }
 async function emailLogin() {
-  const s = document.getElementById('el-status');
+  var s = document.getElementById('el-status');
   s.textContent = '';
   try {
     await apiPost('/api/auth/login-email', {
@@ -2930,14 +2949,16 @@ async function emailLogin() {
   } catch(e) { s.textContent = e.message; }
 }
 async function emailRegister() {
-  const s = document.getElementById('er-status');
+  var s = document.getElementById('er-status');
   s.textContent = '';
   try {
-    const d = await apiPost('/api/auth/register-email', {
+    var token = '';
+    if (typeof turnstile !== 'undefined') token = turnstile.getResponse('#turnstile-container');
+    var d = await apiPost('/api/auth/register-email', {
       email: document.getElementById('er-email').value,
       password: document.getElementById('er-pwd').value,
       invite_code: document.getElementById('er-code').value,
-      turnstile_token: turnstile.getResponse()
+      turnstile_token: token
     });
     s.style.color = '#16a34a';
     s.textContent = d.message;
