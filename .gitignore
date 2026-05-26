@@ -1,6 +1,5 @@
 # ── 环境 & 编辑器 ──
 .env
-.env.example
 claude.bat
 .venv
 .claude/settings.local.json
@@ -44,7 +43,6 @@ web/lora_links
 web/backups
 web/uploads
 web/static/uploads
-web/static/tailwind.min.css
 thumb_cache
 backups
 gcbackups

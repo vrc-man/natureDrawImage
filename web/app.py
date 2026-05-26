@@ -2,6 +2,9 @@
 ComfyUI 网页版控制台
 
 启动: uvicorn web.app:app --host 0.0.0.0 --port 8080 --reload
+
+Modified 2026-05 by vrc-man | Based on afoim/natureDrawImage (AGPLv3)
+https://github.com/vrc-man/natureDrawImage
 """
 
 import os
@@ -2903,6 +2906,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="robots" content="noindex, nofollow" />
+<meta name="generator" content="Modified 2026-05 by vrc-man | Based on afoim/natureDrawImage (AGPLv3) | https://github.com/vrc-man/natureDrawImage" />
 <title>二次元绘梦</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -2965,7 +2969,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
   </div>
   <a href="/auth/login" class="login-btn">GitHub 登录</a>
   <div class="footer">
-    本项目基于 <a href="https://github.com/afoim/natureDrawImage">natureDrawImage</a> 二次修改 · <a href="https://github.com/vrc-man/natureDrawImage">源码地址</a>
+    Powered by <a href="https://github.com/afoim/natureDrawImage">natureDrawImage</a> (AGPLv3) | Modified by vrc-man since 2026-05 | <a href="https://github.com/vrc-man/natureDrawImage">源码</a>
   </div>
 </div>
 </body>
