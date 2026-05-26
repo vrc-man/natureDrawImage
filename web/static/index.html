@@ -1078,6 +1078,8 @@ async function actuallyStartRun(direct, nl, neg, w, h) {
       const d = await r.json();
       image1_name = d.image1_name || '';
       image2_name = d.image2_name || '';
+      $('img1').value = '';
+      $('img2').value = '';
       appendLog('📷 图片上传完成');
     } catch (err) {
       appendLog('❌ 图片上传失败: ' + (err.message || err));
