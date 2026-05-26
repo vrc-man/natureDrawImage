@@ -1672,14 +1672,17 @@ let _currentUser = null;
       }
     }
     $('notify-bell').onclick = async () => {
-      const count = parseInt($('notify-count').textContent) || 0;
-      if (count > 0) {
-        alert('您有后台任务已完成，请到「我的」查看新作品');
-        try { await fetch('/api/whoami/read-notifications', { method: 'POST' }); } catch {}
-        $('notify-dot').classList.remove('bg-green-500'); $('notify-dot').classList.add('bg-gray-500');
-        // reset to gray
-        $('notify-count').classList.add('hidden');
-        $('notify-count').textContent = '0';
+      const dot = $('notify-dot');
+      const isGreen = dot.className.includes('bg-green');
+      const isYellow = dot.className.includes('bg-yellow');
+      if (isGreen) {
+        const count = parseInt($('notify-count').textContent) || 0;
+        if (count > 0) {
+          alert('您有后台任务已完成，请到「我的」查看新作品');
+          try { await fetch('/api/whoami/read-notifications', { method: 'POST' }); } catch {}
+        }
+      } else if (isYellow) {
+        alert('任务正在排队或执行中，请稍候');
       }
     };
     const label = $('user-label');
