@@ -245,7 +245,8 @@
       <h1 class="text-lg sm:text-2xl font-bold text-gray-800 truncate">🎨 二次元绘梦</h1>
       <div class="flex items-center gap-1.5 sm:gap-2 text-xs shrink-0">
         <span id="notify-bell" class="hidden cursor-pointer relative" title="通知">
-          🔔<span id="notify-count" class="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center font-bold">0</span>
+          <span id="notify-dot" class="inline-block w-2.5 h-2.5 rounded-full bg-gray-300"></span>
+          <span id="notify-count" class="hidden absolute -top-1.5 -right-2 bg-green-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center font-bold">0</span>
         </span>
         <span id="online-count" class="font-normal text-gray-400 hidden sm:inline"></span>
         <span id="user-label" class="px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 cursor-pointer font-medium" onclick="location.href='/auth/login'">登录</span>
@@ -1574,7 +1575,7 @@ setInterval(async () => {
     $('notify-count').textContent = nc;
     $('notify-bell').classList.remove('hidden');
     if (nc > 0) {
-      $('notify-count').classList.remove('bg-gray-400');
+      $('notify-count').classList.remove('bg-green-500');
       $('notify-count').classList.add('bg-red-500');
     }
   } catch {}
@@ -1631,11 +1632,11 @@ let _currentUser = null;
       const nc = d.unread_notifications || 0;
       $('notify-count').textContent = nc;
       if (nc > 0) {
-        $('notify-count').classList.remove('bg-gray-400');
+        $('notify-count').classList.remove('bg-green-500');
         $('notify-count').classList.add('bg-red-500');
       } else {
         $('notify-count').classList.remove('bg-red-500');
-        $('notify-count').classList.add('bg-gray-400');
+        $('notify-count').classList.add('bg-green-500');
       }
     }
     // 点击通知铃铛标记已读
@@ -1644,8 +1645,10 @@ let _currentUser = null;
       if (count > 0) {
         alert('您有后台任务已完成，请到「我的」查看新作品');
         try { await fetch('/api/whoami/read-notifications', { method: 'POST' }); } catch {}
+        $('notify-dot').classList.remove('bg-green-500');
+        $('notify-dot').classList.add('bg-gray-300');
+        $('notify-count').classList.add('hidden');
         $('notify-count').textContent = '0';
-        $('notify-bell').classList.add('hidden');
       }
     };
     const label = $('user-label');
