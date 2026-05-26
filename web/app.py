@@ -2885,25 +2885,25 @@ _WELCOME_HTML = """<!DOCTYPE html>
   </div>
   <a href="/auth/login" class="login-btn">GitHub 登录</a>
   <p style="text-align:center;margin-top:10px">
-    <a href="#" id="show-email-auth-link" style="color:#9ca3af;font-size:13px;text-decoration:none">邮箱登录/注册</a>
+    <a href="#" onclick="showEmailAuth();return false" style="color:#9ca3af;font-size:13px;text-decoration:none">邮箱登录/注册</a>
   </p>
   <div id="email-auth" style="display:none;margin:10px 0;text-align:left">
     <div id="email-login-form">
       <input id="el-email" type="email" placeholder="邮箱" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <input id="el-pwd" type="password" placeholder="密码" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <input id="el-totp" type="text" placeholder="2FA码（未开启请留空）" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
-      <button id="btn-email-login" style="width:100%;padding:10px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">登录</button>
+      <button onclick="emailLogin();return false" style="width:100%;padding:10px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">登录</button>
       <span id="el-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
-      <p style="text-align:center;margin:6px 0"><a href="#" id="link-show-register2" style="font-size:12px;color:#9ca3af;text-decoration:none">没有账号？注册</a></p>
+      <p style="text-align:center;margin:6px 0"><a href="#" onclick="showRegisterForm();return false" style="font-size:12px;color:#9ca3af;text-decoration:none">没有账号？注册</a></p>
     </div>
     <div id="email-register-form" style="display:none">
       <input id="er-email" type="email" placeholder="邮箱" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <input id="er-pwd" type="password" placeholder="密码（至少6位）" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <input id="er-code" type="text" placeholder="邀请码" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <div id="turnstile-container" style="margin-bottom:8px"></div>
-      <button id="btn-email-register" style="width:100%;padding:10px;background:linear-gradient(135deg,#34d399,#16a34a);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">注册</button>
+      <button onclick="emailRegister();return false" style="width:100%;padding:10px;background:linear-gradient(135deg,#34d399,#16a34a);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">注册</button>
       <span id="er-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
-      <p style="text-align:center;margin:6px 0"><a href="#" id="link-show-login2" style="font-size:12px;color:#9ca3af;text-decoration:none">返回登录</a></p>
+      <p style="text-align:center;margin:6px 0"><a href="#" onclick="showLoginForm();return false" style="font-size:12px;color:#9ca3af;text-decoration:none">返回登录</a></p>
     </div>
   </div>
   <div class="footer">
@@ -2911,96 +2911,62 @@ _WELCOME_HTML = """<!DOCTYPE html>
   </div>
 </div>
 <script>
-(function() {
-  var showLink = document.getElementById('show-email-auth-link');
-  if (showLink) showLink.addEventListener('click', function(e) {
-    e.preventDefault();
-    document.getElementById('email-auth').style.display = 'block';
-    this.style.display = 'none';
-  });
-
-  var regLink = document.getElementById('link-show-register');
-  if (regLink) regLink.addEventListener('click', function(e) {
-    e.preventDefault();
-    document.getElementById('email-login-form').style.display = 'none';
-    document.getElementById('email-register-form').style.display = 'block';
-    var c = document.getElementById('turnstile-container');
-    if (c && typeof turnstile !== 'undefined') {
-      c.innerHTML = '';
-      turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' });
-    }
-  });
-
-  var loginLink2 = document.getElementById('link-show-login2');
-  if (loginLink2) loginLink2.addEventListener('click', function(e) {
-    e.preventDefault();
-    document.getElementById('email-register-form').style.display = 'none';
-    document.getElementById('email-login-form').style.display = 'block';
-    if (typeof turnstile !== 'undefined') turnstile.reset('#turnstile-container');
-  });
-
-  var regLink2 = document.getElementById('link-show-register2');
-  if (regLink2) regLink2.addEventListener('click', function(e) {
-    e.preventDefault();
-    document.getElementById('email-login-form').style.display = 'none';
-    document.getElementById('email-register-form').style.display = 'block';
-    var c = document.getElementById('turnstile-container');
-    if (c && typeof turnstile !== 'undefined') {
-      c.innerHTML = '';
-      turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' });
-    }
-  });
-
-  var loginLink = document.getElementById('link-show-login');
-  if (loginLink) loginLink.addEventListener('click', function(e) {
-    e.preventDefault();
-    document.getElementById('email-register-form').style.display = 'none';
-    document.getElementById('email-login-form').style.display = 'block';
-    if (typeof turnstile !== 'undefined') turnstile.reset('#turnstile-container');
-  });
-
-  var btnLogin = document.getElementById('btn-email-login');
-  if (btnLogin) btnLogin.addEventListener('click', async function() {
-    var s = document.getElementById('el-status');
-    s.textContent = '';
-    try {
-      var r = await fetch('/api/auth/login-email', {
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          email: document.getElementById('el-email').value,
-          password: document.getElementById('el-pwd').value,
-          totp_code: document.getElementById('el-totp').value
-        })
-      });
-      var d = await r.json();
-      if (!r.ok) throw new Error(d.detail || d.error || 'Error');
-      location.href = '/';
-    } catch(e) { s.textContent = e.message; }
-  });
-
-  var btnReg = document.getElementById('btn-email-register');
-  if (btnReg) btnReg.addEventListener('click', async function() {
-    var s = document.getElementById('er-status');
-    s.textContent = '';
-    try {
-      var token = '';
-      if (typeof turnstile !== 'undefined') token = turnstile.getResponse('#turnstile-container');
-      var r = await fetch('/api/auth/register-email', {
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({
-          email: document.getElementById('er-email').value,
-          password: document.getElementById('er-pwd').value,
-          invite_code: document.getElementById('er-code').value,
-          turnstile_token: token
-        })
-      });
-      var d = await r.json();
-      if (!r.ok) throw new Error(d.detail || d.error || 'Error');
-      s.style.color = '#16a34a';
-      s.textContent = d.message;
-    } catch(e) { s.textContent = e.message; }
-  });
-})();
+function showEmailAuth() {
+  document.getElementById('email-auth').style.display = 'block';
+  document.getElementById('show-email-auth-link').style.display = 'none';
+}
+function showRegisterForm() {
+  document.getElementById('email-login-form').style.display = 'none';
+  document.getElementById('email-register-form').style.display = 'block';
+  var c = document.getElementById('turnstile-container');
+  if (c && typeof turnstile !== 'undefined') {
+    c.innerHTML = '';
+    try { turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' }); } catch(e) {}
+  }
+}
+function showLoginForm() {
+  document.getElementById('email-register-form').style.display = 'none';
+  document.getElementById('email-login-form').style.display = 'block';
+  if (typeof turnstile !== 'undefined') try { turnstile.reset('#turnstile-container'); } catch(e) {}
+}
+async function emailLogin() {
+  var s = document.getElementById('el-status');
+  s.textContent = '';
+  try {
+    var r = await fetch('/api/auth/login-email', {
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        email: document.getElementById('el-email').value,
+        password: document.getElementById('el-pwd').value,
+        totp_code: document.getElementById('el-totp').value
+      })
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || d.error || 'Error');
+    location.href = '/';
+  } catch(e) { s.textContent = e.message; }
+}
+async function emailRegister() {
+  var s = document.getElementById('er-status');
+  s.textContent = '';
+  try {
+    var token = '';
+    if (typeof turnstile !== 'undefined') token = turnstile.getResponse('#turnstile-container');
+    var r = await fetch('/api/auth/register-email', {
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        email: document.getElementById('er-email').value,
+        password: document.getElementById('er-pwd').value,
+        invite_code: document.getElementById('er-code').value,
+        turnstile_token: token
+      })
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || d.error || 'Error');
+    s.style.color = '#16a34a';
+    s.textContent = d.message;
+  } catch(e) { s.textContent = e.message; }
+}
 </script>
 </body>
 </html>"""
