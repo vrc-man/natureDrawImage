@@ -1569,9 +1569,12 @@ setInterval(async () => {
   try {
     const r = await fetch('/api/whoami');
     const d = await r.json();
-    if (d.unread_notifications > 0) {
-      $('notify-count').textContent = d.unread_notifications;
-      $('notify-bell').classList.remove('hidden');
+    const nc = d.unread_notifications || 0;
+    $('notify-count').textContent = nc;
+    $('notify-bell').classList.remove('hidden');
+    if (nc > 0) {
+      $('notify-count').classList.remove('bg-gray-400');
+      $('notify-count').classList.add('bg-red-500');
     }
   } catch {}
 }, 5000);
@@ -1622,9 +1625,17 @@ let _currentUser = null;
     const d = await r.json();
     _currentUser = d.logged_in ? d : null;
     // 通知红点
-    if (d.logged_in && d.unread_notifications > 0) {
-      $('notify-count').textContent = d.unread_notifications;
+    if (d.logged_in) {
       $('notify-bell').classList.remove('hidden');
+      const nc = d.unread_notifications || 0;
+      $('notify-count').textContent = nc;
+      if (nc > 0) {
+        $('notify-count').classList.remove('bg-gray-400');
+        $('notify-count').classList.add('bg-red-500');
+      } else {
+        $('notify-count').classList.remove('bg-red-500');
+        $('notify-count').classList.add('bg-gray-400');
+      }
     }
     // 点击通知铃铛标记已读
     $('notify-bell').onclick = async () => {
