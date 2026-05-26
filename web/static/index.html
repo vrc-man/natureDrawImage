@@ -1168,31 +1168,35 @@ async function compressImage(file) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0, w, h);
   URL.revokeObjectURL(img.src);
-  // 二分法调质量，直到 ≤ MAX_SIZE（质量 0.7-0.98）
-  let lo = 0.7, hi = 0.98, best = null;
-  for (let i = 0; i < 6; i++) {
-    const q = (lo + hi) / 2;
-    const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', q));
-    if (!blob) break;
-    best = blob;
-    if (blob.size <= MAX_SIZE) lo = q; else hi = q;
+  // 先尝试最高质量 0.98，不超标就不压
+  let blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.98));
+  if (blob && blob.size > MAX_SIZE) {
+    // 超标则二分搜索 0.7-0.98
+    let lo = 0.7, hi = 0.98;
+    for (let i = 0; i < 6; i++) {
+      const q = (lo + hi) / 2;
+      const b = await new Promise(r => canvas.toBlob(r, 'image/jpeg', q));
+      if (!b) break;
+      blob = b;
+      if (b.size <= MAX_SIZE) lo = q; else hi = q;
+    }
   }
   // 如果最终仍超标，再缩放尺寸兜底
-  if (best && best.size > MAX_SIZE) {
-    const ratio = Math.sqrt(MAX_SIZE / best.size);
+  if (blob && blob.size > MAX_SIZE) {
+    const ratio = Math.sqrt(MAX_SIZE / blob.size);
     const c2 = document.createElement('canvas');
     c2.width = Math.round(w * ratio); c2.height = Math.round(h * ratio);
     const ctx2 = c2.getContext('2d');
     ctx2.drawImage(canvas, 0, 0, c2.width, c2.height);
-    best = await new Promise(r => c2.toBlob(r, 'image/jpeg', 0.8));
+    blob = await new Promise(r => c2.toBlob(r, 'image/jpeg', 0.85));
   }
-  if (!best) throw new Error('图片压缩失败');
+  if (!blob) throw new Error('图片压缩失败');
   const origKB = (file.size / 1024).toFixed(0);
-  const newKB = (best.size / 1024).toFixed(0);
+  const newKB = (blob.size / 1024).toFixed(0);
   appendLog(`📐 图片压缩: ${origKB}KB → ${newKB}KB (${w}x${h})`);
   // 保留原始扩展名信息
   best.name = file.name.replace(/\.[^.]+$/, '.jpg');
-  return best;
+  return blob;
 }
 
 function handleMsg(m) {
