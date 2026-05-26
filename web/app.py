@@ -2921,9 +2921,26 @@ function showRegisterForm() {
   document.getElementById('email-login-form').style.display = 'none';
   document.getElementById('email-register-form').style.display = 'block';
   var c = document.getElementById('turnstile-container');
-  if (c && typeof turnstile !== 'undefined') {
-    c.innerHTML = '';
-    try { turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' }); } catch(e) {}
+  if (c) {
+    if (typeof turnstile !== 'undefined') {
+      c.innerHTML = '';
+      try { turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' }); } catch(e) { c.innerHTML = '<p style=font-size:12px;color:#9ca3af>人机验证加载中，如无法显示请直接注册</p>'; }
+    } else {
+      c.innerHTML = '<p style=font-size:12px;color:#9ca3af>人机验证组件加载中，请稍候…如一直不显示可直接点注册</p>';
+      // Wait for turnstile to load
+      var tries = 0;
+      var waitTurnstile = setInterval(function() {
+        tries++;
+        if (typeof turnstile !== 'undefined') {
+          clearInterval(waitTurnstile);
+          c.innerHTML = '';
+          try { turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' }); } catch(e) {}
+        } else if (tries > 30) {
+          clearInterval(waitTurnstile);
+          c.innerHTML = '<p style=font-size:12px;color:#f59e0b>人机验证加载超时，可直接注册（邀请码+限流保护）</p>';
+        }
+      }, 1000);
+    }
   }
 }
 function showLoginForm() {
@@ -2953,8 +2970,13 @@ async function emailRegister() {
   s.textContent = '';
   try {
     var token = '';
-    if (typeof turnstile !== 'undefined') token = turnstile.getResponse('#turnstile-container');
-    if (!token) { s.textContent = '请先完成人机验证'; return; }
+    if (typeof turnstile !== 'undefined') {
+      token = turnstile.getResponse('#turnstile-container') || '';
+    }
+    if (!token && typeof turnstile !== 'undefined' && document.getElementById('turnstile-container').querySelector('iframe')) {
+      s.textContent = '请先完成人机验证';
+      return;
+    }
     var r = await fetch('/api/auth/register-email', {
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
