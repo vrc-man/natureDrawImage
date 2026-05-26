@@ -1575,8 +1575,10 @@ setInterval(async () => {
     $('notify-count').textContent = nc;
     $('notify-bell').classList.remove('hidden');
     if (nc > 0) {
-      $('notify-count').classList.remove('bg-green-500');
-      $('notify-count').classList.add('bg-red-500');
+      $('notify-dot').classList.remove('bg-gray-300');
+      $('notify-dot').classList.add('bg-green-500');
+      $('notify-count').classList.remove('hidden');
+      $('notify-count').textContent = nc;
     }
   } catch {}
 }, 5000);
@@ -1630,13 +1632,15 @@ let _currentUser = null;
     if (d.logged_in) {
       $('notify-bell').classList.remove('hidden');
       const nc = d.unread_notifications || 0;
-      $('notify-count').textContent = nc;
       if (nc > 0) {
-        $('notify-count').classList.remove('bg-green-500');
-        $('notify-count').classList.add('bg-red-500');
+        $('notify-dot').classList.remove('bg-gray-300');
+        $('notify-dot').classList.add('bg-green-500');
+        $('notify-count').classList.remove('hidden');
+        $('notify-count').textContent = nc;
       } else {
-        $('notify-count').classList.remove('bg-red-500');
-        $('notify-count').classList.add('bg-green-500');
+        $('notify-dot').classList.remove('bg-green-500');
+        $('notify-dot').classList.add('bg-gray-300');
+        $('notify-count').classList.add('hidden');
       }
     }
     // 点击通知铃铛标记已读
