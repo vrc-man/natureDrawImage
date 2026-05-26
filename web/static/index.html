@@ -1586,13 +1586,21 @@ setInterval(async () => {
     const r = await fetch('/api/whoami');
     const d = await r.json();
     const nc = d.unread_notifications || 0;
-    $('notify-count').textContent = nc;
-    const bell2 = $('notify-bell');
-    bell2.classList.remove('hidden');
+    const qc = d.my_queue_count || 0;
+    const dot2 = $('notify-dot');
+    const count2 = $('notify-count');
+    $('notify-bell').classList.remove('hidden');
     if (nc > 0) {
-      $('notify-dot').className = 'inline-block w-3 h-3 rounded-full bg-green-500 shadow-[0_1px_3px_rgba(0,0,0,.3)]';
-      $('notify-count').classList.remove('hidden');
-      $('notify-count').textContent = nc;
+      dot2.className = 'inline-block w-[18px] h-[18px] rounded-full bg-green-500 shadow';
+      count2.classList.remove('hidden');
+      count2.textContent = nc;
+    } else if (qc > 0) {
+      dot2.className = 'inline-block w-[18px] h-[18px] rounded-full bg-yellow-500 shadow';
+      count2.classList.remove('hidden');
+      count2.textContent = qc;
+    } else {
+      dot2.className = 'inline-block w-[18px] h-[18px] rounded-full bg-gray-400 shadow';
+      count2.classList.add('hidden');
     }
   } catch {}
 }, 5000);
@@ -1645,20 +1653,24 @@ let _currentUser = null;
     // 通知红点
     if (d.logged_in) {
       const nc = d.unread_notifications || 0;
+      const qc = d.my_queue_count || 0;
       const bell = $('notify-bell');
       const dot = $('notify-dot');
       const count = $('notify-count');
       bell.classList.remove('hidden');
       if (nc > 0) {
-        dot.className = 'inline-block w-3 h-3 rounded-full bg-green-500 shadow-[0_1px_3px_rgba(0,0,0,.3)]';
+        dot.className = 'inline-block w-[18px] h-[18px] rounded-full bg-green-500 shadow';
         count.classList.remove('hidden');
         count.textContent = nc;
+      } else if (qc > 0) {
+        dot.className = 'inline-block w-[18px] h-[18px] rounded-full bg-yellow-500 shadow';
+        count.classList.remove('hidden');
+        count.textContent = qc;
       } else {
-        dot.className = 'inline-block w-3 h-3 rounded-full bg-gray-400 shadow-[0_1px_3px_rgba(0,0,0,.15)]';
+        dot.className = 'inline-block w-[18px] h-[18px] rounded-full bg-gray-400 shadow';
         count.classList.add('hidden');
       }
     }
-    // 点击通知铃铛标记已读
     $('notify-bell').onclick = async () => {
       const count = parseInt($('notify-count').textContent) || 0;
       if (count > 0) {
