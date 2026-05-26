@@ -1573,10 +1573,10 @@ setInterval(async () => {
     const d = await r.json();
     const nc = d.unread_notifications || 0;
     $('notify-count').textContent = nc;
-    $('notify-bell').classList.remove('hidden');
+    const bell2 = $('notify-bell');
+    bell2.classList.remove('hidden');
     if (nc > 0) {
-      $('notify-dot').classList.remove('bg-gray-300');
-      $('notify-dot').classList.add('bg-green-500');
+      $('notify-dot').className = 'inline-block w-3 h-3 rounded-full bg-green-500 shadow-[0_1px_3px_rgba(0,0,0,.3)]';
       $('notify-count').classList.remove('hidden');
       $('notify-count').textContent = nc;
     }
@@ -1630,17 +1630,18 @@ let _currentUser = null;
     _currentUser = d.logged_in ? d : null;
     // 通知红点
     if (d.logged_in) {
-      $('notify-bell').classList.remove('hidden');
       const nc = d.unread_notifications || 0;
+      const bell = $('notify-bell');
+      const dot = $('notify-dot');
+      const count = $('notify-count');
+      bell.classList.remove('hidden');
       if (nc > 0) {
-        $('notify-dot').classList.remove('bg-gray-300');
-        $('notify-dot').classList.add('bg-green-500');
-        $('notify-count').classList.remove('hidden');
-        $('notify-count').textContent = nc;
+        dot.className = 'inline-block w-3 h-3 rounded-full bg-green-500 shadow-[0_1px_3px_rgba(0,0,0,.3)]';
+        count.classList.remove('hidden');
+        count.textContent = nc;
       } else {
-        $('notify-dot').classList.remove('bg-green-500');
-        $('notify-dot').classList.add('bg-gray-300');
-        $('notify-count').classList.add('hidden');
+        dot.className = 'inline-block w-3 h-3 rounded-full bg-gray-400 shadow-[0_1px_3px_rgba(0,0,0,.15)]';
+        count.classList.add('hidden');
       }
     }
     // 点击通知铃铛标记已读
