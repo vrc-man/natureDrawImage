@@ -220,56 +220,64 @@ def init_email_auth():
 
     @app.post("/api/auth/register-email")
     async def api_register_email(request: Request, payload: Dict[str, Any]):
-        email = str(payload.get("email", "")).strip().lower()
-        password = str(payload.get("password", "")).strip()
-        invite_code = str(payload.get("invite_code", "")).strip().upper()
-        turnstile_token = str(payload.get("turnstile_token", "")).strip()
-        if not email or "@" not in email or len(password) < 6:
-            raise HTTPException(400, "Invalid input")
-        from web.app import _client_ip_from_request
-        client_ip = _client_ip_from_request(request)
-        if not await _verify_turnstile(turnstile_token, client_ip):
-            raise HTTPException(400, "人机验证失败，请重试")
-        limit_msg = _check_rate_limit(client_ip, email)
-        if limit_msg:
-            raise HTTPException(429, limit_msg)
-        # 邀请码（可选）：有有效邀请码则直接激活
-        has_invite = False
-        if invite_code:
-            async with _invite_lock:
-                codes = _load_invite_codes()
-                entry = codes.get(invite_code)
-                if entry and entry["used_count"] < entry.get("max_uses", 1):
-                    entry["used_count"] += 1
-                    _save_invite_codes(codes)
-                    has_invite = True
-                elif entry:
-                    raise HTTPException(400, "邀请码已被用完")
-                else:
-                    raise HTTPException(400, "无效邀请码")
-        async with _email_users_lock:
-            email_users = _load_email_users()
-            if email in email_users:
-                raise HTTPException(400, "邮箱已注册")
-            verify_token = "" if has_invite else secrets.token_urlsafe(32)
-            email_users[email] = {
-                "password_hash": _hash_password(password),
-                "role": "user", "banned": False, "banned_reason": "",
-                "created_at": time.time(), "verified": has_invite,
-                "verify_token": verify_token, "totp_secret": "", "totp_enabled": False,
-            }
-            _save_email_users(email_users)
-        _record_rate_limit(client_ip, email)
-        if has_invite:
-            return {"ok": True, "message": "注册成功！请返回登录。"}
-        else:
-            vu = f"{SITE_URL}/api/auth/verify-email?token={verify_token}&email={email}"
-            mail_ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
-                f"<p>感谢注册！请点击以下链接验证邮箱：</p><p><a href='{vu}'>{vu}</a></p>")
-            if mail_ok:
-                return {"ok": True, "message": "注册成功！请查收验证邮件并点击链接激活账号。"}
+        try:
+            email = str(payload.get("email", "")).strip().lower()
+            password = str(payload.get("password", "")).strip()
+            invite_code = str(payload.get("invite_code", "")).strip().upper()
+            turnstile_token = str(payload.get("turnstile_token", "")).strip()
+            if not email or "@" not in email or len(password) < 6:
+                raise HTTPException(400, "Invalid input")
+            from web.app import _client_ip_from_request
+            client_ip = _client_ip_from_request(request)
+            if not await _verify_turnstile(turnstile_token, client_ip):
+                raise HTTPException(400, "人机验证失败，请重试")
+            limit_msg = _check_rate_limit(client_ip, email)
+            if limit_msg:
+                raise HTTPException(429, limit_msg)
+            has_invite = False
+            if invite_code:
+                async with _invite_lock:
+                    codes = _load_invite_codes()
+                    entry = codes.get(invite_code)
+                    if entry and entry["used_count"] < entry.get("max_uses", 1):
+                        entry["used_count"] += 1
+                        _save_invite_codes(codes)
+                        has_invite = True
+                    elif entry:
+                        raise HTTPException(400, "邀请码已被用完")
+                    else:
+                        raise HTTPException(400, "无效邀请码")
+            async with _email_users_lock:
+                email_users = _load_email_users()
+                if email in email_users:
+                    raise HTTPException(400, "邮箱已注册")
+                verify_token = "" if has_invite else secrets.token_urlsafe(32)
+                email_users[email] = {
+                    "password_hash": _hash_password(password),
+                    "role": "user", "banned": False, "banned_reason": "",
+                    "created_at": time.time(), "verified": has_invite,
+                    "verify_token": verify_token, "totp_secret": "", "totp_enabled": False,
+                }
+                _save_email_users(email_users)
+            _record_rate_limit(client_ip, email)
+            if has_invite:
+                return {"ok": True, "message": "注册成功！请返回登录。"}
             else:
-                return {"ok": True, "message": "注册成功！验证邮件发送失败，请联系管理员。验证链接: " + vu}
+                vu = f"{SITE_URL}/api/auth/verify-email?token={verify_token}&email={email}"
+                mail_ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
+                    f"<p>感谢注册！请点击以下链接验证邮箱：</p><p><a href='{vu}'>{vu}</a></p>")
+                if mail_ok:
+                    return {"ok": True, "message": "注册成功！请查收验证邮件并点击链接激活账号。"}
+                else:
+                    return {"ok": True, "message": "注册成功！验证邮件发送失败，手动验证链接: " + vu}
+        except HTTPException:
+            raise
+        except Exception as _e:
+            import traceback as _tb
+            _tb.print_exc()
+            print(f'[register-email] {type(_e).__name__}: {_e}')
+            raise HTTPException(500, f"服务器内部错误: {type(_e).__name__}")
+
 
     @app.post("/api/auth/login-email")
     async def api_login_email(request: Request, payload: Dict[str, Any]):
