@@ -1959,8 +1959,10 @@ _deletion_log_lock = asyncio.Lock()
 def _load_deletion_log() -> List[Dict[str, Any]]:
     return db.load_deletion_log()
 
-async def _record_deletion(rel_path: str, github_id: str, login: str):
-    """将删除图片的缩略图移动到存档目录，并记录删除日志"""
+async def _record_deletion(rel_path: str, github_id: str, login: str,
+                          creator_gid: str = "", creator_login: str = ""):
+    """将删除图片的缩略图移动到存档目录，并记录删除日志。
+    若调用方已知生图者信息，传入可避免删除后查不到。"""
     import uuid as _uuid, shutil as _shutil
     uid = _uuid.uuid4().hex[:12]
     dst = None
@@ -1974,28 +1976,30 @@ async def _record_deletion(rel_path: str, github_id: str, login: str):
         dst = None
     # 查找生图者信息
     creator_ip = ""
-    creator_github_id = ""
-    creator_login = ""
-    try:
-        key = rel_path.replace("\\", "/")
-        # 从 SQLite creator_ips 查 IP
-        ip_row = db.lookup_creator_ip(key)
-        if ip_row:
-            creator_ip = ip_row
-        # 从 SQLite user_images 查原始生图者
-        ui = _load_user_images()
-        for uid_, entries in ui.items():
-            for e in entries:
-                if (e.get("path", "")).replace("\\", "/") == key:
-                    creator_github_id = uid_
+    creator_github_id = creator_gid
+    creator_login = creator_login
+    if not creator_github_id:
+        # 调用方未知，从数据库查
+        try:
+            key = rel_path.replace("\\", "/")
+            # 从 SQLite creator_ips 查 IP
+            ip_row = db.lookup_creator_ip(key)
+            if ip_row:
+                creator_ip = ip_row
+            # 从 SQLite user_images 查原始生图者
+            ui = _load_user_images()
+            for uid_, entries in ui.items():
+                for e in entries:
+                    if (e.get("path", "")).replace("\\", "/") == key:
+                        creator_github_id = uid_
+                        break
+                if creator_github_id:
                     break
             if creator_github_id:
-                break
-        if creator_github_id:
-            users_ = _load_users()
-            creator_login = users_.get(creator_github_id, {}).get("login", creator_github_id)
-    except Exception:
-        pass
+                users_ = _load_users()
+                creator_login = users_.get(creator_github_id, {}).get("login", creator_github_id)
+        except Exception:
+            pass
     entry = {
         "path": rel_path.replace("\\", "/"),
         "thumb_file": dst.name if dst else "",
@@ -5976,6 +5980,9 @@ async def api_delete_my_image(request: Request, payload: DeleteImagePayload):
     if not _validate_rel_path(rel_path):
         raise HTTPException(400, "无效路径")
     key = github_id
+    # 先查生图者信息（删除前必须查，删后就没了）
+    creator_gid = github_id
+    creator_login = user.get("login", github_id)
     # 验证图片归属（在锁内完成，消除 TOCTOU 窗口）
     async with _user_images_lock:
         data = _load_user_images()
@@ -6015,8 +6022,9 @@ async def api_delete_my_image(request: Request, payload: DeleteImagePayload):
             report_changed = True
     if report_changed:
         await _save_reports(reports)
-    # 记录删除日志（缩略图移入存档目录）
-    await _record_deletion(rel_path, github_id, user.get("login", github_id))
+    # 记录删除日志（缩略图移入存档目录），传生图者避免查不到
+    await _record_deletion(rel_path, github_id, user.get("login", github_id),
+                          creator_gid=creator_gid, creator_login=creator_login)
     # 文件由 GC / 启动清理统一处理，此处仅标记
     return {"ok": True}
 
