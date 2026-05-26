@@ -279,6 +279,21 @@ def init_email_auth():
             raise HTTPException(500, f"服务器内部错误: {type(_e).__name__}")
 
 
+    @app.get("/api/auth/verify-email")
+    async def api_verify_email(token: str = "", email: str = ""):
+        if not token or not email:
+            return Response("<h3>链接无效</h3>", media_type="text/html")
+        async with _email_users_lock:
+            email_users = _load_email_users()
+            eu = email_users.get(email.lower())
+            if not eu or eu.get("verify_token") != token:
+                return Response("<h3>链接无效或已过期</h3>", media_type="text/html")
+            eu["verified"] = True
+            eu["verify_token"] = ""
+            _save_email_users(email_users)
+        return Response("<h3>邮箱验证成功！<a href='/'>返回首页登录</a></h3>", media_type="text/html")
+
+
     @app.post("/api/auth/login-email")
     async def api_login_email(request: Request, payload: Dict[str, Any]):
         email = str(payload.get("email", "")).strip().lower()
