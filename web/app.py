@@ -2954,6 +2954,7 @@ async function emailRegister() {
   try {
     var token = '';
     if (typeof turnstile !== 'undefined') token = turnstile.getResponse('#turnstile-container');
+    if (!token) { s.textContent = '请先完成人机验证'; return; }
     var r = await fetch('/api/auth/register-email', {
       method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({

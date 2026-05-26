@@ -167,8 +167,11 @@ async def _verify_turnstile(token: str, remote_ip: str = "") -> bool:
                 "remoteip": remote_ip,
             })
             result = r.json()
+            if not result.get("success"):
+                print(f'[turnstile] verify failed: {result}')
             return result.get("success", False)
-    except Exception:
+    except Exception as e:
+        print(f'[turnstile] error: {e}')
         return False
 
 
