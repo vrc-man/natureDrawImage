@@ -1307,6 +1307,7 @@ async def _auth_middleware(request: Request, call_next):
         path == "/"
         or path.startswith("/static/")
         or path.startswith("/auth/")
+        or path.startswith("/api/auth/")
         or path == "/api/whoami"
         or path.startswith("/ws/")
         or path == "/robots.txt"
