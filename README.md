@@ -405,45 +405,22 @@ location / {
 ```
 
 web/
-
-├── app.py                  FastAPI 后端（单文件）
-
-├── requirements.txt        Python 依赖
-
-├── workflow_meta.json      工作流元数据（缩略图 + Lora 链接映射）
-
+├── app.py                   FastAPI 后端（单文件）
+├── requirements.txt         Python 依赖
+├── db/
+│   ├── schema.py            数据库 Schema（15 张表）
+│   ├── operations.py        数据操作层
+│   └── natureDrawImage.db   SQLite 数据库（运行时生成，已 gitignore）
 ├── static/
-
-│   ├── index.html          用户前端
-
-│   ├── admin.html          管理控制台
-
-│   └── favicon.avif
-
-├── thumbnails/             工作流缩略图
-
-├── style_thumbnails/       画风缩略图
-
-├── lora_links/             Lora 链接（旧方式，已被 workflow_meta.json 取代）
-
-├── creator_ips.txt         生图者 IP 映射（gitignored）
-
-├── banned_ips.txt          封禁 IP 列表（gitignored）
-
-├── featured.txt            精选图片路径（gitignored）
-
-├── limits.json             限流 + 精选提示语配置（gitignored）
-
-├── styles.json             画风配置（gitignored）
-
-├── resolutions.json        分辨率预设（gitignored）
-
-├── llm_config.json         LLM 服务商配置（gitignored）
-
-├── announcement.json       公告配置（gitignored）
-
-└── reports.json            举报记录（gitignored）
-
+│   ├── index.html           用户前端
+│   ├── admin.html           管理控制台
+│   ├── maintenance.html     维护模式页面
+│   ├── tailwind.min.css     样式文件
+│   ├── favicon.avif         站点图标
+│   └── chiz.webp            站点图标
+├── deletion_thumbs/         删除记录缩略图存档（运行时）
+├── thumbnails/              工作流缩略图（运行时）
+└── 全部数据存储于 SQLite，无 JSON 数据文件
 ```
 
 
