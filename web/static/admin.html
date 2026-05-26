@@ -1080,11 +1080,11 @@ $('btn-restart-server').addEventListener('click', async () => {
   }
   alert('重启信号已发送，服务将在几秒后恢复');
 });
-.addEventListener('click', async () => {
+$('btn-graceful-restart').addEventListener('click', async () => {
   if (!confirm('确定要优雅重启？将暂停新任务入队，等当前任务完成后再重启。最多等待 10 分钟。')) return;
   const input = prompt('请输入"确认优雅重启"以继续：');
   if (input !== '确认优雅重启') { alert('输入不匹配，已取消'); return; }
-  .textContent = '优雅重启中，等待当前任务完成…';
+  $('lim-status').textContent = '优雅重启中，等待当前任务完成…';
   try { await api('POST', '/api/admin/graceful-restart'); } catch (e) {}
   alert('重启信号已发送');
 });
