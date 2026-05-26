@@ -1390,7 +1390,7 @@ async def _auth_middleware(request: Request, call_next):
                 s2 = sessions2.get(token)
                 if s2:
                     s2["access_granted"] = False
-                    _save_sessions(sessions2)
+                    await _save_sessions(sessions2)
             if path.startswith("/api/") or path.startswith("/ws/"):
                 return Response(
                     content='{"error":"需要访问密钥","code":"ACCESS_KEY_REQUIRED"}',
@@ -1429,7 +1429,7 @@ async def _auth_middleware(request: Request, call_next):
                     if s2:
                         s2["access_granted"] = False
                         s2.pop("claimed_key", None)
-                        _save_sessions(sessions2)
+                        await _save_sessions(sessions2)
                 # API/WS 请求返回 JSON 错误
                 if path.startswith("/api/") or path.startswith("/ws/"):
                     if revoked:
@@ -1660,7 +1660,7 @@ async def _run_gc():
             sessions = {k: v for k, v in sessions.items() if v.get("expires_at", 0) > now}
             removed_sess = before_sess - len(sessions)
             if removed_sess > 0:
-                _save_sessions(sessions)
+                await _save_sessions(sessions)
             cleaned["expired_sessions"] = removed_sess
     except Exception:
         cleaned["expired_sessions"] = 0
@@ -1799,7 +1799,7 @@ async def _cleanup_expired_access_keys():
                             s["access_granted"] = False
                             changed = True
                     if changed:
-                        _save_sessions(sessions)
+                        await _save_sessions(sessions)
                         print("[startup] 同步清理了过期密钥的 session 引用")
     except Exception as e:
         print(f"[startup] 清理过期密钥失败: {e}")
@@ -2979,7 +2979,7 @@ async def api_whoami(request: Request):
                         if s2:
                             s2["access_granted"] = False
                             s2.pop("claimed_key", None)
-                            _save_sessions(sessions2)
+                            await _save_sessions(sessions2)
             else:
                 # 前管理员降级：access_granted=True 但无 claimed_key → 撤销
                 access_granted = False
@@ -2988,7 +2988,7 @@ async def api_whoami(request: Request):
                     s2 = sessions2.get(token)
                     if s2:
                         s2["access_granted"] = False
-                        _save_sessions(sessions2)
+                        await _save_sessions(sessions2)
         # 冷却剩余秒数
         cooldown_sec = float(_limits.get("gen_cooldown_sec", 30))
         async with _cooldown_lock:
@@ -3021,6 +3021,15 @@ async def api_read_notifications(request: Request):
 
 
 # ---------------- GitHub OAuth 认证 ----------------
+
+@app.get("/auth/email-login")
+async def email_login_page(request: Request):
+    """邮箱登录/注册专用页面"""
+    html_path = STATIC_DIR / "email-login.html"
+    resp = Response(content=html_path.read_text(encoding="utf-8"), media_type="text/html")
+    resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'self' https://challenges.cloudflare.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    return resp
+
 
 @app.get("/auth/email-login")
 async def email_login_page(request: Request):
@@ -3284,7 +3293,7 @@ async def api_auth_claim_key(request: Request):
             if sess and str(sess.get("github_id")) == github_id:
                 sess["access_granted"] = True
                 sess["claimed_key"] = key
-                _save_sessions(sessions)
+                await _save_sessions(sessions)
     return {"ok": True}
 
 
@@ -6248,12 +6257,12 @@ async def api_admin_user_ban(request: Request, payload: UserActionPayload):
             raise HTTPException(400, "不能封禁管理员")
         users[github_id]["banned"] = True
         users[github_id]["banned_reason"] = str(payload.reason or "")[:200]
-        _save_users(users)
+        await _save_users(users)
     # 清除该用户所有会话
     async with _sessions_lock:
         sessions = _load_sessions()
         sessions = {k: v for k, v in sessions.items() if str(v.get("github_id")) != github_id}
-        _save_sessions(sessions)
+        await _save_sessions(sessions)
     # 断开该用户的 WebSocket 连接并清理排队任务
     await _disconnect_banned_user(github_id)
     return {"ok": True, "user": users[github_id]}
@@ -6273,7 +6282,7 @@ async def api_admin_user_unban(request: Request, payload: UserActionPayload):
             raise HTTPException(404, "用户不存在")
         users[github_id]["banned"] = False
         users[github_id]["banned_reason"] = ""
-        _save_users(users)
+        await _save_users(users)
     return {"ok": True, "user": users[github_id]}
 
 
@@ -6303,7 +6312,7 @@ async def api_admin_user_set_role(payload: SetRolePayload, request: Request):
             if admin_count <= 1:
                 raise HTTPException(400, "不能移除最后一位管理员")
         users[github_id]["role"] = role
-        _save_users(users)
+        await _save_users(users)
     # 降级管理员 → 清除其所有会话的 access_granted 和密钥绑定
     if role == "user":
         async with _sessions_lock:
@@ -6316,7 +6325,7 @@ async def api_admin_user_set_role(payload: SetRolePayload, request: Request):
                         s.pop("claimed_key", None)
                         modified = True
             if modified:
-                _save_sessions(sessions)
+                await _save_sessions(sessions)
         # 同时清除 access_keys 中该用户的绑定
         async with _access_keys_lock:
             akeys = _load_access_keys()
