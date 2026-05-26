@@ -324,7 +324,7 @@ def init_email_auth():
                 "access_granted": False,
                 "claimed_key": "",
             }
-            _save_sessions(sessions)
+            await _save_sessions(sessions)
         resp = JSONResponse({"ok": True, "login": email.split("@")[0], "is_admin": eu.get("role") == "admin"})
         resp.set_cookie("session", token, httponly=True, max_age=SESSION_MAX_AGE_SEC,
                          samesite="lax", secure=SITE_URL.startswith("https"))
