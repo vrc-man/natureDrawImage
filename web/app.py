@@ -3008,12 +3008,9 @@ _WELCOME_HTML = """<!DOCTYPE html>
 @app.get("/")
 async def index(request: Request):
     if not getattr(request.state, "user", None):
-        nonce = getattr(request.state, "csp_nonce", "")
-        html = _WELCOME_HTML
-        if nonce:
-            html = html.replace('<script ', f'<script nonce="{nonce}" ')
-            html = html.replace('<script>', f'<script nonce="{nonce}">')
-        return Response(content=html, media_type="text/html")
+        resp = Response(content=_WELCOME_HTML, media_type="text/html")
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        return resp
     return _serve_html(STATIC_DIR / "index.html", nonce=getattr(request.state, "csp_nonce", ""))
 
 
