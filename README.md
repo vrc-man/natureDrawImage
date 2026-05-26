@@ -3,7 +3,7 @@
 
 一个塞进 ComfyUI 前面的轻量级网页控制台，主打**多人共用一台显卡**的场景：每个浏览器各选各的工作流、各写各的 prompt，但同一时刻只有一个人在用 GPU，其它人能实时看到当前任务进度。
 
-## 🔴 AGPLv3 开源声明（合规必备）
+## AGPLv3 开源声明
 本项目为 **个人公益非盈利项目**，基于原项目二次开发：
 - **原项目**：afoim/natureDrawImage
 - **原仓库**：https://github.com/afoim/natureDrawImage
