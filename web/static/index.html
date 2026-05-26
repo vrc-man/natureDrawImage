@@ -357,6 +357,10 @@
             <input type="file" id="img2" accept="image/*" class="w-full text-sm" />
           </div>
         </div>
+        <label class="flex items-center gap-1.5 text-sm text-gray-500 mt-2 cursor-pointer select-none">
+          <input type="checkbox" id="img2img-use-preset" class="w-4 h-4 accent-pink-500" />
+          注入上方所选分辨率（默认不勾选，保持原图尺寸）
+        </label>
       </div>
 
       <button id="btn-run" class="w-full py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl hover:from-pink-300 hover:to-rose-300 disabled:from-gray-200 disabled:to-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed font-semibold text-base shadow-lg shadow-pink-300/30 transition-all active:scale-[0.98]">
@@ -1099,6 +1103,7 @@ async function actuallyStartRun(direct, nl, neg, w, h) {
     negative_prompt: neg,
     image1_name: image1_name,
     image2_name: image2_name,
+    img2img_use_preset: $('img2img-use-preset').checked,
   };
   $('progress-box').classList.remove('hidden');
   $('result-box').classList.add('hidden');

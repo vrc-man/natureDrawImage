@@ -4324,6 +4324,7 @@ class RunRequest(BaseModel):
     negative_prompt: str = ""
     image1_name: str = ""
     image2_name: str = ""
+    img2img_use_preset: bool = False  # 图生图是否强制注入预设分辨率
 
     @field_validator("direct_prompt", "nl_prompt", "style_tags", "negative_prompt")
     @classmethod
@@ -5374,16 +5375,21 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
         neg_node_id, neg_input_name = negative_ref
         prompt_dict[neg_node_id]["inputs"][neg_input_name] = neg_text
 
+    # 图生图：默认保持原图尺寸，除非用户勾选注入预设
+    is_img2img = bool(req.image1_name or req.image2_name)
     if req.width and req.height and req.width > 0 and req.height > 0:
-        presets = _resolutions.get("presets", [])
-        allowed = {(p["w"], p["h"]) for p in presets}
-        rw, rh = int(req.width), int(req.height)
-        if (rw, rh) not in allowed:
-            await emit(ws, {"type": "error", "message": f"不支持的分辨率 {rw}x{rh}，请从预设中选择"})
-            return
-        n = apply_resolution(prompt_dict, rw, rh)
-        if n:
-            await emit(ws, {"type": "log", "message": f"分辨率覆盖为 {rw}x{rh} ({n} 个节点)"})
+        if is_img2img and not req.img2img_use_preset:
+            await emit(ws, {"type": "log", "message": "图生图保持原图尺寸（未勾选注入分辨率）"})
+        else:
+            presets = _resolutions.get("presets", [])
+            allowed = {(p["w"], p["h"]) for p in presets}
+            rw, rh = int(req.width), int(req.height)
+            if (rw, rh) not in allowed:
+                await emit(ws, {"type": "error", "message": f"不支持的分辨率 {rw}x{rh}，请从预设中选择"})
+                return
+            n = apply_resolution(prompt_dict, rw, rh)
+            if n:
+                await emit(ws, {"type": "log", "message": f"分辨率覆盖为 {rw}x{rh} ({n} 个节点)"})
 
     for nid, ndata in prompt_dict.items():
         if ndata.get("class_type") == "KSampler":
