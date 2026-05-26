@@ -1168,8 +1168,8 @@ async function compressImage(file) {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(img, 0, 0, w, h);
   URL.revokeObjectURL(img.src);
-  // 二分法调质量，直到 ≤ MAX_SIZE
-  let lo = 0.3, hi = 0.92, best = null;
+  // 二分法调质量，直到 ≤ MAX_SIZE（质量不低于 0.5）
+  let lo = 0.5, hi = 0.95, best = null;
   for (let i = 0; i < 6; i++) {
     const q = (lo + hi) / 2;
     const blob = await new Promise(r => canvas.toBlob(r, 'image/jpeg', q));
