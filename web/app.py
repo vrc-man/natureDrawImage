@@ -4265,9 +4265,9 @@ async def api_img2img_upload(request: Request, image1: UploadFile, image2: Optio
             _TRANSLATE_RATE[f"upload:{ip}"] = bucket
 
     UPLOAD_MAX_RAW = 10 * 1024 * 1024  # 原始文件上限 10MB（防 DoS）
-    UPLOAD_MAX_COMPRESSED = 1536 * 1024  # 压缩后上限 1.5MB
-    UPLOAD_MAX_SHORT = 1080  # 短边上限
-    UPLOAD_MAX_LONG = 1920   # 长边上限
+    UPLOAD_MAX_COMPRESSED = 5 * 1024 * 1024  # 压缩后上限 5MB
+    UPLOAD_MAX_SHORT = 1440  # 短边上限
+    UPLOAD_MAX_LONG = 2560   # 长边上限
 
     async def _process_one(upload: UploadFile, label: str) -> str:
         raw = await upload.read()

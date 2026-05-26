@@ -1137,11 +1137,11 @@ async function actuallyStartRun(direct, nl, neg, w, h) {
   ws.onerror = () => { clearTimeout(_connTimer); if (genId === _activeGenId) { appendLog('❌ 连接失败，请稍后重试'); finishRun(); } };
 }
 
-/** 前端图片压缩：短边≤1080 长边≤1920 等比缩放 + 质量调节，控制到 1.4MB 以内 */
+/** 前端图片压缩：短边≤1440 长边≤2560 等比缩放 + 质量调节，控制到 3MB 以内 */
 async function compressImage(file) {
-  const MAX_SHORT = 1080;
-  const MAX_LONG = 1920;
-  const MAX_SIZE = 1400 * 1024; // 留余量给后端 1.5MB 限制
+  const MAX_SHORT = 1440;
+  const MAX_LONG = 2560;
+  const MAX_SIZE = 3000 * 1024; // 留余量给后端 5MB 限制
   // 读文件 → Image → canvas 缩放
   const img = await new Promise((resolve, reject) => {
     const i = new Image();
