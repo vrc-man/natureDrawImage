@@ -2867,7 +2867,6 @@ _WELCOME_HTML = """<!DOCTYPE html>
   .footer { margin-top: 20px; font-size: 11px; color: #c4b5c0; }
   .footer a { color: #9ca3af; text-decoration: underline; }
 </style>
-<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 <div class="card">
@@ -2887,112 +2886,13 @@ _WELCOME_HTML = """<!DOCTYPE html>
   </div>
   <a href="/auth/login" class="login-btn">GitHub 登录</a>
   <p style="text-align:center;margin-top:10px">
-    <a href="#" onclick="showEmailAuth();return false" style="color:#9ca3af;font-size:13px;text-decoration:none">邮箱登录/注册</a>
+    <a href="/auth/email-login" style="color:#9ca3af;font-size:13px;text-decoration:none">邮箱登录/注册</a>
   </p>
-  <div id="email-auth" style="display:none;margin:10px 0;text-align:left">
-    <div id="email-login-form">
-      <input id="el-email" type="email" placeholder="邮箱" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
-      <input id="el-pwd" type="password" placeholder="密码" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
-      <input id="el-totp" type="text" placeholder="2FA码（未开启请留空）" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
-      <button onclick="emailLogin();return false" style="width:100%;padding:10px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">登录</button>
-      <span id="el-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
-      <p style="text-align:center;margin:6px 0"><a href="#" onclick="showRegisterForm();return false" style="font-size:12px;color:#9ca3af;text-decoration:none">没有账号？注册</a></p>
-    </div>
-    <div id="email-register-form" style="display:none">
-      <input id="er-email" type="email" placeholder="邮箱" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
-      <input id="er-pwd" type="password" placeholder="密码（至少6位）" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
-      <input id="er-code" type="text" placeholder="邀请码" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
-      <div id="turnstile-container" style="margin-bottom:8px"></div>
-      <button onclick="emailRegister();return false" style="width:100%;padding:10px;background:linear-gradient(135deg,#34d399,#16a34a);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">注册</button>
-      <span id="er-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
-      <p style="text-align:center;margin:6px 0"><a href="#" onclick="showLoginForm();return false" style="font-size:12px;color:#9ca3af;text-decoration:none">返回登录</a></p>
-    </div>
-  </div>
   <div class="footer">
     Powered by <a href="https://github.com/afoim/natureDrawImage">natureDrawImage</a> (AGPLv3) | Modified by vrc-man since 2026-05 | <a href="https://github.com/vrc-man/natureDrawImage">源码</a>
   </div>
 </div>
-<script>
-function showEmailAuth() {
-  document.getElementById('email-auth').style.display = 'block';
-  document.getElementById('show-email-auth-link').style.display = 'none';
-}
-function showRegisterForm() {
-  document.getElementById('email-login-form').style.display = 'none';
-  document.getElementById('email-register-form').style.display = 'block';
-  var c = document.getElementById('turnstile-container');
-  if (c) {
-    if (typeof turnstile !== 'undefined') {
-      c.innerHTML = '';
-      try { turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' }); } catch(e) { c.innerHTML = '<p style=font-size:12px;color:#9ca3af>人机验证加载中，如无法显示请直接注册</p>'; }
-    } else {
-      c.innerHTML = '<p style=font-size:12px;color:#9ca3af>人机验证组件加载中，请稍候…如一直不显示可直接点注册</p>';
-      // Wait for turnstile to load
-      var tries = 0;
-      var waitTurnstile = setInterval(function() {
-        tries++;
-        if (typeof turnstile !== 'undefined') {
-          clearInterval(waitTurnstile);
-          c.innerHTML = '';
-          try { turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' }); } catch(e) {}
-        } else if (tries > 30) {
-          clearInterval(waitTurnstile);
-          c.innerHTML = '<p style=font-size:12px;color:#f59e0b>人机验证加载超时，可直接注册（邀请码+限流保护）</p>';
-        }
-      }, 1000);
-    }
-  }
-}
-function showLoginForm() {
-  document.getElementById('email-register-form').style.display = 'none';
-  document.getElementById('email-login-form').style.display = 'block';
-  if (typeof turnstile !== 'undefined') try { turnstile.reset('#turnstile-container'); } catch(e) {}
-}
-async function emailLogin() {
-  var s = document.getElementById('el-status');
-  s.textContent = '';
-  try {
-    var r = await fetch('/api/auth/login-email', {
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        email: document.getElementById('el-email').value,
-        password: document.getElementById('el-pwd').value,
-        totp_code: document.getElementById('el-totp').value
-      })
-    });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || d.error || 'Error');
-    location.href = '/';
-  } catch(e) { s.textContent = e.message; }
-}
-async function emailRegister() {
-  var s = document.getElementById('er-status');
-  s.textContent = '';
-  try {
-    var token = '';
-    if (typeof turnstile !== 'undefined') {
-      token = turnstile.getResponse('#turnstile-container') || '';
-    }
-    if (!token && typeof turnstile !== 'undefined' && document.getElementById('turnstile-container').querySelector('iframe')) {
-      s.textContent = '请先完成人机验证';
-      return;
-    }
-    var r = await fetch('/api/auth/register-email', {
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({
-        email: document.getElementById('er-email').value,
-        password: document.getElementById('er-pwd').value,
-        invite_code: document.getElementById('er-code').value,
-        turnstile_token: token
-      })
-    });
-    var d = await r.json();
-    if (!r.ok) throw new Error(d.detail || d.error || 'Error');
-    s.style.color = '#16a34a';
-    s.textContent = d.message;
-  } catch(e) { s.textContent = e.message; }
-}
-</script>
+
 </body>
 </html>"""
 
@@ -3113,6 +3013,15 @@ async def api_read_notifications(request: Request):
 
 
 # ---------------- GitHub OAuth 认证 ----------------
+
+@app.get("/auth/email-login")
+async def email_login_page(request: Request):
+    """邮箱登录/注册专用页面"""
+    html_path = STATIC_DIR / "email-login.html"
+    resp = Response(content=html_path.read_text(encoding="utf-8"), media_type="text/html")
+    resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'self' https://challenges.cloudflare.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    return resp
+
 
 @app.get("/auth/login")
 async def auth_login(request: Request):
