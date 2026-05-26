@@ -1,3 +1,6 @@
+# ── 项目本地规则（不提交） ──
+CLAUDE.md
+
 # ── 环境 & 编辑器 ──
 .env
 claude.bat
