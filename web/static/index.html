@@ -1240,8 +1240,9 @@ function handleMsg(m) {
   else if (m.type === 'done') {
     appendLog(`✅ 完成，共 ${m.count} 张 — 请到「我的」查看`);
     $('progress-text').textContent = '完成，请到「我的」查看';
-    _tabLoaded.myworks = false;  // 下次切换到"我的"时自动刷新
+    _tabLoaded.myworks = false;
     _pendingCooldownSec = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1;
+    flashGreen();
     finishRun();
   }
   else if (m.type === 'error') {
@@ -1256,6 +1257,20 @@ function handleMsg(m) {
 }
 
 let _pendingCooldownSec = -1;  // 服务端返回的实际剩余冷却秒数，-1 表示用默认值
+function flashGreen() {
+  const dot = $('notify-dot');
+  if (dot) {
+    dot.className = 'inline-block w-[18px] h-[18px] rounded-full bg-green-500 shadow';
+    const count = $('notify-count');
+    count.classList.remove('hidden');
+    count.textContent = '✓';
+    setTimeout(() => {
+      dot.className = 'inline-block w-[18px] h-[18px] rounded-full bg-gray-400 shadow';
+      count.classList.add('hidden');
+    }, 2000);
+  }
+}
+
 let _cooldownTimer = null;    // 前端每秒倒计时 interval ID
 function startCooldown(seconds) {
   const el = $('cooldown-timer');
