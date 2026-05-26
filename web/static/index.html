@@ -14,6 +14,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@300;400;500;700;900&display=swap" rel="stylesheet" />
 <script src="https://cdn.tailwindcss.com"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
 <style>
   html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; width: 100%; }
   *, *::before, *::after { min-width: 0; min-height: 0; }
@@ -178,6 +179,22 @@
     box-shadow: 0 0 18px rgba(244,114,182,0.2);
     border-color: rgba(244,114,182,0.35); z-index: 2;
   }
+/* 夜间模式 */
+.dark body, .dark { background: linear-gradient(135deg, #0f0f1a 0%, #1a1025 25%, #0f1525 50%, #1a0f14 75%, #0f0f1a 100%) !important; }
+.dark .bg-white\/75, .dark .bg-white\/70, .dark .bg-white\/95 { background: rgba(20,20,40,0.85) !important; }
+.dark .bg-white { background: #1a1a2e !important; }
+.dark .text-gray-800, .dark .text-gray-700, .dark .text-gray-600 { color: #d1d5db !important; }
+.dark .text-gray-500, .dark .text-gray-400 { color: #9ca3af !important; }
+.dark .border-pink-100 { border-color: rgba(244,114,182,0.15) !important; }
+.dark .bg-pink-50 { background: rgba(244,114,182,0.08) !important; }
+.dark .bg-rose-50 { background: rgba(251,113,133,0.08) !important; }
+.dark .shadow-pink-100\/30, .dark .shadow-pink-100\/40 { box-shadow: 0 4px 30px rgba(0,0,0,0.3) !important; }
+.dark #tab-bar { background: rgba(20,20,40,0.9) !important; }
+.dark .from-pink-50, .dark .bg-pink-50\/30 { background: rgba(244,114,182,0.06) !important; }
+.dark input, .dark textarea, .dark select { background: #1e1e32 !important; color: #d1d5db !important; border-color: rgba(244,114,182,0.2) !important; }
+.dark .bg-red-50 { background: rgba(239,68,68,0.1) !important; }
+.dark .bg-amber-50 { background: rgba(245,158,11,0.1) !important; }
+.dark .bg-gray-50 { background: rgba(30,30,50,0.8) !important; }
 </style>
 </head>
 <body class="relative">
@@ -244,6 +261,7 @@
     <div class="flex items-center justify-between gap-2">
       <h1 class="text-lg sm:text-2xl font-bold text-gray-800 truncate">🎨 二次元绘梦</h1>
       <div class="flex items-center gap-1.5 sm:gap-2 text-xs shrink-0">
+        <button id="dark-toggle" class="text-sm px-1 py-0.5 rounded-full hover:bg-white/20 transition-all" title="夜间模式">🌙</button>
         <span id="notify-bell" class="hidden cursor-pointer relative" title="通知">
           <span id="notify-dot" class="inline-block w-[18px] h-[18px] rounded-full bg-gray-500 shadow"></span>
           <span id="notify-count" class="hidden absolute -top-1.5 -right-2.5 bg-gradient-to-b from-green-400 to-green-600 text-white text-[9px] rounded-full min-w-[16px] h-4 flex items-center justify-center font-bold shadow-md px-0.5">0</span>
@@ -1594,6 +1612,17 @@ async function pollGPU() {
 }
 let _gpuInterval = 5000;
 let _cooldownDefault = 30;
+// 夜间模式切换
+(function() {
+  const btn = $('dark-toggle');
+  const isDark = localStorage.getItem('dark') === '1';
+  if (isDark) { document.documentElement.classList.add('dark'); btn.textContent = '☀️'; }
+  btn.onclick = () => {
+    const dark = document.documentElement.classList.toggle('dark');
+    btn.textContent = dark ? '☀️' : '🌙';
+    localStorage.setItem('dark', dark ? '1' : '0');
+  };
+})();
 let _gpuTimer = setInterval(pollGPU, _gpuInterval);
 // 通知轮询 5s
 setInterval(async () => {
