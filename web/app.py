@@ -2045,13 +2045,11 @@ async def _record_deletion(rel_path: str, github_id: str, login: str):
     creator_login = ""
     try:
         key = rel_path.replace("\\", "/")
-        # 从 creator_ips.txt 查 IP
-        if CREATOR_MAP_FILE.is_file():
-            for ln in CREATOR_MAP_FILE.read_text(encoding="utf-8").splitlines():
-                if ln and "\t" in ln and ln.split("\t", 1)[0] == key:
-                    creator_ip = ln.split("\t", 1)[1].strip()
-                    break
-        # 从 user_images.json 查原始生图者
+        # 从 SQLite creator_ips 查 IP
+        ip_row = db.lookup_creator_ip(key)
+        if ip_row:
+            creator_ip = ip_row
+        # 从 SQLite user_images 查原始生图者
         ui = _load_user_images()
         for uid_, entries in ui.items():
             for e in entries:
