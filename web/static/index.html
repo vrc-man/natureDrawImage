@@ -241,12 +241,13 @@
 
   <div class="p-4 sm:p-6 space-y-6 max-w-5xl mx-auto">
     <!-- 标题 -->
-    <div class="flex items-center justify-between">
-      <h1 class="text-xl sm:text-2xl font-bold text-gray-800">🎨 二次元绘梦 <span id="online-count" class="font-normal text-sm text-gray-400"></span></h1>
-      <div class="flex items-center gap-2 text-xs">
+    <div class="flex items-center justify-between gap-2">
+      <h1 class="text-lg sm:text-2xl font-bold text-gray-800 truncate">🎨 二次元绘梦</h1>
+      <div class="flex items-center gap-1.5 sm:gap-2 text-xs shrink-0">
         <span id="notify-bell" class="hidden cursor-pointer relative" title="通知">
           🔔<span id="notify-count" class="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center font-bold">0</span>
         </span>
+        <span id="online-count" class="font-normal text-gray-400 hidden sm:inline"></span>
         <span id="user-label" class="px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 cursor-pointer font-medium" onclick="location.href='/auth/login'">登录</span>
         <a id="admin-link" href="/admin" class="hidden px-2 py-1 rounded-full bg-red-50 text-red-500 font-medium">管理</a>
       </div>
@@ -1356,7 +1357,7 @@ $('access-key-input').addEventListener('keydown', (e) => {
 // ==================== 全局状态 ====================
 let globalBusy = false;
 function applyGlobalStatus(s) {
-  if (s.online != null) $('online-count').textContent = `· ${s.online} 在线`;
+  if (s.online != null) { const t = `· ${s.online} 在线`; $('online-count').textContent = t; const m = document.getElementById('online-count-menu'); if (m) m.textContent = t; }
   globalBusy = !!s.busy;
   if (!s.busy) {
     mirroring = false;
@@ -1389,7 +1390,7 @@ function connectStatus() {
     let m; try { m = JSON.parse(e.data); } catch { return; }
     if (m.type === 'ping') return;
     if (m.type === 'status') applyGlobalStatus(m);
-    else if (m.type === 'online') $('online-count').textContent = `· ${m.count} 在线`;
+    else if (m.type === 'online') { const t = `· ${m.count} 在线`; $('online-count').textContent = t; const mu = document.getElementById('online-count-menu'); if (mu) mu.textContent = t; }
     else if (m.type === 'queue_update') {
       if (!activeWS && (m.queue_size || 0) > 0) {
         $('queue-status').classList.remove('hidden');
@@ -1677,6 +1678,7 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
         div.id = 'user-menu';
         div.className = 'absolute right-0 top-full mt-1 bg-white/95 backdrop-blur-xl rounded-xl shadow-xl border border-pink-100 text-xs z-50 min-w-[100px]';
         div.innerHTML = `<div class="px-3 py-2 text-gray-400 border-b border-pink-100 text-xs">${_esc(d.login)}</div>
+          <div class="px-3 py-2 text-gray-400 text-xs border-b border-pink-100"><span id="online-count-menu">加载中...</span></div>
           <div id="key-info-placeholder" class="px-3 py-2 text-gray-400 text-xs">加载中...</div>
           <button id="btn-logout" class="w-full text-left px-3 py-2 hover:bg-red-50 text-red-500 rounded-b-xl text-xs transition-all">🚪 退出登录</button>`;
         label.style.position = 'relative';
