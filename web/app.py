@@ -2990,6 +2990,15 @@ async def api_whoami(request: Request):
     return {"login": None, "is_admin": False, "logged_in": False, "access_granted": False}
 
 
+@app.post("/api/whoami/read-notifications")
+async def api_read_notifications(request: Request):
+    """标记所有通知为已读。"""
+    user = _get_user_from_session(request)
+    if user:
+        db.mark_notifications_read(str(user.get("github_id", "")))
+    return {"ok": True}
+
+
 # ---------------- GitHub OAuth 认证 ----------------
 
 @app.get("/auth/login")

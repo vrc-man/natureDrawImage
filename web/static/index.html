@@ -244,6 +244,9 @@
     <div class="flex items-center justify-between">
       <h1 class="text-xl sm:text-2xl font-bold text-gray-800">🎨 二次元绘梦 <span id="online-count" class="font-normal text-sm text-gray-400"></span></h1>
       <div class="flex items-center gap-2 text-xs">
+        <span id="notify-bell" class="hidden cursor-pointer relative" title="通知">
+          🔔<span id="notify-count" class="absolute -top-1.5 -right-1.5 bg-red-500 text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center font-bold">0</span>
+        </span>
         <span id="user-label" class="px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 cursor-pointer font-medium" onclick="location.href='/auth/login'">登录</span>
         <a id="admin-link" href="/admin" class="hidden px-2 py-1 rounded-full bg-red-50 text-red-500 font-medium">管理</a>
       </div>
@@ -1560,6 +1563,18 @@ async function pollGPU() {
 let _gpuInterval = 5000;
 let _cooldownDefault = 30;
 let _gpuTimer = setInterval(pollGPU, _gpuInterval);
+// 通知轮询 5s
+setInterval(async () => {
+  if (!_currentUser || !_currentUser.logged_in) return;
+  try {
+    const r = await fetch('/api/whoami');
+    const d = await r.json();
+    if (d.unread_notifications > 0) {
+      $('notify-count').textContent = d.unread_notifications;
+      $('notify-bell').classList.remove('hidden');
+    }
+  } catch {}
+}, 5000);
 
 // ==================== 公告 ====================
 async function loadAnnouncement() {
@@ -1606,6 +1621,21 @@ let _currentUser = null;
     const r = await fetch('/api/whoami');
     const d = await r.json();
     _currentUser = d.logged_in ? d : null;
+    // 通知红点
+    if (d.logged_in && d.unread_notifications > 0) {
+      $('notify-count').textContent = d.unread_notifications;
+      $('notify-bell').classList.remove('hidden');
+    }
+    // 点击通知铃铛标记已读
+    $('notify-bell').onclick = async () => {
+      const count = parseInt($('notify-count').textContent) || 0;
+      if (count > 0) {
+        alert('您有后台任务已完成，请到「我的」查看新作品');
+        try { await fetch('/api/whoami/read-notifications', { method: 'POST' }); } catch {}
+        $('notify-count').textContent = '0';
+        $('notify-bell').classList.add('hidden');
+      }
+    };
     const label = $('user-label');
     const adminLink = $('admin-link');
     if (d.logged_in) {
