@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+httpx
+websockets
+pydantic
+pillow
+cryptography
+python-multipart
