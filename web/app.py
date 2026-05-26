@@ -113,6 +113,7 @@ THUMB_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 LORA_LINKS_DIR = Path(__file__).parent / "lora_links"
 WORKFLOW_META_FILE = Path(__file__).parent / "workflow_meta.json"
 CREATOR_MAP_FILE = Path(__file__).parent / "creator_ips.txt"
+QUEUE_STATE_FILE = Path(__file__).parent / "queue_state.json"
 _creator_map_lock = asyncio.Lock()
 
 # ── 以下常量标记 TODO: migrate to db，当前仍由未迁移函数使用 ──
@@ -1022,18 +1023,8 @@ def _client_ip_from_ws(ws: WebSocket) -> str:
 
 
 def _read_banned_ips() -> list:
-    """返回封禁 IP 列表，保持文件中的顺序（最后一个是最新封禁的）。"""
-    if not BANNED_IPS_FILE.is_file():
-        return []
-    try:
-        seen = []
-        for ln in BANNED_IPS_FILE.read_text(encoding="utf-8").splitlines():
-            ip = ln.strip()
-            if ip and not ip.startswith("#"):
-                seen.append(ip)
-        return seen
-    except Exception:
-        return []
+    """返回封禁 IP 列表。"""
+    return db.load_banned_ips()
 
 
 def _read_banned_ips_set() -> set:
@@ -1041,15 +1032,12 @@ def _read_banned_ips_set() -> set:
 
 
 async def _write_banned_ips(ips: list) -> bool:
-    async with _banned_lock:
-        try:
-            tmp = BANNED_IPS_FILE.with_suffix(".txt.tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write("\n".join(ips) + ("\n" if ips else ""))
-            os.replace(tmp, BANNED_IPS_FILE)
-            return True
-        except Exception:
-            return False
+    """保存封禁 IP 列表到 SQLite。"""
+    try:
+        db.save_banned_ips(ips)
+        return True
+    except Exception:
+        return False
 
 
 def is_ip_banned(ip: str) -> bool:
@@ -1059,33 +1047,17 @@ def is_ip_banned(ip: str) -> bool:
 
 
 def _read_featured() -> List[str]:
-    """精选图片相对路径列表，按管理员设定顺序保留。"""
-    if not FEATURED_FILE.is_file():
-        return []
-    try:
-        out: List[str] = []
-        seen: set = set()
-        for ln in FEATURED_FILE.read_text(encoding="utf-8").splitlines():
-            rel = ln.strip()
-            if not rel or rel.startswith("#") or rel in seen:
-                continue
-            seen.add(rel)
-            out.append(rel)
-        return out
-    except Exception:
-        return []
+    """精选图片相对路径列表。"""
+    return db.load_featured()
 
 
 async def _write_featured(items: List[str]) -> bool:
-    async with _featured_lock:
-        try:
-            tmp = FEATURED_FILE.with_suffix(".txt.tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                f.write("\n".join(items) + ("\n" if items else ""))
-            os.replace(tmp, FEATURED_FILE)
-            return True
-        except Exception:
-            return False
+    """保存精选列表到 SQLite。"""
+    try:
+        db.save_featured(items)
+        return True
+    except Exception:
+        return False
 
 
 def _creator_key(p: Path) -> str:
