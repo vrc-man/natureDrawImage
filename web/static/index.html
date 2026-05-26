@@ -1281,6 +1281,9 @@ function finishRun() {
   if (activeWS) { try { activeWS.close(); } catch {} }
   activeWS = null;
   mirroring = false;
+  // 清理图生图上传引用
+  $('img1').value = '';
+  $('img2').value = '';
   pollMyQueue();
   // 生图完成后启动冷却倒计时（管理员豁免）
   if (!_currentUser || !_currentUser.is_admin) {
