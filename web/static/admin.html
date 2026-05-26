@@ -2170,7 +2170,7 @@ async function loadQueue() {
     const userRows = document.querySelectorAll('#user-list .btn-toggle-user-ban');
     userRows.forEach(btn => {
       const gid = btn.dataset.gid;
-      const dot = btn.parentElement.querySelector('span.rounded-full');
+      const dot = btn.closest('.flex.flex-col')?.querySelector('span.rounded-full');
       if (!dot) return;
       if (onlineGithubIds.has(gid)) {
         dot.classList.remove('bg-gray-300'); dot.classList.add('bg-green-500');
