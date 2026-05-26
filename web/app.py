@@ -1218,7 +1218,7 @@ async def _no_index_headers(request: Request, call_next):
     nonce = getattr(request.state, "csp_nonce", "")
     resp.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
-        f"script-src 'self' 'nonce-{nonce}'; "
+        f"script-src 'self' 'nonce-{nonce}' https://challenges.cloudflare.com https://cdn.tailwindcss.com; "
         "style-src 'self' 'unsafe-inline'; "
         "img-src 'self' data: blob: https:; "
         "frame-src 'self'; "
@@ -2885,14 +2885,14 @@ _WELCOME_HTML = """<!DOCTYPE html>
   </div>
   <a href="/auth/login" class="login-btn">GitHub 登录</a>
   <p style="text-align:center;margin-top:10px">
-    <a href="#" onclick="var e=document.getElementById('email-auth');e.style.display='block';this.style.display='none';return false" style="color:#9ca3af;font-size:13px;text-decoration:none">邮箱登录/注册</a>
+    <a href="#" id="show-email-auth-link" style="color:#9ca3af;font-size:13px;text-decoration:none">邮箱登录/注册</a>
   </p>
   <div id="email-auth" style="display:none;margin:10px 0;text-align:left">
     <div id="email-login-form">
       <input id="el-email" type="email" placeholder="邮箱" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <input id="el-pwd" type="password" placeholder="密码" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <input id="el-totp" type="text" placeholder="2FA码（未开启请留空）" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
-      <button onclick="emailLogin()" style="width:100%;padding:10px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">登录</button>
+      <button id="btn-email-login" style="width:100%;padding:10px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">登录</button>
       <span id="el-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
       <p style="text-align:center;margin:6px 0"><a href="#" onclick="showRegisterForm();return false" style="font-size:12px;color:#9ca3af;text-decoration:none">没有账号？注册</a></p>
     </div>
@@ -2901,7 +2901,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
       <input id="er-pwd" type="password" placeholder="密码（至少6位）" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <input id="er-code" type="text" placeholder="邀请码" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
       <div id="turnstile-container" style="margin-bottom:8px"></div>
-      <button onclick="emailRegister()" style="width:100%;padding:10px;background:linear-gradient(135deg,#34d399,#16a34a);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">注册</button>
+      <button id="btn-email-register" style="width:100%;padding:10px;background:linear-gradient(135deg,#34d399,#16a34a);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">注册</button>
       <span id="er-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
       <p style="text-align:center;margin:6px 0"><a href="#" onclick="showLoginForm();return false" style="font-size:12px;color:#9ca3af;text-decoration:none">返回登录</a></p>
     </div>
@@ -2911,59 +2911,76 @@ _WELCOME_HTML = """<!DOCTYPE html>
   </div>
 </div>
 <script>
-async function apiPost(url, body) {
-  const s = document.getElementById('er-status') || document.getElementById('el-status');
-  try {
-    const r = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
-    const d = await r.json();
-    if (!r.ok) throw new Error(d.detail || d.error || 'Error');
-    return d;
-  } catch(e) { if (s) s.textContent = e.message; throw e; }
-}
-function showRegisterForm() {
-  document.getElementById('email-login-form').style.display = 'none';
-  document.getElementById('email-register-form').style.display = 'block';
-  // 显式渲染 Turnstile
-  var container = document.getElementById('turnstile-container');
-  if (container && typeof turnstile !== 'undefined') {
-    container.innerHTML = '';
-    turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' });
-  }
-}
-function showLoginForm() {
-  document.getElementById('email-register-form').style.display = 'none';
-  document.getElementById('email-login-form').style.display = 'block';
-  // 重置 Turnstile
-  if (typeof turnstile !== 'undefined') turnstile.reset('#turnstile-container');
-}
-async function emailLogin() {
-  var s = document.getElementById('el-status');
-  s.textContent = '';
-  try {
-    await apiPost('/api/auth/login-email', {
-      email: document.getElementById('el-email').value,
-      password: document.getElementById('el-pwd').value,
-      totp_code: document.getElementById('el-totp').value
-    });
-    location.href = '/';
-  } catch(e) { s.textContent = e.message; }
-}
-async function emailRegister() {
-  var s = document.getElementById('er-status');
-  s.textContent = '';
-  try {
-    var token = '';
-    if (typeof turnstile !== 'undefined') token = turnstile.getResponse('#turnstile-container');
-    var d = await apiPost('/api/auth/register-email', {
-      email: document.getElementById('er-email').value,
-      password: document.getElementById('er-pwd').value,
-      invite_code: document.getElementById('er-code').value,
-      turnstile_token: token
-    });
-    s.style.color = '#16a34a';
-    s.textContent = d.message;
-  } catch(e) { s.textContent = e.message; }
-}
+document.addEventListener('DOMContentLoaded', function() {
+  var showLink = document.getElementById('show-email-auth-link');
+  if (showLink) showLink.addEventListener('click', function(e) {
+    e.preventDefault();
+    document.getElementById('email-auth').style.display = 'block';
+    this.style.display = 'none';
+  });
+
+  var regLink = document.getElementById('link-show-register');
+  if (regLink) regLink.addEventListener('click', function(e) {
+    e.preventDefault();
+    document.getElementById('email-login-form').style.display = 'none';
+    document.getElementById('email-register-form').style.display = 'block';
+    var c = document.getElementById('turnstile-container');
+    if (c && typeof turnstile !== 'undefined') {
+      c.innerHTML = '';
+      turnstile.render('#turnstile-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU' });
+    }
+  });
+
+  var loginLink = document.getElementById('link-show-login');
+  if (loginLink) loginLink.addEventListener('click', function(e) {
+    e.preventDefault();
+    document.getElementById('email-register-form').style.display = 'none';
+    document.getElementById('email-login-form').style.display = 'block';
+    if (typeof turnstile !== 'undefined') turnstile.reset('#turnstile-container');
+  });
+
+  var btnLogin = document.getElementById('btn-email-login');
+  if (btnLogin) btnLogin.addEventListener('click', async function() {
+    var s = document.getElementById('el-status');
+    s.textContent = '';
+    try {
+      var r = await fetch('/api/auth/login-email', {
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          email: document.getElementById('el-email').value,
+          password: document.getElementById('el-pwd').value,
+          totp_code: document.getElementById('el-totp').value
+        })
+      });
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || d.error || 'Error');
+      location.href = '/';
+    } catch(e) { s.textContent = e.message; }
+  });
+
+  var btnReg = document.getElementById('btn-email-register');
+  if (btnReg) btnReg.addEventListener('click', async function() {
+    var s = document.getElementById('er-status');
+    s.textContent = '';
+    try {
+      var token = '';
+      if (typeof turnstile !== 'undefined') token = turnstile.getResponse('#turnstile-container');
+      var r = await fetch('/api/auth/register-email', {
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({
+          email: document.getElementById('er-email').value,
+          password: document.getElementById('er-pwd').value,
+          invite_code: document.getElementById('er-code').value,
+          turnstile_token: token
+        })
+      });
+      var d = await r.json();
+      if (!r.ok) throw new Error(d.detail || d.error || 'Error');
+      s.style.color = '#16a34a';
+      s.textContent = d.message;
+    } catch(e) { s.textContent = e.message; }
+  });
+});
 </script>
 </body>
 </html>"""
@@ -2971,7 +2988,12 @@ async function emailRegister() {
 @app.get("/")
 async def index(request: Request):
     if not getattr(request.state, "user", None):
-        return Response(content=_WELCOME_HTML, media_type="text/html")
+        nonce = getattr(request.state, "csp_nonce", "")
+        html = _WELCOME_HTML
+        if nonce:
+            html = html.replace('<script ', f'<script nonce="{nonce}" ')
+            html = html.replace('<script>', f'<script nonce="{nonce}">')
+        return Response(content=html, media_type="text/html")
     return _serve_html(STATIC_DIR / "index.html", nonce=getattr(request.state, "csp_nonce", ""))
 
 
