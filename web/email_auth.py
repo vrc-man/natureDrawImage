@@ -14,7 +14,9 @@ import base64
 import hmac as _hmac
 import struct as _struct
 import asyncio
+import smtplib
 from typing import Dict, Any, Optional
+from email.mime.text import MIMEText
 
 import httpx
 from fastapi import HTTPException, Request
@@ -109,6 +111,32 @@ def _verify_totp(secret: str, code: str) -> bool:
     except Exception:
         pass
     return False
+
+def _smtp_send(msg):
+    if SMTP_PORT == 465:
+        with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+            s.login(SMTP_USER, SMTP_PASS)
+            s.send_message(msg)
+    else:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=15) as s:
+            s.starttls()
+            s.login(SMTP_USER, SMTP_PASS)
+            s.send_message(msg)
+
+async def _send_email(to: str, subject: str, body: str) -> bool:
+    if not SMTP_USER or not SMTP_PASS:
+        return False
+    msg = MIMEText(body, "html", "utf-8")
+    msg["From"] = SMTP_USER
+    msg["To"] = to
+    msg["Subject"] = subject
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: _smtp_send(msg))
+        return True
+    except Exception as e:
+        print(f"[email] {e}")
+        return False
 
 def get_email_user(session_uid: str) -> Optional[dict]:
     """从 session 的 github_id 还原邮箱用户"""
