@@ -282,7 +282,7 @@
 
     <!-- 工作流 -->
     <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
-      <div id="wf-header" class="flex items-center justify-between cursor-pointer select-none" title="点击展开/折叠">
+      <div id="wf-header" class="flex items-center justify-between cursor-pointer select-none relative" title="点击展开/折叠">
         <h2 class="text-base font-bold flex items-center gap-1.5 min-w-0 flex-1 text-gray-700">
           <span id="wf-arrow" class="inline-block transition-transform text-gray-400 text-xs">▸</span>
           📋 工作流
@@ -1321,6 +1321,7 @@ function finishRun() {
 
 // ==================== 事件绑定 ====================
 $('search').addEventListener('input', renderList);
+$('search').addEventListener('keyup', renderList);
 $('btn-wf-search').addEventListener('click', () => {
   const el = $('search');
   el.classList.toggle('hidden');
