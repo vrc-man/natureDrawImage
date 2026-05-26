@@ -6344,16 +6344,7 @@ async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0):
     if not OUTPUT_DIR.exists():
         return {"items": [], "total": 0, "limit": limit, "offset": offset}
     # 一次性载入映射到字典，避免每张图都扫整文件
-    ip_map: Dict[str, str] = {}
-    if CREATOR_MAP_FILE.is_file():
-        try:
-            for ln in CREATOR_MAP_FILE.read_text(encoding="utf-8").splitlines():
-                if not ln or "\t" not in ln:
-                    continue
-                k, _, v = ln.partition("\t")
-                ip_map[k] = v
-        except Exception:
-            pass
+    ip_map: Dict[str, str] = db.load_creator_map()
     base = OUTPUT_DIR.resolve()
     raw: List[Tuple[float, str, float]] = []  # (mtime, rel, mtime_for_sort)
     MAX_ADMIN_SCAN = 100000  # 管理员端点扫描上限
