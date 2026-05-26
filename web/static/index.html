@@ -253,6 +253,34 @@
   </div>
 </div>
 
+<!-- TOTP 两步验证 -->
+<div id="totp-modal" class="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm items-center justify-center p-4 hidden">
+  <div class="bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 max-w-sm w-full p-5">
+    <h3 class="text-lg font-bold mb-3 text-pink-500">🔐 两步验证 (2FA)</h3>
+    <div id="totp-setup-step">
+      <p class="text-sm text-gray-600 mb-3">请在 Google Authenticator / Microsoft Authenticator 等 App 中手动输入以下密钥：</p>
+      <div id="totp-secret-display" class="bg-gray-100 rounded-xl px-4 py-3 text-center font-mono text-lg tracking-widest text-gray-800 select-all mb-3">-----</div>
+      <p class="text-xs text-gray-400 mb-3">或复制此链接到手机浏览器：<br><a id="totp-uri-link" href="#" class="text-pink-500 break-all text-xs"></a></p>
+      <label class="text-sm text-gray-600">输入 App 中显示的 6 位验证码：</label>
+      <input id="totp-verify-code" type="text" inputmode="numeric" maxlength="6" placeholder="000000"
+        class="w-full border border-pink-200 rounded-xl px-4 py-3 text-sm mt-1 mb-3 text-center tracking-widest bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all" />
+      <div class="flex gap-2">
+        <button id="totp-cancel" class="flex-1 px-4 py-2 bg-gray-100 rounded-xl hover:bg-gray-200 text-sm text-gray-600 transition-all">取消</button>
+        <button id="totp-enable-btn" class="flex-1 px-4 py-2 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl hover:from-pink-300 hover:to-rose-300 text-sm font-medium transition-all">验证并启用</button>
+      </div>
+      <span id="totp-status-msg" class="text-xs text-red-400 mt-2 block"></span>
+    </div>
+    <div id="totp-enabled-step" class="hidden">
+      <p class="text-sm text-green-600 mb-3">✅ 两步验证已启用</p>
+      <p class="text-xs text-gray-500 mb-4">每次登录时需要输入 6 位验证码，提升账户安全性。</p>
+      <div class="flex gap-2">
+        <button id="totp-close-ok" class="flex-1 px-4 py-2 bg-gray-100 rounded-xl hover:bg-gray-200 text-sm text-gray-600 transition-all">关闭</button>
+        <button id="totp-disable-btn" class="flex-1 px-4 py-2 bg-red-100 text-red-500 rounded-xl hover:bg-red-200 text-sm font-medium transition-all">关闭 2FA</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ==================== Tab 1: 生图 ==================== -->
 <div id="page-generate" class="tab-page active">
 
@@ -1762,10 +1790,13 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
         div.innerHTML = `<div class="px-3 py-2 text-gray-400 border-b border-pink-100 text-xs">${_esc(d.login)}</div>
           <div class="px-3 py-2 text-gray-400 text-xs border-b border-pink-100"><span id="online-count-menu">${$('online-count').textContent || '加载中...'}</span></div>
           <div id="key-info-placeholder" class="px-3 py-2 text-gray-400 text-xs">加载中...</div>
+          ${d.is_email_user ? '<button id="btn-totp" class="w-full text-left px-3 py-2 hover:bg-pink-50 text-pink-500 rounded-none text-xs transition-all">🔐 两步验证</button>' : ''}
           <button id="btn-logout" class="w-full text-left px-3 py-2 hover:bg-red-50 text-red-500 rounded-b-xl text-xs transition-all">🚪 退出登录</button>`;
         label.style.position = 'relative';
         label.appendChild(div);
         div.querySelector('#btn-logout').onclick = async () => { await fetch('/auth/logout', {method:'POST'}); location.href = '/'; };
+        const btnTotp = div.querySelector('#btn-totp');
+        if (btnTotp) btnTotp.onclick = () => { div.remove(); showTotpModal(); };
         document.addEventListener('click', () => div.remove(), { once: true });
         // 限速：清理 60 秒前的记录，超过 20 次则跳过请求
         const now = Date.now();
@@ -1824,6 +1855,73 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
 })();
 
 // ==================== 我的队列轮询 ====================
+// ==================== TOTP 两步验证 ====================
+let _totpSecret = '';
+
+async function showTotpModal() {
+  const modal = $('totp-modal');
+  let enabled = false;
+  try {
+    const r = await fetch('/api/auth/totp-status');
+    const d = await r.json();
+    enabled = d.totp_enabled;
+  } catch {}
+  if (enabled) {
+    $('totp-setup-step').classList.add('hidden');
+    $('totp-enabled-step').classList.remove('hidden');
+  } else {
+    try {
+      const r = await fetch('/api/auth/totp-setup', {method:'POST'});
+      const d = await r.json();
+      _totpSecret = d.secret;
+      $('totp-secret-display').textContent = _totpSecret;
+      const uri = 'otpauth://totp/%E4%BA%8C%E6%AC%A1%E5%85%83%E7%BB%98%E6%A2%A6?secret=' + _totpSecret + '&issuer=%E4%BA%8C%E6%AC%A1%E5%85%83%E7%BB%98%E6%A2%A6';
+      $('totp-uri-link').href = uri;
+      $('totp-uri-link').textContent = '点击在手机打开';
+    } catch(e) {
+      $('totp-status-msg').textContent = '获取密钥失败: ' + e.message;
+      return;
+    }
+    $('totp-setup-step').classList.remove('hidden');
+    $('totp-enabled-step').classList.add('hidden');
+    $('totp-verify-code').value = '';
+    $('totp-status-msg').textContent = '';
+  }
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+}
+
+function hideTotpModal() {
+  const modal = $('totp-modal');
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+}
+
+$('totp-cancel').onclick = hideTotpModal;
+$('totp-close-ok').onclick = hideTotpModal;
+
+$('totp-enable-btn').onclick = async () => {
+  const code = $('totp-verify-code').value.trim();
+  if (code.length !== 6) { $('totp-status-msg').textContent = '请输入6位验证码'; return; }
+  $('totp-status-msg').textContent = '';
+  try {
+    const r = await fetch('/api/auth/totp-enable', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({code})
+    });
+    if (!r.ok) { const e = await r.json(); throw new Error(e.detail); }
+    $('totp-setup-step').classList.add('hidden');
+    $('totp-enabled-step').classList.remove('hidden');
+  } catch(e) { $('totp-status-msg').textContent = '验证失败: ' + e.message; }
+};
+
+$('totp-disable-btn').onclick = async () => {
+  try {
+    await fetch('/api/auth/totp-disable', {method:'POST'});
+    hideTotpModal();
+  } catch {}
+};
+
 async function pollMyQueue() {
   if (!_currentUser) { $('my-queue-card').classList.add('hidden'); return; }
   try {

@@ -263,6 +263,32 @@ SCHEMA = [
         value TEXT NOT NULL DEFAULT ''
     )
     """,
+
+    # ── 邮箱用户 ──
+    """
+    CREATE TABLE IF NOT EXISTS email_users (
+        email          TEXT PRIMARY KEY,
+        password_hash  TEXT NOT NULL DEFAULT '',
+        role           TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('admin','user')),
+        banned         INTEGER NOT NULL DEFAULT 0,
+        banned_reason  TEXT NOT NULL DEFAULT '',
+        created_at     REAL NOT NULL DEFAULT 0,
+        verified       INTEGER NOT NULL DEFAULT 1,
+        verify_token   TEXT NOT NULL DEFAULT '',
+        totp_secret    TEXT NOT NULL DEFAULT '',
+        totp_enabled   INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+
+    # ── 邀请码 ──
+    """
+    CREATE TABLE IF NOT EXISTS invite_codes (
+        code        TEXT PRIMARY KEY,
+        used_count  INTEGER NOT NULL DEFAULT 0,
+        max_uses   INTEGER NOT NULL DEFAULT 1,
+        created_at  REAL NOT NULL DEFAULT 0
+    )
+    """,
 ]
 
 

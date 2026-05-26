@@ -2865,6 +2865,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
   .footer { margin-top: 20px; font-size: 11px; color: #c4b5c0; }
   .footer a { color: #9ca3af; text-decoration: underline; }
 </style>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 <div class="card">
@@ -2883,10 +2884,66 @@ _WELCOME_HTML = """<!DOCTYPE html>
     </ul>
   </div>
   <a href="/auth/login" class="login-btn">GitHub 登录</a>
+  <p style="text-align:center;margin-top:10px">
+    <a href="#" onclick="var e=document.getElementById('email-auth');e.style.display='block';this.style.display='none';return false" style="color:#9ca3af;font-size:13px;text-decoration:none">邮箱登录/注册</a>
+  </p>
+  <div id="email-auth" style="display:none;margin:10px 0;text-align:left">
+    <div id="email-login-form">
+      <input id="el-email" type="email" placeholder="邮箱" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
+      <input id="el-pwd" type="password" placeholder="密码" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
+      <input id="el-totp" type="text" placeholder="2FA码（未开启请留空）" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
+      <button onclick="emailLogin()" style="width:100%;padding:10px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">登录</button>
+      <span id="el-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
+      <p style="text-align:center;margin:6px 0"><a href="#" onclick="document.getElementById('email-register-form').style.display='block';document.getElementById('email-login-form').style.display='none';return false" style="font-size:12px;color:#9ca3af;text-decoration:none">没有账号？注册</a></p>
+    </div>
+    <div id="email-register-form" style="display:none">
+      <input id="er-email" type="email" placeholder="邮箱" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
+      <input id="er-pwd" type="password" placeholder="密码（至少6位）" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
+      <input id="er-code" type="text" placeholder="邀请码" style="width:100%;padding:10px;border:1px solid #fce7f3;border-radius:12px;font-size:14px;margin-bottom:8px;box-sizing:border-box;background:#fff" />
+      <div class="cf-turnstile" data-sitekey="0x4AAAAAADWvaKWEsnuGl7oU" style="margin-bottom:8px"></div>
+      <button onclick="emailRegister()" style="width:100%;padding:10px;background:linear-gradient(135deg,#34d399,#16a34a);color:#fff;border:0;border-radius:14px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:6px">注册</button>
+      <span id="er-status" style="font-size:12px;color:#ef4444;display:block;text-align:center"></span>
+      <p style="text-align:center;margin:6px 0"><a href="#" onclick="document.getElementById('email-login-form').style.display='block';document.getElementById('email-register-form').style.display='none';return false" style="font-size:12px;color:#9ca3af;text-decoration:none">返回登录</a></p>
+    </div>
+  </div>
   <div class="footer">
     Powered by <a href="https://github.com/afoim/natureDrawImage">natureDrawImage</a> (AGPLv3) | Modified by vrc-man since 2026-05 | <a href="https://github.com/vrc-man/natureDrawImage">源码</a>
   </div>
 </div>
+<script>
+async function apiPost(url, body) {
+  const r = await fetch(url, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.detail || d.error || 'Error');
+  return d;
+}
+async function emailLogin() {
+  const s = document.getElementById('el-status');
+  s.textContent = '';
+  try {
+    await apiPost('/api/auth/login-email', {
+      email: document.getElementById('el-email').value,
+      password: document.getElementById('el-pwd').value,
+      totp_code: document.getElementById('el-totp').value
+    });
+    location.href = '/';
+  } catch(e) { s.textContent = e.message; }
+}
+async function emailRegister() {
+  const s = document.getElementById('er-status');
+  s.textContent = '';
+  try {
+    const d = await apiPost('/api/auth/register-email', {
+      email: document.getElementById('er-email').value,
+      password: document.getElementById('er-pwd').value,
+      invite_code: document.getElementById('er-code').value,
+      turnstile_token: turnstile.getResponse()
+    });
+    s.style.color = '#16a34a';
+    s.textContent = d.message;
+  } catch(e) { s.textContent = e.message; }
+}
+</script>
 </body>
 </html>"""
 
@@ -2985,6 +3042,7 @@ async def api_whoami(request: Request):
             "is_admin": user.get("role") == "admin",
             "access_granted": access_granted,
             "logged_in": True,
+            "is_email_user": str(user.get("github_id", "")).startswith("email:"),
             "key_info": await _get_key_info_for_user(str(user.get("github_id", "")), claimed_key) if access_granted else {},
             "cooldown_remaining": cd_remain,
             "cooldown_total": int(cooldown_sec),
@@ -3017,7 +3075,6 @@ async def auth_login(request: Request):
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>开发登录 · 二次元绘梦</title>
-<link rel="stylesheet" href="/static/tailwind.min.css" />
 </head>
 <body class="bg-gray-100 min-h-screen flex items-center justify-center">
 <div class="bg-white rounded shadow p-8 w-full max-w-sm">
@@ -3048,7 +3105,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {{
 </script>
 </body>
 </html>""")
-        raise HTTPException(500, "GITHUB_CLIENT_ID 未配置")
+            raise HTTPException(500, "GITHUB_CLIENT_ID 未配置")
     redirect_uri = f"{SITE_URL.rstrip('/')}/auth/callback"
     import secrets as _secrets
     state = _secrets.token_urlsafe(32)
@@ -7808,4 +7865,8 @@ async def api_admin_deletion_log_clear(request: Request, payload: Dict[str, Any]
     else:
         removed = db.clear_all_deletion_logs()
         return {"ok": True, "message": f"已清空 {removed} 条记录"}
+
+# ═══ 邮箱认证模块 ═══
+from email_auth import init_email_auth
+init_email_auth()
 
