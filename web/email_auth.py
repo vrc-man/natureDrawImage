@@ -229,7 +229,7 @@ def init_email_auth():
             codes = _load_invite_codes()
             generated = []
             for _ in range(count):
-                c = secrets.token_hex(6).upper()[:12]
+                c = secrets.token_hex(16).upper()[:16]
                 codes[c] = {"used_count": 0, "max_uses": max_uses, "created_at": time.time()}
                 generated.append(c)
             _save_invite_codes(codes)
@@ -310,7 +310,7 @@ def init_email_auth():
             import traceback as _tb
             _tb.print_exc()
             print(f'[register-email] {type(_e).__name__}: {_e}')
-            raise HTTPException(500, f"服务器内部错误: {type(_e).__name__}")
+            raise HTTPException(500, "服务器内部错误，请稍后重试")
 
 
     @app.get("/api/auth/verify-email")
@@ -336,6 +336,13 @@ def init_email_auth():
         email = str(payload.get("email", "")).strip().lower()
         if not email or "@" not in email:
             return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
+        # 限流：每邮箱5分钟内只能请求一次重置
+        now = time.time()
+        fg_key = f"fg:{email}"
+        attempts = [t for t in _email_rate_addr.get(fg_key, []) if t > now - 300]
+        if attempts:
+            return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
+        _email_rate_addr.setdefault(fg_key, []).append(now)
         email_users = _load_email_users()
         if email not in email_users:
             return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
@@ -362,6 +369,7 @@ def init_email_auth():
 <html lang="zh-CN">
 <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>重置密码</title>
+<meta name="referrer" content="no-referrer" />
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#fef2f4,#fdf2f8,#faf5ff,#fff1f2);font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px}
@@ -438,6 +446,20 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         totp_code = str(payload.get("totp_code", "")).strip()
         if not email or not password:
             raise HTTPException(400, "Email and password required")
+        # 登录限流：每IP每分钟5次，每邮箱每分钟3次
+        from web.app import _client_ip_from_request
+        client_ip = _client_ip_from_request(request)
+        now = time.time()
+        login_key_ip = f"login_ip:{client_ip}"
+        login_key_em = f"login_em:{email}"
+        attempts_ip = [t for t in _email_rate_ip.get(login_key_ip, []) if t > now - 60]
+        attempts_em = [t for t in _email_rate_addr.get(login_key_em, []) if t > now - 60]
+        if len(attempts_ip) >= 5:
+            raise HTTPException(429, "登录尝试过于频繁，请稍后再试")
+        if len(attempts_em) >= 3:
+            raise HTTPException(429, "该邮箱登录尝试过于频繁，请稍后再试")
+        _email_rate_ip.setdefault(login_key_ip, []).append(now)
+        _email_rate_addr.setdefault(login_key_em, []).append(now)
         async with _email_users_lock:
             email_users = _load_email_users()
             eu = email_users.get(email)
@@ -455,8 +477,12 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         from web.app import _load_sessions, _save_sessions, _sessions_lock
         async with _sessions_lock:
             sessions = _load_sessions()
+            # 清理过期和同用户旧会话
+            uid = "email:" + email
+            sessions = {k: v for k, v in sessions.items() if v.get("expires_at", 0) > now}
+            sessions = {k: v for k, v in sessions.items() if str(v.get("github_id", "")) != uid}
             sessions[token] = {
-                "github_id": "email:" + email,
+                "github_id": uid,
                 "expires_at": now + SESSION_MAX_AGE_SEC,
                 "access_granted": False,
                 "claimed_key": "",

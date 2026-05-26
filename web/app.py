@@ -4600,7 +4600,9 @@ def _check_csrf(request: Request) -> bool:
     # 非浏览器客户端通常不发送 Origin/Referer（如 curl、脚本），放行
     # SameSite=Lax Cookie 已在浏览器层面提供 CSRF 防护
     if not origin and not referer:
-        return True
+        if request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return True
+        return False
     # Origin 是最可靠的 CSRF 指标，优先使用
     if origin:
         return origin == site
