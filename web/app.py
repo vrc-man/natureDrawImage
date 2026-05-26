@@ -2911,7 +2911,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
   </div>
 </div>
 <script>
-document.addEventListener('DOMContentLoaded', function() {
+(function() {
   var showLink = document.getElementById('show-email-auth-link');
   if (showLink) showLink.addEventListener('click', function(e) {
     e.preventDefault();
@@ -3000,7 +3000,7 @@ document.addEventListener('DOMContentLoaded', function() {
       s.textContent = d.message;
     } catch(e) { s.textContent = e.message; }
   });
-});
+})();
 </script>
 </body>
 </html>"""
