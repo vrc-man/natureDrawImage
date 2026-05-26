@@ -72,6 +72,16 @@
     <input id="el-totp" type="text" placeholder="两步验证码（未开启请留空）" autocomplete="off" inputmode="numeric" maxlength="6" />
     <button id="btn-login" class="btn btn-login">登录</button>
     <span id="login-status" class="status"></span>
+    <p style="text-align:center;margin-top:6px"><a href="#" id="link-forgot" style="font-size:12px;color:#9ca3af;text-decoration:none">忘记密码？</a></p>
+  </div>
+
+  <!-- 忘记密码面板 -->
+  <div id="panel-forgot" class="form-panel">
+    <p style="text-align:center;color:#6b7280;font-size:13px;margin-bottom:12px">输入注册邮箱，我们将发送重置链接</p>
+    <input id="fg-email" type="email" placeholder="邮箱地址" autocomplete="email" />
+    <button id="btn-forgot" class="btn btn-login">发送重置链接</button>
+    <span id="forgot-status" class="status"></span>
+    <p style="text-align:center;margin-top:8px"><a href="#" id="link-back-to-login" style="font-size:12px;color:#9ca3af;text-decoration:none">← 返回登录</a></p>
   </div>
 
   <!-- 注册表单 -->
@@ -123,6 +133,41 @@ function switchTab(tab) {
 
 tabLogin.addEventListener('click', function() { switchTab('login'); });
 tabRegister.addEventListener('click', function() { switchTab('register'); });
+
+// Forgot password flow
+document.getElementById('link-forgot').addEventListener('click', function(e) {
+  e.preventDefault();
+  document.getElementById('panel-login').classList.remove('active');
+  document.getElementById('panel-forgot').classList.add('active');
+  tabLogin.classList.remove('active');
+  tabRegister.classList.remove('active');
+});
+
+document.getElementById('link-back-to-login').addEventListener('click', function(e) {
+  e.preventDefault();
+  document.getElementById('panel-forgot').classList.remove('active');
+  document.getElementById('panel-login').classList.add('active');
+  tabLogin.classList.add('active');
+});
+
+document.getElementById('btn-forgot').addEventListener('click', async function() {
+  var s = document.getElementById('forgot-status');
+  s.textContent = ''; s.className = 'status';
+  var email = document.getElementById('fg-email').value.trim();
+  if (!email || email.indexOf('@') < 0) {
+    s.textContent = '请输入有效邮箱'; s.className = 'status error'; return;
+  }
+  s.textContent = '发送中...'; s.className = 'status';
+  try {
+    var r = await fetch('/api/auth/forgot-password', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email: email})
+    });
+    var d = await r.json();
+    s.textContent = d.message;
+    s.className = 'status success';
+  } catch(e) { s.textContent = '发送失败，请重试'; s.className = 'status error'; }
+});
 
 // Login
 document.getElementById('btn-login').addEventListener('click', async function() {

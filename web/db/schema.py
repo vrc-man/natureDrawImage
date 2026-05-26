@@ -289,6 +289,15 @@ SCHEMA = [
         created_at  REAL NOT NULL DEFAULT 0
     )
     """,
+
+    # ── 密码重置 ──
+    """
+    CREATE TABLE IF NOT EXISTS password_resets (
+        email       TEXT PRIMARY KEY,
+        token       TEXT NOT NULL DEFAULT '',
+        expires_at  REAL NOT NULL DEFAULT 0
+    )
+    """,
 ]
 
 

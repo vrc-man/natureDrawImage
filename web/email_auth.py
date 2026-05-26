@@ -328,6 +328,109 @@ def init_email_auth():
         return Response("<h3>邮箱验证成功！<a href='/'>返回首页登录</a></h3>", media_type="text/html")
 
 
+    # ── 忘记密码 ──
+    RESET_EXPIRE_SEC = 1800
+
+    @app.post("/api/auth/forgot-password")
+    async def api_forgot_password(request: Request, payload: Dict[str, Any] = {}):
+        email = str(payload.get("email", "")).strip().lower()
+        if not email or "@" not in email:
+            return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
+        email_users = _load_email_users()
+        if email not in email_users:
+            return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
+        token = secrets.token_urlsafe(32)
+        db = get_db()
+        db.execute("INSERT OR REPLACE INTO password_resets VALUES (?,?,?)",
+                   (email, token, time.time() + RESET_EXPIRE_SEC))
+        db.commit()
+        link = f"{SITE_URL}/api/auth/reset-password?token={token}&email={email}"
+        await _send_email(email, f"[{SITE_NAME}] 重置密码",
+            f"<p>您请求重置密码，请点击以下链接：</p><p><a href='{link}'>{link}</a></p><p>链接 30 分钟内有效。如非本人操作请忽略。</p>")
+        return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
+
+    @app.get("/api/auth/reset-password")
+    async def api_reset_password_form(token: str = "", email: str = ""):
+        if not token or not email:
+            return Response("<h3>链接无效</h3>", media_type="text/html")
+        db = get_db()
+        row = db.execute("SELECT * FROM password_resets WHERE email=? AND token=?", (email.lower(), token)).fetchone()
+        if not row or row["expires_at"] < time.time():
+            return Response("<h3>链接已过期或无效</h3>", media_type="text/html")
+        # Simple inline HTML form
+        form_html = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>重置密码</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{min-height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(135deg,#fef2f4,#fdf2f8,#faf5ff,#fff1f2);font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px}
+.card{background:rgba(255,255,255,0.95);border:1px solid rgba(244,114,182,0.12);border-radius:24px;box-shadow:0 4px 30px rgba(244,114,182,0.15);max-width:400px;width:100%;padding:32px 24px}
+h2{text-align:center;color:#1f2937;margin-bottom:16px}
+input{width:100%;padding:10px 14px;border:1px solid #fce7f3;border-radius:14px;font-size:14px;margin-bottom:10px;outline:none}
+input:focus{border-color:#f472b6;box-shadow:0 0 0 3px rgba(244,114,182,0.1)}
+.btn{width:100%;padding:11px;border:0;border-radius:14px;font-size:15px;font-weight:600;cursor:pointer;color:#fff;background:linear-gradient(135deg,#f472b6,#fb7185);box-shadow:0 4px 20px rgba(244,114,182,0.3)}
+.status{font-size:12px;text-align:center;display:block;margin-top:6px;min-height:18px}
+</style></head>
+<body><div class="card">
+<h2>🔑 重置密码</h2>
+<p style="text-align:center;color:#6b7280;font-size:13px;margin-bottom:16px">为 <b>""" + email + """</b> 设置新密码</p>
+<input id="new-pwd" type="password" placeholder="新密码（至少6位）" minlength="6" />
+<input id="confirm-pwd" type="password" placeholder="确认密码" minlength="6" />
+<button class="btn" id="btn-reset">重置密码</button>
+<span id="status" class="status"></span>
+<p style="text-align:center;margin-top:12px;font-size:12px;color:#9ca3af"><a href="/auth/email-login">← 返回登录</a></p>
+</div>
+<script>
+document.getElementById('btn-reset').addEventListener('click', async function() {
+  var s = document.getElementById('status');
+  var p1 = document.getElementById('new-pwd').value;
+  var p2 = document.getElementById('confirm-pwd').value;
+  if (p1.length < 6) { s.textContent = '密码至少6位'; s.style.color = '#ef4444'; return; }
+  if (p1 !== p2) { s.textContent = '两次密码不一致'; s.style.color = '#ef4444'; return; }
+  s.textContent = '...';
+  try {
+    var r = await fetch('/api/auth/reset-password', {
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({token:'""" + token + """',email:'""" + email + """',password:p1})
+    });
+    var d = await r.json();
+    if (r.ok) {
+      s.textContent = d.message;
+      s.style.color = '#16a34a';
+      setTimeout(function(){ location.href = '/auth/email-login'; }, 2000);
+    } else {
+      s.textContent = d.detail || '失败';
+      s.style.color = '#ef4444';
+    }
+  } catch(e) { s.textContent = e.message; s.style.color = '#ef4444'; }
+});
+</script></body></html>"""
+        return Response(form_html, media_type="text/html")
+
+    @app.post("/api/auth/reset-password")
+    async def api_reset_password(request: Request, payload: Dict[str, Any] = {}):
+        email = str(payload.get("email", "")).strip().lower()
+        token = str(payload.get("token", "")).strip()
+        password = str(payload.get("password", "")).strip()
+        if not email or not token or len(password) < 6:
+            raise HTTPException(400, "参数无效")
+        db = get_db()
+        row = db.execute("SELECT * FROM password_resets WHERE email=? AND token=?", (email, token)).fetchone()
+        if not row or row["expires_at"] < time.time():
+            raise HTTPException(400, "链接已过期或无效")
+        async with _email_users_lock:
+            email_users = _load_email_users()
+            eu = email_users.get(email)
+            if not eu:
+                raise HTTPException(404, "用户不存在")
+            eu["password_hash"] = _hash_password(password)
+            _save_email_users(email_users)
+        db.execute("DELETE FROM password_resets WHERE email=?", (email,))
+        db.commit()
+        return {"ok": True, "message": "密码重置成功！即将跳转到登录页"}
+
+
     @app.post("/api/auth/login-email")
     async def api_login_email(request: Request, payload: Dict[str, Any]):
         email = str(payload.get("email", "")).strip().lower()
