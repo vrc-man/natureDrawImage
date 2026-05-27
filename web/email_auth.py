@@ -459,7 +459,7 @@ input:focus{border-color:#f472b6;box-shadow:0 0 0 3px rgba(244,114,182,0.1)}
 </style></head>
 <body><div class="card">
 <h2>🔑 重置密码</h2>
-<p style="text-align:center;color:#6b7280;font-size:13px;margin-bottom:16px">为 <b>""" + email + """</b> 设置新密码</p>
+<p style="text-align:center;color:#6b7280;font-size:13px;margin-bottom:16px"> 设置新密码</p>
 <input id="new-pwd" type="password" placeholder="新密码（至少6位）" minlength="6" />
 <input id="confirm-pwd" type="password" placeholder="确认密码" minlength="6" />
 <button class="btn" id="btn-reset">重置密码</button>
