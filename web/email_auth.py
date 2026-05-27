@@ -868,6 +868,25 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             return {"ok": True, "message": "发送拥堵，请稍后重试。手动验证: " + vu}
 
 
+    @app.post("/api/admin/email-users/reset-totp")
+    async def api_admin_reset_totp(request: Request, payload: Dict[str, Any] = {}):
+        if not getattr(request.state, "is_admin", False):
+            raise HTTPException(403)
+        github_id = str(payload.get("github_id", "")).strip()
+        if not github_id or not github_id.startswith("email:"):
+            raise HTTPException(400, "Invalid github_id")
+        email = github_id[6:]
+        async with _email_users_lock:
+            email_users = _load_email_users()
+            eu = email_users.get(email)
+            if not eu:
+                raise HTTPException(404, "用户不存在")
+            eu["totp_enabled"] = False
+            eu["totp_secret"] = ""
+            _save_email_users(email_users)
+        return {"ok": True, "message": "TOTP 已重置，用户下次登录无需2FA码"}
+
+
     @app.post("/api/admin/email-users/ban")
     async def api_admin_email_user_ban(request: Request, payload: Dict[str, Any] = {}):
         if not getattr(request.state, "is_admin", False):
