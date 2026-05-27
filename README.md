@@ -21,8 +21,9 @@
 ## 与原项目的区别
 | 维度 | 原项目 | 本 Fork |
 |------|--------|---------|
-| 用户认证 | 无，依赖反向代理保护 | GitHub OAuth 登录 + 会话滑动续期 |
-| 管理后台保护 | 仅靠反代鉴权 | 管理员角色校验 + CSRF 保护 |
+| 用户认证 | 无，依赖反向代理保护 | GitHub OAuth + 邮箱注册/登录 + 邀请码 |
+| 两步验证 | 无 | TOTP（Google Authenticator 兼容） |
+| 管理后台保护 | 仅靠反代鉴权 | 管理员角色校验 + CSRF 保护 + 敏感操作二次密码（可选） |
 | 图生图 | 无 | 上传图片自动匹配工作流 |
 | 用户系统 | 无 | 用户角色（admin/user）、封禁、访问密钥 |
 | 个人中心 | 无 | 我的队列、我的作品、删除作品 |
@@ -549,6 +550,36 @@ web/
 
 | `POST /api/admin/force-restart` | 强制重启后端 |
 
+| `POST /api/admin/auth-elevate` | 管理员提权（敏感操作二次密码验证，可选） |
+
+| `GET /api/admin/auth-elevate-status` | 查询提权状态 |
+
+### 邮箱认证
+
+| 路径 | 说明 |
+|---|---|
+| `POST /api/auth/register-email` | 邮箱注册（需 Turnstile + 可选邀请码） |
+| `POST /api/auth/login-email` | 邮箱登录（需 Turnstile，支持 TOTP 两步验证） |
+| `POST /api/auth/forgot-password` | 忘记密码（需 Turnstile，含限流） |
+| `GET /api/auth/reset-password` | 重置密码页面 |
+| `POST /api/auth/reset-password` | 提交新密码 |
+| `GET /api/auth/verify-email` | 邮箱验证 |
+| `GET /api/auth/totp-qrcode` | TOTP 二维码 |
+| `POST /api/auth/totp-setup` | 初始化 TOTP |
+| `POST /api/auth/totp-enable` | 启用 TOTP |
+| `POST /api/auth/totp-disable` | 关闭 TOTP |
+| `GET /api/admin/invite-codes` | 邀请码列表 |
+| `POST /api/admin/invite-codes/generate` | 生成邀请码 |
+| `POST /api/admin/invite-codes/delete` | 删除邀请码 |
+| `GET /api/admin/email-users` | 邮箱用户列表 |
+| `POST /api/admin/email-users/ban` / `unban` | 封禁/解封邮箱用户 |
+| `POST /api/admin/email-users/resend-verify` | 重新发送验证邮件 |
+| `POST /api/admin/email-users/reset-totp` | 重置用户 TOTP |
+| `GET/POST /api/admin/email-config` | 邮箱限流配置 |
+| `GET/POST /api/admin/rate-limits` | 邮箱速率限制 |
+| `GET /api/admin/email-logs` | 邮件发送日志 |
+| `GET /api/admin/email-abuse-ips` | 恶意 IP 列表 |
+
 
 
 ### `/ws/run` 协议
@@ -629,20 +660,22 @@ web/
 
 ## 安全
 
-
-
-- 输出目录浏览只读，路径校验：拒绝绝对路径、拒绝 `..` 段、`Path.is_relative_to()` 校验
-
-- 上传文件流式写入，256KB 分块边写边校验大小（上限 5MB）
-
+- **CSRF 保护**：所有 POST/PUT/DELETE 请求校验 Origin/Referer 头
+- **CSP 内容安全策略**：nonce-based script-src，禁止 inline script
+- **安全响应头**：`X-Frame-Options: DENY`、`X-Content-Type-Options: nosniff`、`HSTS`、`Permissions-Policy`
+- **DEV_MODE 启动保护**：`DEV_MODE=1` 且 `SITE_URL` 已配置时拒绝启动；否则需手动输入 `yes` 确认
+- **管理员二次密码**：可选配置 `ADMIN_ELEVATION_PASSWORD`，敏感操作（删图/封禁/清日志等）需额外验证
+- **密码重置人机验证**：忘记密码需通过 Turnstile，防自动化滥用
+- **密码哈希**：PBKDF2-SHA256 200,000 轮迭代
+- **账户锁定**：邮箱登录 5 次失败锁定 15 分钟
+- 输出目录浏览只读，路径校验：拒绝绝对路径、拒绝 `..` 段、Unicode 规范化防绕过、`Path.is_relative_to()` 校验
+- 上传文件流式写入，256KB 分块边写边校验大小（上限 5MB），PIL 校验文件有效性
+- **SQL 参数化查询**：全量使用 `?` 占位符，无 SQL 注入风险
+- **LLM API Key 加密存储**：Fernet (AES-128-CBC + HMAC-SHA256)
 - `lora_link` 强制 `http://` 或 `https://` 协议
-
 - 所有用户输入 HTML 转义后再渲染
-
-
 - 全局禁止搜索引擎索引（`X-Robots-Tag`、`<meta robots>`、`/robots.txt`）
-
-
+- 图片端点滑动窗口限流、WebSocket 连接数上限、全局发信量限制
 
 ## 常用资源
 

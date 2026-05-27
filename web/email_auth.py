@@ -456,9 +456,14 @@ def init_email_auth():
     @app.post("/api/auth/forgot-password")
     async def api_forgot_password(request: Request, payload: Dict[str, Any] = {}):
         email = str(payload.get("email", "")).strip().lower()
+        turnstile_token = str(payload.get("turnstile_token", "")).strip()
         if not email or "@" not in email:
             return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
-        # 限流：每邮箱5分钟内只能请求一次重置
+        # Turnstile 人机验证（配置了密钥时强制验证，失败不区分原因防枚举）
+        from web.app import _client_ip_from_request
+        if TURNSTILE_SECRET_KEY and not await _verify_turnstile(turnstile_token, _client_ip_from_request(request)):
+            return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
+        # 限流：每邮箱每小时只能请求一次重置
         now = time.time()
         fg_key = f"fg:{email}"
         attempts = [t for t in _email_rate_addr.get(fg_key, []) if t > now - _get_limit("forgot_pw_per_email_per_hour", 3600)]

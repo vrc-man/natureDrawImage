@@ -57,11 +57,43 @@ SITE_URL = os.environ.get("SITE_URL", "")
 # 开发测试模式：设为 "1" 可跳过 GitHub OAuth，使用 /auth/dev_login 测试
 DEV_MODE = os.environ.get("DEV_MODE", "0") == "1"
 if DEV_MODE:
-    import sys as _sys
+    import sys as _sys, time as _tm
     print("\n" + "=" * 60, file=_sys.stderr)
     print("⚠️  [SECURITY] DEV_MODE=1 — CSRF 校验已完全绕过!", file=_sys.stderr)
     print("⚠️  生产环境绝对不可启用，误设将导致严重安全漏洞", file=_sys.stderr)
-    print("=" * 60 + "\n", file=_sys.stderr)
+    print("=" * 60, file=_sys.stderr)
+    # 安全检查：生产环境强制要求显式确认，防止误启用
+    _dev_allow_unsafe = os.environ.get("DEV_MODE_ALLOW_UNSAFE", "0") == "1"
+    _has_site_url = bool(os.environ.get("SITE_URL", "").strip())
+    if _has_site_url and not _dev_allow_unsafe:
+        print("=" * 60, file=_sys.stderr)
+        print("🛑 [FATAL] SITE_URL 已配置 + DEV_MODE=1 → 拒绝启动!", file=_sys.stderr)
+        print("   DEV_MODE 会绕过 CSRF 保护、允许无认证登录。", file=_sys.stderr)
+        print("   如果你确实需要在生产环境测试，请设置环境变量:", file=_sys.stderr)
+        print("   DEV_MODE_ALLOW_UNSAFE=1", file=_sys.stderr)
+        print("=" * 60, file=_sys.stderr)
+        _sys.exit(1)
+    # 倒计时：给操作者 5 秒确认是否继续
+    # 必须输入 'yes' 确认后才继续启动
+    print("", file=_sys.stderr)
+    try:
+        _answer = input("输入 yes 确认启动 DEV_MODE，其他任意内容退出: ").strip().lower()
+        if _answer != "yes":
+            print(f"输入为 '{_answer}'，已取消启动", file=_sys.stderr)
+            _sys.exit(1)
+        print("已确认，继续启动\n", file=_sys.stderr)
+    except EOFError:
+        print("未检测到交互输入，已取消启动（可通过管道传入 yes 或设置 DEV_MODE_ALLOW_UNSAFE=1 绕过）", file=_sys.stderr)
+        _sys.exit(1)
+    except KeyboardInterrupt:
+        print("\n已取消启动", file=_sys.stderr)
+        _sys.exit(1)
+
+# 管理员提权密码（敏感操作二次验证）
+# 设置为空字符串则跳过二次验证（向后兼容）
+# 密码格式同邮箱登录：PBKDF2-SHA256 salt:hash
+_ADMIN_ELEVATION_PW = os.environ.get("ADMIN_ELEVATION_PASSWORD", "")
+_ADMIN_ELEVATION_TTL = 1800  # 提权有效期 30 分钟
 # ===================================
 
 import asyncio
@@ -1445,6 +1477,13 @@ async def _auth_middleware(request: Request, call_next):
         if user.get("role") != "admin":
             return Response(
                 content='{"error":"找不到页面？请核对正确地址后重试！","code":"ADMIN_ONLY"}',
+                status_code=403,
+                media_type="application/json",
+            )
+        # 敏感操作二次验证（auth-elevate 本身 + config 类 GET 除外）
+        if _is_sensitive_admin_path(path) and not _is_admin_elevated(request):
+            return Response(
+                content='{"error":"敏感操作需要二次验证","code":"ELEVATION_REQUIRED"}',
                 status_code=403,
                 media_type="application/json",
             )
@@ -3060,15 +3099,6 @@ async def email_login_page(request: Request):
     return resp
 
 
-@app.get("/auth/email-login")
-async def email_login_page(request: Request):
-    """邮箱登录/注册专用页面"""
-    html_path = STATIC_DIR / "email-login.html"
-    resp = Response(content=html_path.read_text(encoding="utf-8"), media_type="text/html")
-    resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'self' https://challenges.cloudflare.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
-    return resp
-
-
 @app.get("/auth/login")
 async def auth_login(request: Request):
     """重定向到 GitHub OAuth 授权页。开发模式返回简易登录表单。"""
@@ -4180,6 +4210,47 @@ async def api_interrupt(request: Request):
         raise HTTPException(500, "中断任务失败，请稍后重试")
 
 
+@app.post("/api/admin/auth-elevate")
+async def api_admin_auth_elevate(request: Request, payload: Dict[str, Any]):
+    """管理员提权：输入二次密码获得敏感操作权限（有效期 15 分钟）。未配置 ADMIN_ELEVATION_PASSWORD 时总是成功。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
+    if not _ADMIN_ELEVATION_PW:
+        return {"ok": True, "message": "未配置二次验证密码，无需提权"}
+    password = str(payload.get("password", "")).strip()
+    if not password:
+        raise HTTPException(400, "请输入提权密码")
+    if not _verify_elevation_password(password):
+        raise HTTPException(403, "提权密码错误")
+    token = request.cookies.get("session") or ""
+    if token:
+        async with _sessions_lock:
+            sessions = _load_sessions()
+            sess = sessions.get(token)
+            if sess:
+                sess["_elevated_at"] = _time_module.time()
+                await _save_sessions(sessions)
+    return {"ok": True, "message": f"提权成功，有效期 {_ADMIN_ELEVATION_TTL // 60} 分钟"}
+
+
+@app.get("/api/admin/auth-elevate-status")
+async def api_admin_auth_elevate_status(request: Request):
+    """查询当前管理员是否已提权。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
+    if not _ADMIN_ELEVATION_PW:
+        return {"required": False, "elevated": True}
+    elevated = _is_admin_elevated(request)
+    remaining = 0
+    if elevated:
+        token = request.cookies.get("session") or ""
+        sessions = _load_sessions()
+        sess = sessions.get(token, {})
+        et = sess.get("_elevated_at", 0)
+        remaining = max(0, int(_ADMIN_ELEVATION_TTL - (_time_module.time() - et)))
+    return {"required": True, "elevated": elevated, "remaining_sec": remaining}
+
+
 @app.post("/api/admin/force-restart")
 async def api_admin_force_restart(request: Request):
     """安全重启：中断当前任务 → 等待 SQLite 刷盘 → 退出进程。"""
@@ -4601,6 +4672,57 @@ def _check_csrf(request: Request) -> bool:
         ref_origin = referer[:referer.index("/", referer.index("://") + 3)]
         return ref_origin == site
     return False
+
+
+# ---------------- 管理员提权（敏感操作二次验证） ----------------
+
+def _verify_elevation_password(password: str) -> bool:
+    """验证管理员提权密码。未配置则返回 True（向后兼容）。"""
+    stored = _ADMIN_ELEVATION_PW
+    if not stored:
+        return True  # 未配置时跳过二次验证
+    try:
+        salt, h = stored.split(":", 1)
+        return h == hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200000).hex()
+    except Exception:
+        return False
+
+
+_elevation_lock = asyncio.Lock()
+
+
+def _is_admin_elevated(request: Request) -> bool:
+    """检查当前管理员 session 是否已提权（15 分钟内有效）。"""
+    if not _ADMIN_ELEVATION_PW:
+        return True  # 未配置时跳过
+    token = request.cookies.get("session") or ""
+    if not token:
+        return False
+    sessions = _load_sessions()
+    sess = sessions.get(token)
+    if not sess:
+        return False
+    elevated_at = sess.get("_elevated_at", 0)
+    return elevated_at > 0 and (_time_module.time() - elevated_at) < _ADMIN_ELEVATION_TTL
+
+
+_SENSITIVE_ADMIN_PATHS = (
+    "/api/admin/users/ban",
+    "/api/admin/users/unban",
+    "/api/admin/users/set_role",
+    "/api/admin/ban",
+    "/api/admin/unban",
+    "/api/admin/delete",
+    "/api/admin/delete_batch",
+    "/api/admin/access-keys/generate",
+    "/api/admin/access-keys/delete",
+    "/api/admin/force-restart",
+    "/api/admin/deletion-log/clear",
+)
+
+
+def _is_sensitive_admin_path(path: str) -> bool:
+    return any(path.startswith(p) for p in _SENSITIVE_ADMIN_PATHS)
 
 
 def _ws_check_origin(headers, *, require_origin: bool = False) -> bool:

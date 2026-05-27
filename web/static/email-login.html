@@ -86,6 +86,7 @@
   <div id="panel-forgot" class="form-panel">
     <p style="text-align:center;color:#6b7280;font-size:13px;margin-bottom:12px">输入注册邮箱，我们将发送重置链接</p>
     <input id="fg-email" type="email" placeholder="邮箱地址" autocomplete="email" />
+    <div id="turnstile-forgot-container" style="margin-bottom:10px;min-height:65px"></div>
     <button id="btn-forgot" class="btn btn-login">发送重置链接</button>
     <span id="forgot-status" class="status"></span>
     <p style="text-align:center;margin-top:8px"><a href="#" id="link-back-to-login" style="font-size:12px;color:#9ca3af;text-decoration:none">← 返回登录</a></p>
@@ -172,6 +173,13 @@ document.getElementById('link-forgot').addEventListener('click', function(e) {
   document.getElementById('panel-forgot').classList.add('active');
   tabLogin.classList.remove('active');
   tabRegister.classList.remove('active');
+  // 延迟渲染 Turnstile（等 DOM 可见后）
+  setTimeout(function() {
+    var fc = document.getElementById('turnstile-forgot-container');
+    if (fc && typeof turnstile !== 'undefined' && !fc.hasChildNodes()) {
+      try { turnstile.render('#turnstile-forgot-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU', theme: 'light' }); } catch(e) {}
+    }
+  }, 200);
 });
 
 document.getElementById('link-back-to-login').addEventListener('click', function(e) {
@@ -194,7 +202,10 @@ document.getElementById('btn-forgot').addEventListener('click', async function()
   try {
     var r = await fetch('/api/auth/forgot-password', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({email: email})
+      body:JSON.stringify({
+        email: email,
+        turnstile_token: (typeof turnstile !== 'undefined' ? turnstile.getResponse('#turnstile-forgot-container') || '' : '')
+      })
     });
     var d = await r.json();
     s.textContent = d.message;
