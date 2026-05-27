@@ -322,6 +322,9 @@ def init_email_auth():
             eu = email_users.get(email.lower())
             if not eu or eu.get("verify_token") != token:
                 return Response("<h3>链接无效或已过期</h3>", media_type="text/html")
+            # 检查验证令牌是否超过24小时（created_at + 86400）
+            if time.time() - eu.get("created_at", 0) > 86400:
+                return Response("<h3>验证链接已过期，请重新注册</h3>", media_type="text/html")
             eu["verified"] = True
             eu["verify_token"] = ""
             _save_email_users(email_users)
@@ -342,7 +345,6 @@ def init_email_auth():
         attempts = [t for t in _email_rate_addr.get(fg_key, []) if t > now - 300]
         if attempts:
             return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
-        _email_rate_addr.setdefault(fg_key, []).append(now)
         email_users = _load_email_users()
         if email not in email_users:
             return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
@@ -351,6 +353,7 @@ def init_email_auth():
         db.execute("INSERT OR REPLACE INTO password_resets VALUES (?,?,?)",
                    (email, token, time.time() + RESET_EXPIRE_SEC))
         db.commit()
+        _email_rate_addr.setdefault(fg_key, []).append(now)
         link = f"{SITE_URL}/api/auth/reset-password?token={token}&email={email}"
         await _send_email(email, f"[{SITE_NAME}] 重置密码",
             f"<p>您请求重置密码，请点击以下链接：</p><p><a href='{link}'>{link}</a></p><p>链接 30 分钟内有效。如非本人操作请忽略。</p>")
@@ -434,8 +437,8 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
                 raise HTTPException(404, "用户不存在")
             eu["password_hash"] = _hash_password(password)
             _save_email_users(email_users)
-        db.execute("DELETE FROM password_resets WHERE email=?", (email,))
-        db.commit()
+            db.execute("DELETE FROM password_resets WHERE email=?", (email,))
+            db.commit()
         return {"ok": True, "message": "密码重置成功！即将跳转到登录页"}
 
 
@@ -463,15 +466,15 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         async with _email_users_lock:
             email_users = _load_email_users()
             eu = email_users.get(email)
-        if not eu or not _verify_password(password, eu["password_hash"]):
-            raise HTTPException(401, "Invalid credentials")
-        if not eu.get("verified"):
-            raise HTTPException(401, "Email not verified")
-        if eu.get("banned"):
-            raise HTTPException(403, "Banned")
-        if eu.get("totp_enabled"):
-            if not totp_code or not _verify_totp(eu["totp_secret"], totp_code):
-                raise HTTPException(401, "Invalid TOTP code")
+            if not eu or not _verify_password(password, eu["password_hash"]):
+                raise HTTPException(401, "Invalid credentials")
+            if not eu.get("verified"):
+                raise HTTPException(401, "Email not verified")
+            if eu.get("banned"):
+                raise HTTPException(403, "Banned")
+            if eu.get("totp_enabled"):
+                if not totp_code or not _verify_totp(eu["totp_secret"], totp_code):
+                    raise HTTPException(401, "Invalid TOTP code")
         token = secrets.token_urlsafe(32)
         now = time.time()
         from web.app import _load_sessions, _save_sessions, _sessions_lock
@@ -663,10 +666,8 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         if now > sess.get("expires_at", 0):
             return None
         uid = str(sess.get("github_id", ""))
-        print(f'[email_auth] session uid={uid}')
         if uid.startswith("email:"):
             eu = get_email_user(uid)
-            print(f'[email_auth] email user found: {eu is not None}')
             return eu
         return None
 
