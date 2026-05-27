@@ -98,11 +98,13 @@ def _load_email_users() -> dict:
 def _save_email_users(data: dict):
     db = get_db()
     for email, eu in data.items():
-        db.execute("""INSERT OR REPLACE INTO email_users VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        db.execute("""INSERT OR REPLACE INTO email_users VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                    (email, eu.get("password_hash", ""), eu.get("role", "user"),
                     eu.get("banned", 0), eu.get("banned_reason", ""), eu.get("created_at", 0),
                     eu.get("verified", 0), eu.get("verify_token", ""),
-                    eu.get("totp_secret", ""), eu.get("totp_enabled", 0)))
+                    eu.get("totp_secret", ""), eu.get("totp_enabled", 0),
+                    eu.get("login_fails", 0), eu.get("login_fail_time", 0),
+                    eu.get("invite_code", "")))
     db.commit()
 
 def _hash_password(password: str) -> str:
