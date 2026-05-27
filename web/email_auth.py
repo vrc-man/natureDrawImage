@@ -318,7 +318,7 @@ def init_email_auth():
                 if mail_ok:
                     return {"ok": True, "message": "注册成功！请查收验证邮件并点击链接激活账号。"}
                 else:
-                    return {"ok": True, "message": "注册成功！验证邮件发送失败，手动验证链接: " + vu}
+                    return {"ok": True, "message": "注册成功！邮件发送拥堵，请稍后重试。或手动访问验证链接: " + vu}
         except HTTPException:
             raise
         except Exception as _e:
