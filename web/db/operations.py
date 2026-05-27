@@ -250,6 +250,10 @@ def save_gen_log(github_id: str, login: str, prompt: str, workflow: str,
     _db().commit()
 
 
+def load_gen_logs_raw():
+    """Return all gen_logs rows as list of dicts (for fallback lookups)."""
+    return [dict(r) for r in _db().execute("SELECT * FROM gen_logs ORDER BY created_at DESC").fetchall()]
+
 def clean_gen_logs_by_file_paths(deleted_paths: set) -> int:
     """删除所有 file_paths 已全部被删的日志。"""
     all_logs = _db().execute("SELECT log_id, file_paths FROM gen_logs").fetchall()

@@ -3668,7 +3668,7 @@ def _extract_positive_from_prompt_json(prompt_json: Dict[str, Any]) -> str:
 
 
 def _lookup_image_github_user(rel_path: str) -> Optional[Dict[str, str]]:
-    """根据图片相对路径反查 GitHub 用户信息（遍历 user_images.json）。"""
+    """根据图片相对路径查找 GitHub 用户信息"""
     data = _load_user_images()
     users = _load_users()
     for github_id, items in data.items():
@@ -3680,63 +3680,24 @@ def _lookup_image_github_user(rel_path: str) -> Optional[Dict[str, str]]:
                     "login": u.get("login", ""),
                     "email": u.get("email", ""),
                 }
-    return None
-
-
-@app.get("/api/output/creator")
-async def api_output_creator(path: str, request: Request):
-    """读取该图片的生图者 IP 和 GitHub 用户信息。仅管理员可用。"""
-    if not getattr(request.state, "is_admin", False):
-        raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
-    p = _resolve_output_path(path)
-    if not p.is_file():
-        raise HTTPException(404, "not found")
-    rel = str(p.relative_to(OUTPUT_DIR.resolve())).replace("\\", "/")
-    result: Dict[str, Any] = {"creator_ip": _creator_map_get(_creator_key(p))}
-    gh_user = _lookup_image_github_user(rel)
-    if gh_user:
-        result["github_id"] = gh_user["github_id"]
-        result["github_login"] = gh_user["login"]
-        result["github_email"] = gh_user["email"]
-    return result
-
-
-@app.get("/api/output/meta")
-async def api_output_meta(path: str, request: Request):
-    """读取图片元数据（目前主要支持 PNG），返回正向 prompt（若可识别）。仅管理员可用。"""
-    if not getattr(request.state, "is_admin", False):
-        raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
-    p = _resolve_output_path(path)
-    if not p.is_file():
-        raise HTTPException(404, "not found")
-    if p.suffix.lower() != ".png":
-        return {"path": path, "positive": "", "supported": False}
+    # Fallback: search gen_logs by file_paths
     try:
-        from PIL import Image  # 延迟导入
-        im = Image.open(p)
-        info = im.info or {}
+        logs = db.load_gen_logs_raw()
+        for log in logs:
+            fps = log.get("file_paths")
+            if fps:
+                if isinstance(fps, str):
+                    import json as _j
+                    fps = _j.loads(fps)
+                if rel_path in fps:
+                    return {
+                        "github_id": str(log.get("github_id", "")),
+                        "login": log.get("login", ""),
+                        "email": "",
+                    }
     except Exception:
-        return {"path": path, "positive": "", "supported": False}
-
-    positive = ""
-    raw_prompt = info.get("prompt")
-    if isinstance(raw_prompt, str):
-        try:
-            pj = json.loads(raw_prompt)
-            positive = _extract_positive_from_prompt_json(pj)
-        except Exception:
-            pass
-    # A1111 webui 风格兜底
-    if not positive:
-        params = info.get("parameters")
-        if isinstance(params, str) and params.strip():
-            # A1111: 第一段直到 "Negative prompt:" 之前
-            head = params.split("Negative prompt:", 1)[0].strip()
-            head = head.split("Steps:", 1)[0].strip()
-            positive = head
-    return {"path": path, "positive": positive, "supported": True}
-
-
+        pass
+    return None
 def _read_png_text_chunk(path: Path, key: str) -> str:
     """直接扫描 PNG 的 tEXt / zTXt / iTXt chunk，返回指定 key 的文本。
     不受 Pillow MAX_TEXT_CHUNK 限制；适合读 ComfyUI 写入的大 workflow。
