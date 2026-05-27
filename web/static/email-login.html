@@ -236,7 +236,7 @@ document.getElementById('btn-register').addEventListener('click', async function
     s.className = 'status success';
     // Switch to login tab after successful registration
     setTimeout(function() { switchTab('login'); }, 2000);
-  } catch(e) { s.textContent = e.message; s.className = 'status error'; }
+  } catch(e) { s.textContent = e.message; s.className = 'status error'; btn.disabled = false; }
 });
 </script>
 </body>
