@@ -266,7 +266,7 @@ def _save_user_images_to_db(data):
                     (gid, e.get("path", ""), e.get("prompt", ""), e.get("time", 0)))
         db._db().commit()
     except Exception as _se:
-        print(f'[_save_sessions] ERROR: {type(_se).__name__}: {_se}')
+        print(f'[_save_users] ERROR: {type(_se).__name__}: {_se}')
         import traceback as _stb
         _stb.print_exc()
 def _load_json(path: Path) -> dict:
@@ -286,7 +286,7 @@ def save_user_images_bulk(data):
                 db._db().execute("INSERT INTO user_images (github_id,path,prompt,time) VALUES (?,?,?,?)", (gid, e.get("path",""), e.get("prompt",""), e.get("time",0)))
         db._db().commit()
     except Exception as _se:
-        print(f'[_save_sessions] ERROR: {type(_se).__name__}: {_se}')
+        print(f'[_save_users] ERROR: {type(_se).__name__}: {_se}')
         import traceback as _stb
         _stb.print_exc()
 
@@ -300,7 +300,7 @@ async def _save_users(users: dict) -> None:
             db.save_user(gid, u.get("login",""), u.get("email",""), u.get("avatar_url",""), u.get("role","user"))
         db._db().commit()
     except Exception as _se:
-        print(f'[_save_sessions] ERROR: {type(_se).__name__}: {_se}')
+        print(f'[_save_users] ERROR: {type(_se).__name__}: {_se}')
         import traceback as _stb
         _stb.print_exc()
 
@@ -315,7 +315,7 @@ async def _save_sessions(sessions: dict) -> None:
                 (token, s.get("github_id",""), s.get("expires_at",0), s.get("access_granted",0), s.get("claimed_key","")))
         db._db().commit()
     except Exception as _se:
-        print(f'[_save_sessions] ERROR: {type(_se).__name__}: {_se}')
+        print(f'[_save_users] ERROR: {type(_se).__name__}: {_se}')
         import traceback as _stb
         _stb.print_exc()
 
@@ -5768,22 +5768,6 @@ async def admin_page(request: Request):
 async def api_admin_whoami(request: Request):
     user = _get_user_from_session(request)
     if user:
-        # 检查密钥状态（用于前端提示）
-        key_status = "none"  # none / valid / expired
-        if not access_granted and user.get("role") != "admin":
-            uid = str(user.get("github_id", ""))
-            akeys = _load_access_keys()
-            for v in akeys.get("keys", {}).values():
-                if str(v.get("used_by", "")) == uid:
-                    now3 = _time_module.time()
-                    da = v.get("disabled_at", 0)
-                    ea = v.get("expires_at", 0)
-                    mu = v.get("max_uses", 0)
-                    uc = v.get("used_count", 0)
-                    if (da and now3 > da + 2) or (ea and now3 > ea + 60) or (mu > 0 and uc >= mu):
-                        key_status = "expired"
-                    break
-
         return {
             "login": user.get("login"),
             "email": user.get("email"),
