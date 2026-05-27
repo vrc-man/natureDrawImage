@@ -126,6 +126,13 @@ def _smtp_send(msg):
 async def _send_email(to: str, subject: str, body: str) -> bool:
     if not SMTP_USER or not SMTP_PASS:
         return False
+    # 全局每日发信上限
+    now = time.time()
+    global _email_sent_today
+    _email_sent_today = [t for t in _email_sent_today if t > now - 86400]
+    if len(_email_sent_today) >= EMAIL_GLOBAL_DAILY_LIMIT:
+        print(f'[email] 全局发信已达每日上限({EMAIL_GLOBAL_DAILY_LIMIT})')
+        return False
     msg = MIMEText(body, "html", "utf-8")
     msg["From"] = SMTP_USER
     msg["To"] = to
@@ -133,6 +140,7 @@ async def _send_email(to: str, subject: str, body: str) -> bool:
     try:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, lambda: _smtp_send(msg))
+        _email_sent_today.append(time.time())
         return True
     except Exception as e:
         print(f"[email] {e}")
@@ -160,6 +168,8 @@ def get_email_user(session_uid: str) -> Optional[dict]:
 # ═══ 限流 & Turnstile ═══
 _email_rate_ip: Dict[str, list] = {}
 _email_rate_addr: Dict[str, list] = {}
+EMAIL_GLOBAL_DAILY_LIMIT = int(os.environ.get('EMAIL_GLOBAL_DAILY_LIMIT', '250'))
+_email_sent_today: list = []  # 全局发信时间戳
 
 def _check_rate_limit(ip: str, email: str) -> Optional[str]:
     now = time.time()
