@@ -55,6 +55,9 @@
   .back-link { display: block; text-align: center; margin-top: 16px; font-size: 13px; color: #9ca3af; text-decoration: none; }
   .back-link:hover { color: #f472b6; }
   #turnstile-container { margin-bottom: 10px; min-height: 65px; }
+.pw-wrap { position: relative; }
+.pw-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 16px; user-select: none; color: #9ca3af; background: none; border: none; }
+.pw-toggle:hover { color: #f472b6; }
 </style>
 </head>
 <body>
@@ -68,7 +71,10 @@
   <!-- 登录表单 -->
   <div id="panel-login" class="form-panel active">
     <input id="el-email" type="email" placeholder="邮箱地址" autocomplete="email" />
-    <input id="el-pwd" type="password" placeholder="密码" autocomplete="current-password" />
+    <div class="pw-wrap">
+    <input id="el-pwd" type="password" placeholder="密码" autocomplete="current-password" style="padding-right:36px" />
+    <button type="button" class="pw-toggle" onclick="var i=document.getElementById('el-pwd');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'">👁</button>
+    </div>
     <input id="el-totp" type="text" placeholder="两步验证码（未开启请留空）" autocomplete="off" inputmode="numeric" maxlength="6" />
     <div id="turnstile-login-container" style="margin-bottom:10px;min-height:65px"></div>
     <button id="btn-login" class="btn btn-login">登录</button>
@@ -88,8 +94,14 @@
   <!-- 注册表单 -->
   <div id="panel-register" class="form-panel">
     <input id="er-email" type="email" placeholder="邮箱地址" autocomplete="email" />
-    <input id="er-pwd" type="password" placeholder="密码（至少6位）" autocomplete="new-password" />
-    <input id="er-pwd2" type="password" placeholder="确认密码" autocomplete="new-password" />
+    <div class="pw-wrap">
+    <input id="er-pwd" type="password" placeholder="密码（至少6位）" autocomplete="new-password" style="padding-right:36px" />
+    <button type="button" class="pw-toggle" onclick="var i=document.getElementById('er-pwd');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'">👁</button>
+    </div>
+    <div class="pw-wrap">
+    <input id="er-pwd2" type="password" placeholder="确认密码" autocomplete="new-password" style="padding-right:36px" />
+    <button type="button" class="pw-toggle" onclick="var i=document.getElementById('er-pwd2');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'">👁</button>
+    </div>
     <input id="er-code" type="text" placeholder="邀请码（可选，有码无需邮箱验证）" autocomplete="off" />
     <div id="turnstile-container"></div>
     <button id="btn-register" class="btn btn-register">注册</button>
