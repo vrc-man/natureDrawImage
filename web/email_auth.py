@@ -124,7 +124,7 @@ def _generate_totp_secret() -> str:
 
 def _verify_totp(secret: str, code: str) -> bool:
     try:
-        key = base64.b32decode(secret.upper() + "=" * (8 - len(secret) % 8))
+        key = base64.b32decode(secret.upper() + "=" * ((8 - len(secret) % 8) % 8))
         now = int(time.time()) // 30
         for offset in (-1, 0, 1):
             msg = _struct.pack(">Q", now + offset)
