@@ -225,7 +225,7 @@ async def _verify_turnstile(token: str, remote_ip: str = "") -> bool:
 _verify_retry: Dict[str, dict] = {}
 _verify_abuse_ips: set = set()
 MAX_VERIFY_RETRIES = 3
-VERIFY_ABUSE_THRESHOLD = 5
+VERIFY_ABUSE_THRESHOLD = 3
 
 async def _retry_verify_loop():
     while True:
