@@ -249,7 +249,7 @@ async def _retry_verify_loop():
                     continue
                 vu = f"{SITE_URL}/api/auth/verify-email?token={eu['verify_token']}&email={email}"
                 ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
-                    f"<p>请点击链接验证邮箱：</p><p><a href='{vu}'>{vu}</a></p>")
+                    _email_html("邮箱验证", "<p style='font-size:14px;line-height:1.8'>感谢注册！</p><div style='text-align:center;margin:20px 0'><a href='" + vu + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>验证邮箱</a></div><p style='font-size:12px;color:#9ca3af'>24小时内有效，非本人操作请忽略。</p>"))
                 if ok:
                     _verify_retry.pop(email, None)
                 else:
@@ -261,6 +261,13 @@ async def _retry_verify_loop():
                         info["next_retry_at"] = now + intervals[min(info["retry_count"], 2)]
         except Exception:
             pass
+
+
+def _email_html(title: str, body: str) -> str:
+    top = "<div style='max-width:480px;margin:0 auto;font-family:sans-serif;color:#374151'><div style='background:linear-gradient(135deg,#f472b6,#fb7185);padding:24px;text-align:center;border-radius:16px 16px 0 0'><h1 style='color:#fff;font-size:20px;margin:0'>" + SITE_NAME + "</h1><p style='color:rgba(255,255,255,.85);font-size:13px;margin:6px 0 0'>" + title + "</p></div>"
+    mid = "<div style='background:#fff;padding:24px;border:1px solid #fce7f3;border-top:0;border-radius:0 0 16px 16px'>" + body + "</div>"
+    end = "<div style='text-align:center;padding:16px;font-size:11px;color:#9ca3af'><p>系统自动发送，请勿回复</p></div></div>"
+    return top + mid + end
 
 def init_email_auth():
     """注册 email auth 路由（在 app 创建后调用）"""
@@ -356,7 +363,7 @@ def init_email_auth():
             else:
                 vu = f"{SITE_URL}/api/auth/verify-email?token={verify_token}&email={email}"
                 mail_ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
-                    f"<p>感谢注册！请点击以下链接验证邮箱：</p><p><a href='{vu}'>{vu}</a></p>")
+                    _email_html("邮箱验证", "<p style='font-size:14px;line-height:1.8'>感谢注册！</p><div style='text-align:center;margin:20px 0'><a href='" + vu + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>验证邮箱</a></div><p style='font-size:12px;color:#9ca3af'>24小时内有效，非本人操作请忽略。</p>"))
                 if mail_ok:
                     return {"ok": True, "message": "注册成功！请查收验证邮件并点击链接激活账号。"}
                 else:
@@ -422,7 +429,7 @@ def init_email_auth():
         _email_rate_addr.setdefault(fg_key, []).append(now)
         link = f"{SITE_URL}/api/auth/reset-password?token={token}&email={email}"
         await _send_email(email, f"[{SITE_NAME}] 重置密码",
-            f"<p>您请求重置密码，请点击以下链接：</p><p><a href='{link}'>{link}</a></p><p>链接 30 分钟内有效。如非本人操作请忽略。</p>")
+            _email_html("密码重置", "<p style='font-size:14px;line-height:1.8'>您请求重置密码。</p><div style='text-align:center;margin:20px 0'><a href='" + link + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>重置密码</a></div><p style='font-size:12px;color:#9ca3af'>30分钟内有效，非本人操作请忽略。</p>"))
         return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
 
     @app.get("/api/auth/reset-password")
@@ -715,7 +722,7 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             _save_email_users(email_users)
         vu = f"{SITE_URL}/api/auth/verify-email?token={eu['verify_token']}&email={email}"
         mail_ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
-            f"<p>请点击以下链接验证邮箱：</p><p><a href='{vu}'>{vu}</a></p>")
+            _email_html("邮箱验证", "<p style='font-size:14px;line-height:1.8'>管理员为您重新发送了验证邮件。</p><div style='text-align:center;margin:20px 0'><a href='" + vu + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>验证邮箱</a></div><p style='font-size:12px;color:#9ca3af'>24小时内有效，非本人操作请忽略。</p>"))
         if mail_ok:
             return {"ok": True, "message": "验证邮件已重新发送"}
         else:
