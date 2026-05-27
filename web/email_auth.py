@@ -711,6 +711,48 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
 
     # ── 管理员：限流配置 ──
 
+    @app.get("/api/admin/rate-limits")
+    async def api_admin_rate_limits(request: Request):
+        if not getattr(request.state, "is_admin", False):
+            raise HTTPException(403)
+        return _load_rate_limits()
+
+    @app.post("/api/admin/rate-limits")
+    async def api_admin_rate_limits_save(request: Request, payload: Dict[str, Any] = {}):
+        if not getattr(request.state, "is_admin", False):
+            raise HTTPException(403)
+        limits = _load_rate_limits()
+        for k, v in payload.items():
+            if k in limits:
+                limits[k] = type(limits[k])(v)
+        tmp = RATE_LIMITS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(_json.dumps(limits, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(RATE_LIMITS_FILE)
+        return {"ok": True}
+
+    @app.get("/api/admin/email-logs")
+    async def api_admin_email_logs(request: Request, limit: int = 50):
+        if not getattr(request.state, "is_admin", False):
+            raise HTTPException(403)
+        db = get_db()
+        rows = db.execute("SELECT * FROM email_logs ORDER BY id DESC LIMIT ?", (min(limit, 200),)).fetchall()
+        return {"logs": [dict(r) for r in rows]}
+
+    @app.post("/api/admin/email-logs/clear")
+    async def api_admin_email_logs_clear(request: Request, payload: Dict[str, Any] = {}):
+        if not getattr(request.state, "is_admin", False):
+            raise HTTPException(403)
+        db = get_db()
+        ids = payload.get("ids")
+        if ids and isinstance(ids, list) and len(ids) > 0:
+            placeholders = ",".join(["?"] * len(ids))
+            db.execute(f"DELETE FROM email_logs WHERE id IN ({placeholders})", ids)
+        else:
+            db.execute("DELETE FROM email_logs")
+        db.commit()
+        return {"ok": True}
+
+
     @app.get("/api/admin/email-config")
     async def api_admin_email_config(request: Request):
         if not getattr(request.state, "is_admin", False):
