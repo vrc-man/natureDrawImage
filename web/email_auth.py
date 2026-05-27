@@ -654,6 +654,26 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
                 _set_email_config(key, str(int(payload[key])))
         return {"ok": True}
 
+    # ── 管理员：恶意IP管理 ──
+
+    @app.get("/api/admin/email-abuse-ips")
+    async def api_admin_abuse_ips(request: Request):
+        if not getattr(request.state, "is_admin", False):
+            raise HTTPException(403)
+        return {"ips": list(_verify_abuse_ips)}
+
+    @app.post("/api/admin/email-abuse-ips/clear")
+    async def api_admin_abuse_ips_clear(request: Request, payload: Dict[str, Any] = {}):
+        if not getattr(request.state, "is_admin", False):
+            raise HTTPException(403)
+        ip = str(payload.get("ip", "")).strip()
+        if ip:
+            _verify_abuse_ips.discard(ip)
+            return {"ok": True, "message": f"已移除 {ip}"}
+        _verify_abuse_ips.clear()
+        return {"ok": True, "message": "已清空全部恶意IP"}
+
+
     # ── 管理员：邮箱用户管理 ──
 
     @app.get("/api/admin/email-users")
