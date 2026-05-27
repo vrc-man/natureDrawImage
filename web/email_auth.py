@@ -521,8 +521,14 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         email = str(payload.get("email", "")).strip().lower()
         password = str(payload.get("password", "")).strip()
         totp_code = str(payload.get("totp_code", "")).strip()
+        turnstile_token = str(payload.get("turnstile_token", "")).strip()
         if not email or not password:
             raise HTTPException(400, "Email and password required")
+        # Turnstile 可选校验（前端有widget时验证，无widget时不验证）
+        if turnstile_token:
+            from web.app import _client_ip_from_request
+            if not await _verify_turnstile(turnstile_token, _client_ip_from_request(request)):
+                raise HTTPException(400, "人机验证失败，请重试")
         # 登录限流：每IP每分钟5次，每邮箱每分钟3次
         from web.app import _client_ip_from_request
         client_ip = _client_ip_from_request(request)

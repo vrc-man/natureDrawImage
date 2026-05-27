@@ -70,6 +70,7 @@
     <input id="el-email" type="email" placeholder="邮箱地址" autocomplete="email" />
     <input id="el-pwd" type="password" placeholder="密码" autocomplete="current-password" />
     <input id="el-totp" type="text" placeholder="两步验证码（未开启请留空）" autocomplete="off" inputmode="numeric" maxlength="6" />
+    <div id="turnstile-login-container" style="margin-bottom:10px;min-height:65px"></div>
     <button id="btn-login" class="btn btn-login">登录</button>
     <span id="login-status" class="status"></span>
     <p style="text-align:center;margin-top:6px"><a href="#" id="link-forgot" style="font-size:12px;color:#9ca3af;text-decoration:none">忘记密码？</a></p>
@@ -111,6 +112,14 @@ function switchTab(tab) {
     tabLogin.classList.add('active'); tabRegister.classList.remove('active');
     panelLogin.classList.add('active'); panelRegister.classList.remove('active');
     if (turnstileWidget) { turnstile.reset(turnstileWidget); }
+    // Render login Turnstile
+    var lc = document.getElementById('turnstile-login-container');
+    if (lc && typeof turnstile !== 'undefined') {
+      setTimeout(function() {
+        lc.innerHTML = '';
+        try { turnstile.render('#turnstile-login-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU', theme: 'light' }); } catch(e) {}
+      }, 100);
+    }
   } else {
     tabRegister.classList.add('active'); tabLogin.classList.remove('active');
     panelRegister.classList.add('active'); panelLogin.classList.remove('active');
