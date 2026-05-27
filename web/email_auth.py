@@ -375,7 +375,7 @@ def init_email_auth():
                 async with _invite_lock:
                     codes = _load_invite_codes()
                     entry = codes.get(invite_code)
-                    if entry and entry["used_count"] < entry.get("max_uses", 1):
+                    if entry and (entry.get("max_uses", 1) <= 0 or entry["used_count"] < entry["max_uses"]):
                         entry["used_count"] += 1
                         if entry.get("max_uses", 1) > 0 and entry["used_count"] >= entry["max_uses"]:
                             codes.pop(invite_code, None)
