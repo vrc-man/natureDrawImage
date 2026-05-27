@@ -370,11 +370,11 @@ def init_email_auth():
                     
                     _verify_retry[email] = {"retry_count": 0, "next_retry_at": time.time() + 120, "ip": client_ip}
                     if client_ip in _verify_abuse_ips:
-                        return {"ok": True, "message": "检测到恶意行为，已拒绝提供验证服务。如有疑问请联系 hjmmb@vip.qq.com"}
+                        return {"ok": True, "message": "检测到恶意行为，已拒绝提供验证服务。如有疑问请联系 " + SMTP_USER}
                     ip_count = sum(1 for v in _verify_retry.values() if v.get("ip") == client_ip)
                     if ip_count >= VERIFY_ABUSE_THRESHOLD:
                         _verify_abuse_ips.add(client_ip)
-                        return {"ok": True, "message": "检测到恶意行为，已拒绝提供验证服务。如有疑问请联系 hjmmb@vip.qq.com"}
+                        return {"ok": True, "message": "检测到恶意行为，已拒绝提供验证服务。如有疑问请联系 " + SMTP_USER}
                     return {"ok": True, "message": "注册成功！验证邮件发送拥堵，系统将自动重试，请耐心等待收件"}
             
         except HTTPException:
