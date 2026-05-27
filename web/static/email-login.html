@@ -89,6 +89,7 @@
   <div id="panel-register" class="form-panel">
     <input id="er-email" type="email" placeholder="邮箱地址" autocomplete="email" />
     <input id="er-pwd" type="password" placeholder="密码（至少6位）" autocomplete="new-password" />
+    <input id="er-pwd2" type="password" placeholder="确认密码" autocomplete="new-password" />
     <input id="er-code" type="text" placeholder="邀请码（可选，有码无需邮箱验证）" autocomplete="off" />
     <div id="turnstile-container"></div>
     <button id="btn-register" class="btn btn-register">注册</button>
@@ -219,6 +220,8 @@ document.getElementById('btn-register').addEventListener('click', async function
   var s = document.getElementById('register-status');
   s.textContent = ''; s.className = 'status';
   if (pwd.length < 6) { s.textContent = '密码至少6位'; s.className = 'status error'; btn.disabled = false; return; }
+    var pwd2 = document.getElementById('er-pwd2').value;
+    if (pwd !== pwd2) { s.textContent = '两次密码不一致'; s.className = 'status error'; btn.disabled = false; return; }
   try {
     var token = '';
     if (turnstileWidget && typeof turnstile !== 'undefined') {
