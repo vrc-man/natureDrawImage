@@ -869,6 +869,8 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
                 "avatar_url": "",
                 "role": eu.get("role", "user"),
                 "banned": bool(eu.get("banned", False)),
+                "verified": bool(eu.get("verified", False)),
+                "totp_enabled": bool(eu.get("totp_enabled", False)),
                 "banned_reason": eu.get("banned_reason", ""),
                 "created_at": eu.get("created_at", 0),
             })
