@@ -15,7 +15,7 @@
 ---
 
 ## 项目介绍
-基于 afoim/natureDrawImage 二次开发，在原有基础上增加了 GitHub OAuth 登录、用户系统、图生图、访问密钥、生图日志等功能。
+基于 afoim/natureDrawImage 二次开发，在原有基础上增加了 GitHub OAuth 登录、邮箱注册/登录（含邀请码+TOTP）、用户系统、图生图、访问密钥、生图日志等功能。
 单文件 FastAPI 后端 + Tailwind CSS 前端 + SQLite 数据库，无构建步骤，开箱即用。
 
 ## 与原项目的区别
@@ -195,48 +195,36 @@ pillow
 
 
 
-### 2. 修改配置
+### 2. 配置 .env
 
+将 `.env.example` 复制为 `.env`，编辑以下内容（**只需改这几项**）：
 
+```ini
+# ========== 目录路径（必填） ==========
+OUTPUT_DIR_STR=C:\path\to\ComfyUI\output
+COMFYUI_WORKFLOWS_DIR=C:\path\to\ComfyUI\user\default\workflows
 
-打开 `web/app.py`，修改顶部配置（**只需改这几行**）：
+# ========== ComfyUI 连接 ==========
+COMFYUI_HOST=127.0.0.1
+COMFYUI_PORT=8188
 
+# ========== GitHub OAuth（必填） ==========
+GITHUB_CLIENT_ID=你的Client ID
+GITHUB_CLIENT_SECRET=你的Client Secret
 
+# ========== 站点域名 ==========
+SITE_URL=https://你的域名
 
-```python
+# ========== 邮箱服务（SMTP 发信） ==========
+SMTP_HOST=smtp.qq.com
+SMTP_PORT=465
+SMTP_USER=你的邮箱
+SMTP_PASS=邮箱授权码
 
-# ========== IP / 端口配置 ==========
-
-COMFYUI_HOST = "127.0.0.1"
-
-COMFYUI_PORT = 8000
-
-
-
-LMS_HOST = "127.0.0.1"     # LM Studio（可选）
-
-LMS_PORT = 1234
-
-
-
-WEB_HOST = "127.0.0.1"
-
-WEB_PORT = 8080
-
-
-
-# ComfyUI 输出目录（只读浏览）
-
-OUTPUT_DIR_STR = r"C:\path\to\ComfyUI\output"
-
-# ComfyUI 工作流目录（自动扫描）
-
-COMFYUI_WORKFLOWS_DIR = r"C:\path\to\ComfyUI\user\default\workflows"
-
-# ===================================
-
+# Cloudflare Turnstile（可选）
+TURNSTILE_SITE_KEY=
+TURNSTILE_SECRET_KEY=
 ```
-
 
 
 - `OUTPUT_DIR_STR`：改成你的 ComfyUI 实际输出目录
@@ -416,13 +404,42 @@ web/
 │   ├── index.html           用户前端
 │   ├── admin.html           管理控制台
 │   ├── maintenance.html     维护模式页面
-│   ├── tailwind.min.css     样式文件
+│   ├── tailwind.min.css     Tailwind CSS 本地回退（主要走 CDN）
 │   ├── favicon.avif         站点图标
 │   └── chiz.webp            站点图标
 ├── deletion_thumbs/         删除记录缩略图存档（运行时）
 ├── thumbnails/              工作流缩略图（运行时）
+├── style_thumbnails/        画风卡片缩略图（运行时）
+├── lora_links/              Lora 链接文件（运行时）
+├── uploads/                 图生图用户上传（运行时）
 └── 全部数据存储于 SQLite，无 JSON 数据文件
 ```
+
+项目根目录（非 web/ 内）：
+
+| 目录 | 说明 |
+|------|------|
+| `thumb_cache/` | 输出图缩略图磁盘缓存（运行时） |
+| `backups/` | 定时备份（含 SQLite 完整副本） |
+| `gcbackups/` | GC 清理前备份（运行时） |
+
+**运行时配置文件**（均在 `web/` 下，gitignored，由管理面板在线修改）：
+
+| 文件 | 说明 |
+|------|------|
+| `limits.json` | 限流参数（生图冷却/图片限流/GPU轮询/GC间隔） |
+| `styles.json` | 画风卡片定义（tags + 别名 + 缩略图） |
+| `resolutions.json` | 分辨率预设（宽×高 + 标签） |
+| `llm_config.json` | LLM 服务商/API Key/模型配置 |
+| `workflow_meta.json` | 工作流缩略图 + Lora 链接映射 |
+| `announcement.json` | 公告开关 + 标题 + 内容 |
+| `maintenance.json` | 维护模式开关 + 自定义消息 |
+| `rate_limits.json` | 邮箱注册/登录/密码重置速率限制 |
+| `banned_ips.txt` | 封禁 IP 黑名单，每行一个 |
+| `creator_ips.txt` | 输出图 → 生图者 IP 映射 |
+| `db/natureDrawImage.db` | SQLite 主数据库（用户/会话/密钥/日志/举报等全部数据） |
+
+> **注意**：以上目录和配置文件存储的是用户隐私数据与运行时缓存（非源码），已全部列入 `.gitignore`，不应上传至 Git。项目首次运行时自动生成，部署者只需准备 `.env` 即可启动。
 
 
 
