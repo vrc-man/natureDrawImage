@@ -24,6 +24,28 @@ from fastapi.responses import JSONResponse, Response
 
 from db.schema import get_db, config_get, config_set
 
+# ═══ 速率限制（rate_limits.json + env 覆盖） ═══
+import json as _json
+_DATA_DIR = __import__('pathlib').Path(__file__).parent
+RATE_LIMITS_FILE = _DATA_DIR / "rate_limits.json"
+
+def _load_rate_limits() -> dict:
+    try:
+        if RATE_LIMITS_FILE.is_file():
+            return _json.loads(RATE_LIMITS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+def _get_limit(key: str, default):
+    val = _load_rate_limits().get(key)
+    if val is not None:
+        return type(default)(val)
+    env_val = os.environ.get(key.upper())
+    if env_val is not None:
+        return type(default)(env_val)
+    return default
+
 # ═══ 固定配置（env 覆盖） ═══
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.qq.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
@@ -173,8 +195,8 @@ def get_email_user(session_uid: str) -> Optional[dict]:
 # ═══ 限流 & Turnstile ═══
 _email_rate_ip: Dict[str, list] = {}
 _email_rate_addr: Dict[str, list] = {}
-EMAIL_GLOBAL_DAILY_LIMIT = int(os.environ.get('EMAIL_GLOBAL_DAILY_LIMIT', '250'))
-EMAIL_GLOBAL_MINUTE_LIMIT = int(os.environ.get('EMAIL_GLOBAL_MINUTE_LIMIT', '10'))
+EMAIL_GLOBAL_DAILY_LIMIT = _get_limit('email_global_per_day', 250)
+EMAIL_GLOBAL_MINUTE_LIMIT = _get_limit('email_global_per_min', 10)
 _email_sent_today: list = []  # 全局发信时间戳
 
 def _check_rate_limit(ip: str, email: str) -> Optional[str]:
@@ -225,8 +247,8 @@ async def _verify_turnstile(token: str, remote_ip: str = "") -> bool:
 # ═══ 验证邮件重试队列 ═══
 _verify_retry: Dict[str, dict] = {}
 _verify_abuse_ips: set = set()
-MAX_VERIFY_RETRIES = int(os.environ.get('VERIFY_MAX_RETRIES', '3'))
-VERIFY_ABUSE_THRESHOLD = int(os.environ.get('VERIFY_ABUSE_THRESHOLD', '3'))
+MAX_VERIFY_RETRIES = _get_limit('verify_retry_max', 3)
+VERIFY_ABUSE_THRESHOLD = _get_limit('verify_abuse_threshold', 3)
 
 async def _retry_verify_loop():
     while True:
@@ -330,6 +352,9 @@ def init_email_auth():
             limit_msg = _check_rate_limit(client_ip, email)
             if limit_msg:
                 raise HTTPException(429, limit_msg)
+            recent_ip = [t for t in _email_rate_ip.get(client_ip, []) if t > time.time() - _get_limit('reg_ip_cooldown_seconds', 1800)]
+            if recent_ip and not invite_code:
+                raise HTTPException(429, "该IP近期已注册过，请使用邀请码或稍后再试")
             has_invite = False
             if invite_code:
                 async with _invite_lock:
@@ -409,7 +434,7 @@ def init_email_auth():
 
 
     # ── 忘记密码 ──
-    RESET_EXPIRE_SEC = 1800
+    RESET_EXPIRE_SEC = _get_limit('reset_link_expire_seconds', 300)
 
     @app.post("/api/auth/forgot-password")
     async def api_forgot_password(request: Request, payload: Dict[str, Any] = {}):
@@ -419,7 +444,7 @@ def init_email_auth():
         # 限流：每邮箱5分钟内只能请求一次重置
         now = time.time()
         fg_key = f"fg:{email}"
-        attempts = [t for t in _email_rate_addr.get(fg_key, []) if t > now - 300]
+        attempts = [t for t in _email_rate_addr.get(fg_key, []) if t > now - _get_limit("forgot_pw_per_email_per_hour", 3600)]
         if attempts:
             return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
         email_users = _load_email_users()
@@ -431,6 +456,7 @@ def init_email_auth():
                    (email, token, time.time() + RESET_EXPIRE_SEC))
         db.commit()
         _email_rate_addr.setdefault(fg_key, []).append(now)
+        _email_rate_addr.setdefault(fg_day_key, []).append(now)
         link = f"{SITE_URL}/api/auth/reset-password?token={token}&email={email}"
         await _send_email(email, f"[{SITE_NAME}] 重置密码",
             _email_html("密码重置", "<p style='font-size:14px;line-height:1.8'>您请求重置密码。</p><div style='text-align:center;margin:20px 0'><a href='" + link + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>重置密码</a></div><p style='font-size:12px;color:#9ca3af'>30分钟内有效，非本人操作请忽略。</p>"))
@@ -549,8 +575,27 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         async with _email_users_lock:
             email_users = _load_email_users()
             eu = email_users.get(email)
+            # 账号锁定检查
+            if eu:
+                now_ts = time.time()
+                fails = eu.get("login_fails", 0)
+                fail_time = eu.get("login_fail_time", 0)
+                lockout_fails = _get_limit('login_lockout_fails', 5)
+                lockout_sec = _get_limit('login_lockout_seconds', 900)
+                if fails >= lockout_fails and now_ts - fail_time < lockout_sec:
+                    raise HTTPException(429, f"账号已被锁定，请{lockout_sec//60}分钟后再试")
             if not eu or not _verify_password(password, eu["password_hash"]):
+                if eu:
+                    now_ts = time.time()
+                    fail_time = eu.get("login_fail_time", 0)
+                    eu["login_fails"] = 1 if now_ts - fail_time > 900 else eu.get("login_fails", 0) + 1
+                    eu["login_fail_time"] = now_ts
+                    _save_email_users(email_users)
                 raise HTTPException(401, "Invalid credentials")
+            if eu and eu.get("login_fails", 0) > 0:
+                eu["login_fails"] = 0
+                eu["login_fail_time"] = 0
+                _save_email_users(email_users)
             if not eu.get("verified"):
                 raise HTTPException(401, "Email not verified")
             if eu.get("banned"):
