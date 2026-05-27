@@ -133,6 +133,10 @@ async def _send_email(to: str, subject: str, body: str) -> bool:
     if len(_email_sent_today) >= EMAIL_GLOBAL_DAILY_LIMIT:
         print(f'[email] 全局发信已达每日上限({EMAIL_GLOBAL_DAILY_LIMIT})')
         return False
+    recent = [t for t in _email_sent_today if t > now - 60]
+    if len(recent) >= EMAIL_GLOBAL_MINUTE_LIMIT:
+        print(f'[email] 全局发信已达每分钟上限({EMAIL_GLOBAL_MINUTE_LIMIT})')
+        return False
     msg = MIMEText(body, "html", "utf-8")
     msg["From"] = SMTP_USER
     msg["To"] = to
@@ -169,6 +173,7 @@ def get_email_user(session_uid: str) -> Optional[dict]:
 _email_rate_ip: Dict[str, list] = {}
 _email_rate_addr: Dict[str, list] = {}
 EMAIL_GLOBAL_DAILY_LIMIT = int(os.environ.get('EMAIL_GLOBAL_DAILY_LIMIT', '250'))
+EMAIL_GLOBAL_MINUTE_LIMIT = int(os.environ.get('EMAIL_GLOBAL_MINUTE_LIMIT', '10'))
 _email_sent_today: list = []  # 全局发信时间戳
 
 def _check_rate_limit(ip: str, email: str) -> Optional[str]:
