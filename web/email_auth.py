@@ -374,7 +374,7 @@ def init_email_auth():
                     entry = codes.get(invite_code)
                     if entry and entry["used_count"] < entry.get("max_uses", 1):
                         entry["used_count"] += 1
-                        if entry["used_count"] >= entry.get("max_uses", 1):
+                        if entry.get("max_uses", 1) > 0 and entry["used_count"] >= entry["max_uses"]:
                             codes.pop(invite_code, None)
                         _save_invite_codes(codes)
                         has_invite = True
