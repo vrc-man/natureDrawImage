@@ -220,6 +220,48 @@ async def _verify_turnstile(token: str, remote_ip: str = "") -> bool:
 
 # ═══ 注册路由 ═══
 
+
+# ═══ 验证邮件重试队列 ═══
+_verify_retry: Dict[str, dict] = {}
+_verify_abuse_ips: set = set()
+MAX_VERIFY_RETRIES = 3
+VERIFY_ABUSE_THRESHOLD = 5
+
+async def _retry_verify_loop():
+    while True:
+        await asyncio.sleep(60)
+        try:
+            now = time.time()
+            for email, info in list(_verify_retry.items()):
+                if info["retry_count"] >= MAX_VERIFY_RETRIES:
+                    _verify_retry.pop(email, None)
+                    continue
+                if now < info.get("next_retry_at", 0):
+                    continue
+                ip = info.get("ip", "")
+                if ip in _verify_abuse_ips:
+                    _verify_retry.pop(email, None)
+                    continue
+                email_users = _load_email_users()
+                eu = email_users.get(email)
+                if not eu or eu.get("verified") or not eu.get("verify_token"):
+                    _verify_retry.pop(email, None)
+                    continue
+                vu = f"{SITE_URL}/api/auth/verify-email?token={eu['verify_token']}&email={email}"
+                ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
+                    f"<p>请点击链接验证邮箱：</p><p><a href='{vu}'>{vu}</a></p>")
+                if ok:
+                    _verify_retry.pop(email, None)
+                else:
+                    info["retry_count"] += 1
+                    if info["retry_count"] >= MAX_VERIFY_RETRIES:
+                        _verify_retry.pop(email, None)
+                    else:
+                        intervals = [120, 300, 600]
+                        info["next_retry_at"] = now + intervals[min(info["retry_count"], 2)]
+        except Exception:
+            pass
+
 def init_email_auth():
     """注册 email auth 路由（在 app 创建后调用）"""
     from web.app import app as _app_obj
@@ -318,7 +360,16 @@ def init_email_auth():
                 if mail_ok:
                     return {"ok": True, "message": "注册成功！请查收验证邮件并点击链接激活账号。"}
                 else:
-                    return {"ok": True, "message": "注册成功！邮件发送拥堵，请耐心等待，验证邮件将在稍后自动送达: " + vu}
+                    
+                    _verify_retry[email] = {"retry_count": 0, "next_retry_at": time.time() + 120, "ip": client_ip}
+                    if client_ip in _verify_abuse_ips:
+                        return {"ok": True, "message": "检测到恶意行为，已拒绝提供验证服务。如有疑问请联系管理员"}
+                    ip_count = sum(1 for v in _verify_retry.values() if v.get("ip") == client_ip)
+                    if ip_count >= VERIFY_ABUSE_THRESHOLD:
+                        _verify_abuse_ips.add(client_ip)
+                        return {"ok": True, "message": "检测到恶意行为，已拒绝提供验证服务。如有疑问请联系管理员"}
+                    return {"ok": True, "message": "注册成功！验证邮件发送拥堵，系统将自动重试，请耐心等待收件"}
+            
         except HTTPException:
             raise
         except Exception as _e:
@@ -715,4 +766,10 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
     import web.app as _app_mod
     _app_mod._get_user_from_session = _patched_get_user
 
+    try:
+        loop = asyncio.get_event_loop()
+        loop.create_task(_retry_verify_loop())
+        print("[email_auth] 验证重试队列已启动")
+    except Exception:
+        pass
     print("[email_auth] Routes registered (SQLite)")
