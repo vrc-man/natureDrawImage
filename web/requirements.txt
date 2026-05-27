@@ -6,3 +6,4 @@ pydantic
 pillow
 cryptography
 python-multipart
+qrcode[pil]>=7.0

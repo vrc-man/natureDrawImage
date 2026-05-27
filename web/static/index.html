@@ -256,7 +256,8 @@
     <h3 class="text-lg font-bold mb-3 text-pink-500">🔐 两步验证 (2FA)</h3>
     <div id="totp-setup-step">
       <p class="text-sm text-gray-600 mb-3">请在 Google Authenticator / Microsoft Authenticator 等 App 中手动输入以下密钥：</p>
-      <p class="text-xs text-gray-400 mb-2">请在 Authenticator App 中手动输入以下密钥，或复制链接到手机浏览器打开：</p>
+      <div class="flex justify-center mb-3"><img id="totp-qrcode" src="" alt="QR" class="rounded-xl border border-pink-100" style="width:180px;height:180px" /></div>
+      <p class="text-xs text-gray-400 mb-2">扫描二维码，或手动输入密钥：</p>
       <div id="totp-secret-display" class="bg-gray-100 rounded-xl px-4 py-3 text-center font-mono text-sm tracking-widest text-gray-800 select-all mb-3">-----</div>
       <p class="text-xs text-center mb-2"><a id="totp-uri-link" href="#" class="text-pink-500 text-xs" style="display:none"></a></p>
       <label class="text-sm text-gray-600">输入 App 中显示的 6 位验证码：</label>
@@ -1869,6 +1870,7 @@ async function showTotpModal() {
       const d = await r.json();
       _totpSecret = d.secret;
       $('totp-secret-display').textContent = _totpSecret;
+      .src = '/api/auth/totp-qrcode?t=' + Date.now();
       const label = encodeURIComponent(_currentUser.email || _currentUser.login);
       const uri = 'otpauth://totp/' + label + '?secret=' + _totpSecret + '&issuer=%E4%BA%8C%E6%AC%A1%E5%85%83%E7%BB%98%E6%A2%A6';
       $('totp-uri-link').href = uri;

@@ -640,6 +640,31 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
                          samesite="lax", secure=SITE_URL.startswith("https"))
         return resp
 
+    @app.get("/api/auth/totp-qrcode")
+    async def api_totp_qrcode(request: Request):
+        from web.app import _get_user_from_session
+        from fastapi.responses import Response as _Resp
+        import io, qrcode as _qrcode
+        user = _get_user_from_session(request)
+        if not user:
+            raise HTTPException(401)
+        email = user.get("github_id", "").replace("email:", "")
+        if not email:
+            raise HTTPException(400)
+        email_users = _load_email_users()
+        eu = email_users.get(email)
+        if not eu or not eu.get("totp_secret"):
+            raise HTTPException(400)
+        label = email.split("@")[0]
+        uri = f"otpauth://totp/{label}?secret={eu['totp_secret']}&issuer={SITE_NAME}"
+        img = _qrcode.make(uri, box_size=8, border=2)
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        buf.seek(0)
+        return _Resp(content=buf.getvalue(), media_type="image/png")
+
+
+
     @app.post("/api/auth/totp-setup")
     async def api_totp_setup(request: Request):
         from web.app import _get_user_from_session
