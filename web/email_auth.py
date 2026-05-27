@@ -168,10 +168,21 @@ async def _send_email(to: str, subject: str, body: str) -> bool:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: _smtp_send(msg))
         _email_sent_today.append(time.time())
+        _log_email(to, subject, "ok", "")
         return True
     except Exception as e:
         print(f"[email] {e}")
+        _log_email(to, subject, "fail", str(e)[:200])
         return False
+
+def _log_email(to: str, subject: str, status: str, error: str):
+    try:
+        db = get_db()
+        db.execute("INSERT INTO email_logs (recipient, subject, status, error, created_at) VALUES (?,?,?,?,?)",
+                   (to, subject, status, error, time.time()))
+        db.commit()
+    except Exception:
+        pass
 
 def get_email_user(session_uid: str) -> Optional[dict]:
     """从 session 的 github_id 还原邮箱用户"""

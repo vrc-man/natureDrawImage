@@ -468,6 +468,10 @@
         <div id="rate-limits-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px">加载中...</div>
       </div>
       <div id="email-users-list" class="text-sm max-h-64 overflow-y-auto">加载中...</div>
+      <div style="border-top:1px solid #fce7f3;padding-top:12px;margin-top:12px">
+        <h3 style="font-size:14px;font-weight:600;margin-bottom:8px">📧 发信日志 <button id="btn-refresh-email-logs" style="margin-left:8px;font-size:12px;padding:2px 8px;background:#e5e7eb;border:0;border-radius:6px;cursor:pointer">刷新</button> <button id="btn-clear-email-logs" style="margin-left:4px;font-size:12px;padding:2px 8px;background:#ef4444;color:#fff;border:0;border-radius:6px;cursor:pointer">清空</button></h3>
+        <div id="email-logs-list" style="max-height:200px;overflow-y:auto;font-size:11px">点击刷新查看</div>
+      </div>
       <div id="abuse-ips-bar" class="hidden mt-2 pt-2 border-t text-xs"><span class="text-red-500">🚫 恶意IP：</span><span id="abuse-ips-list"></span> <button id="btn-clear-abuse" class="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-500 rounded hover:bg-red-200">清空全部</button></div>
       </div>
     </div>
@@ -823,6 +827,22 @@ async function toggleUserBan(githubId, currentlyBanned) {
 }
 
 // ==================== 邮箱认证管理 ====================
+async function loadEmailLogs() {
+  try {
+    const d = await api('GET', '/api/admin/email-logs?limit=20');
+    const logs = d.logs || [];
+    if (!logs.length) { $('email-logs-list').innerHTML = '<span style=color:#9ca3af>暂无记录</span>'; return; }
+    $('email-logs-list').innerHTML = '<table style=width:100%;border-collapse:collapse>' +
+      '<tr style=background:#f9fafb><th style=padding:4px;text-align:left>时间</th><th>收件人</th><th>主题</th><th>状态</th></tr>' +
+      logs.map(function(l) {
+        var statusColor = l.status === 'ok' ? '#16a34a' : l.status === 'fail' ? '#ef4444' : '#f59e0b';
+        var statusText = l.status === 'ok' ? '成功' : l.status === 'fail' ? '失败' : '限流';
+        var time = l.created_at ? new Date(l.created_at*1000).toLocaleString('zh-CN') : '?';
+        return '<tr style=border-top:1px_solid_#f3f4f6><td style=padding:4px;white-space:nowrap>' + time + '</td><td style=padding:4px>' + escHtml(l.recipient) + '</td><td style=padding:4px>' + escHtml(l.subject) + '</td><td style=padding:4px;color:' + statusColor + '>' + statusText + '</td></tr>';
+      }).join('') + '</table>';
+  } catch(e) { $('email-logs-list').textContent = '失败: ' + e.message; }
+}
+
 async function loadEmailAuth() {
   try {
     const d = await api('GET', '/api/admin/invite-codes');
@@ -969,6 +989,12 @@ $('btn-save-rate-limits').addEventListener('click', async function() {
   } catch(e) { $('rate-limits-status').textContent = '失败: ' + e.message; }
 });
 
+$('btn-refresh-email-logs').addEventListener('click', loadEmailLogs);
+$('btn-clear-email-logs').addEventListener('click', async function() {
+  if (!confirm('确定清空所有发信日志？')) return;
+  await api('POST', '/api/admin/email-logs/clear', {});
+  loadEmailLogs();
+});
 $('btn-refresh-email-auth').addEventListener('click', loadEmailAuth);
 $('btn-gen-invite-codes').addEventListener('click', async () => {
   const count = parseInt($('ic-gen-count').value) || 1;
