@@ -851,7 +851,7 @@ async function loadEmailAuth() {
     $('cfg-hourly-ip').value = cfg.reg_hourly_limit_per_ip;
     $('cfg-daily-ip').value = cfg.reg_daily_limit_per_ip;
     $('cfg-daily-email').value = cfg.reg_daily_limit_per_email;
-  } catch {}
+  } catch(e){console.error(e)}
 
   try {
     const d = await api('GET', '/api/admin/email-users');
@@ -905,7 +905,7 @@ async function loadEmailAuth() {
     } else {
       $('abuse-ips-bar').classList.add('hidden');
     }
-  } catch(e) {}
+  } catch(e){console.error(e)}
 }
 
 async function resendVerify(githubId) {
@@ -970,7 +970,7 @@ async function refreshBannedSet() {
   try {
     const d = await api('GET', '/api/admin/bans');
     bannedSet = new Set(d.banned || []);
-  } catch {}
+  } catch(e){console.error(e)}
 }
 
 const recentState = { loaded: 0, total: 0, pageSize: 5 };
@@ -1014,7 +1014,7 @@ async function refreshFeaturedSet() {
   try {
     const d = await api('GET', '/api/admin/featured');
     featuredSet = new Set(d.items || []);
-  } catch {}
+  } catch(e){console.error(e)}
 }
 
 function updateRowFeaturedUI(path) {
@@ -1248,7 +1248,7 @@ $('btn-run-gc').addEventListener('click', async () => {
           clearInterval(poll);
           $('lim-status').textContent = 'GC 超时，请查看控制台日志';
         }
-      } catch {}
+      } catch(e){console.error(e)}
     }, 1000);
   } catch (e) {
     $('lim-status').textContent = '触发 GC 失败: ' + e.message;
@@ -1270,7 +1270,7 @@ $('btn-graceful-restart').addEventListener('click', async () => {
   const input = prompt('请输入"确认优雅重启"以继续：');
   if (input !== '确认优雅重启') { alert('输入不匹配，已取消'); return; }
   $('lim-status').textContent = '优雅重启中，等待当前任务完成…';
-  try { await api('POST', '/api/admin/graceful-restart'); } catch (e) {}
+  try { await api('POST', '/api/admin/graceful-restart'); } catch(e){console.error(e)}
   alert('重启信号已发送');
 });
 function _annBadge(enabled) {
@@ -1679,7 +1679,7 @@ let _catOrder = [];
 async function _saveCatOrder() {
   try {
     await api('POST', '/api/admin/limits', { category_order: _catOrder });
-  } catch {}
+  } catch(e){console.error(e)}
 }
 
 function renderCatUI() {

@@ -655,7 +655,7 @@ async function loadFeatured() {
         <img src="${thumb}" loading="lazy" decoding="async" class="w-full aspect-square object-cover rounded-lg border border-pink-100 bg-pink-50/30 hover:ring-2 hover:ring-amber-400 hover:shadow-lg transition-all" />
       </a>`;
     }).join('');
-  } catch {}
+  } catch(e){console.error(e)}
 }
 
 // ==================== 画廊 ====================
@@ -749,7 +749,7 @@ async function loadMyWorks(reset = true) {
     $('myworks-shown').textContent = myworksState.loaded;
     $('btn-myworks-more').classList.toggle('hidden', myworksState.loaded >= myworksState.total);
     refreshLightbox();
-  } catch {}
+  } catch(e){console.error(e)}
 }
 
 $('btn-reload-myworks').addEventListener('click', () => { _tabLoaded.myworks = false; loadMyWorks(true); });
@@ -999,7 +999,7 @@ async function loadResolutions() {
         : 'px-3 py-1.5 bg-pink-50 border border-pink-200 rounded-xl hover:bg-pink-100 text-sm text-gray-600 transition-all';
       return `<button type="button" data-w="${p.w}" data-h="${p.h}" class="${cls}" title="${p.w}×${p.h}">${p.label ? _esc(p.label) : p.w + '×' + p.h}</button>`;
     }).join('');
-  } catch {}
+  } catch(e){console.error(e)}
 }
 
 async function loadStyles() {
@@ -1351,7 +1351,7 @@ let _finishing = false;
 function finishRun() {
   if (_finishing) return;
   _finishing = true;
-  if (activeWS) { try { activeWS.close(); } catch {} }
+  if (activeWS) { try { activeWS.close(); } catch(e){console.error(e)} }
   activeWS = null;
   mirroring = false;
   // 清理图生图上传引用
@@ -1482,7 +1482,7 @@ function connectStatus() {
     else if (m.type === 'mirror') { if (activeWS) return; handleMsg(m.event); }
   };
   statusWS.onclose = () => { statusWS = null; setTimeout(connectStatus, 2000); };
-  statusWS.onerror = () => { try { statusWS.close(); } catch {} };
+  statusWS.onerror = () => { try { statusWS.close(); } catch(e){console.error(e)} };
 }
 connectStatus();
 setInterval(() => { if (globalBusy) { /* heartbeat */ } }, 1000);
@@ -1635,7 +1635,7 @@ async function pollGPU() {
         <span class="${tempColor}">🌡${temp}°C</span> <span>⚡${pStr}</span>
       </div>`;
     }).join('');
-  } catch {}
+  } catch(e){console.error(e)}
 }
 let _gpuInterval = 5000;
 let _cooldownDefault = 30;
@@ -1674,7 +1674,7 @@ setInterval(async () => {
       dot2.className = 'inline-block w-[18px] h-[18px] rounded-full bg-gray-400 shadow';
       count2.classList.add('hidden');
     }
-  } catch {}
+  } catch(e){console.error(e)}
 }, 5000);
 
 // ==================== 公告 ====================
@@ -1691,7 +1691,7 @@ async function loadAnnouncement() {
       $('ann-bar-content').classList.toggle('hidden', !a.content);
       bar.classList.remove('hidden');
     } else { bar.classList.add('hidden'); }
-  } catch {}
+  } catch(e){console.error(e)}
 }
 
 // ==================== 表单持久化 ====================
@@ -1710,7 +1710,7 @@ function restoreFormState() {
     const s = JSON.parse(localStorage.getItem(_FORM_KEY));
     if (!s) return;
     _FORM_FIELDS.forEach(f => { const el = $(f.id); if (f.id in s) { if (f.type === 'check') el.checked = !!s[f.id]; else el.value = s[f.id] || ''; } });
-  } catch {}
+  } catch(e){console.error(e)}
 }
 _FORM_FIELDS.forEach(f => { const el = $(f.id); el.addEventListener(f.type === 'check' ? 'change' : 'input', saveFormState); });
 restoreFormState();
@@ -1751,7 +1751,7 @@ let _currentUser = null;
         const count = parseInt($('notify-count').textContent) || 0;
         if (count > 0) {
           alert('您有后台任务已完成，请到「我的」查看新作品');
-          try { await fetch('/api/whoami/read-notifications', { method: 'POST' }); } catch {}
+          try { await fetch('/api/whoami/read-notifications', { method: 'POST' }); } catch(e){console.error(e)}
         }
       } else if (isYellow) {
         alert('任务正在排队或执行中，请稍候');
@@ -1811,7 +1811,7 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
               placeholder.innerHTML = html || '<span class="text-gray-400">无密钥信息</span>';
               placeholder.classList.remove('text-gray-400');
             }
-          } catch {}
+          } catch(e){console.error(e)}
         } else {
           const placeholder = div.querySelector('#key-info-placeholder');
           if (placeholder) {
@@ -1848,7 +1848,7 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
       label.onclick = () => { location.href = '/auth/login'; };
       adminLink.classList.add('hidden');
     }
-  } catch {}
+  } catch(e){console.error(e)}
 })();
 
 // ==================== 我的队列轮询 ====================
@@ -1862,7 +1862,7 @@ async function showTotpModal() {
     const r = await fetch('/api/auth/totp-status');
     const d = await r.json();
     enabled = d.totp_enabled;
-  } catch {}
+  } catch(e){console.error(e)}
   if (enabled) {
     $('totp-setup-step').classList.add('hidden');
     $('totp-enabled-step').classList.remove('hidden');
@@ -1918,7 +1918,7 @@ $('totp-disable-btn').onclick = async () => {
   try {
     await fetch('/api/auth/totp-disable', {method:'POST'});
     hideTotpModal();
-  } catch {}
+  } catch(e){console.error(e)}
 };
 
 async function pollMyQueue() {
@@ -1956,7 +1956,7 @@ async function pollMyQueue() {
         return `<div class="flex justify-between text-gray-500"><span>任务 #${_esc(String(i.id))}${pos}</span><span>${st}</span></div>`;
       }).join('');
     }
-  } catch {}
+  } catch(e){console.error(e)}
 }
 setInterval(pollMyQueue, 2000);
 pollMyQueue();
