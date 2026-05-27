@@ -952,7 +952,7 @@ async function toggleEmailUserBan(githubId, currentlyBanned) {
   loadEmailAuth();
 }
 
-async async function deleteInviteCode(code) {
+async function deleteInviteCode(code) {
   if (!confirm('确定删除邀请码 ' + code + ' ？')) return;
   await api('POST', '/api/admin/invite-codes/delete', { code });
   loadEmailAuth();
