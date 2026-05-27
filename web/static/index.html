@@ -1870,7 +1870,7 @@ async function showTotpModal() {
       const d = await r.json();
       _totpSecret = d.secret;
       $('totp-secret-display').textContent = _totpSecret;
-      .src = '/api/auth/totp-qrcode?t=' + Date.now();
+      $('totp-qrcode').src = '/api/auth/totp-qrcode?t=' + Date.now();
       const label = encodeURIComponent(_currentUser.email || _currentUser.login);
       const uri = 'otpauth://totp/' + label + '?secret=' + _totpSecret + '&issuer=%E4%BA%8C%E6%AC%A1%E5%85%83%E7%BB%98%E6%A2%A6';
       $('totp-uri-link').href = uri;
