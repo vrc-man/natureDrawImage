@@ -16,6 +16,7 @@ import struct as _struct
 import asyncio
 import smtplib
 from typing import Dict, Any, Optional
+import html as _html
 from email.mime.text import MIMEText
 
 import httpx
@@ -472,7 +473,6 @@ def init_email_auth():
                    (email, token, time.time() + RESET_EXPIRE_SEC))
         db.commit()
         _email_rate_addr.setdefault(fg_key, []).append(now)
-        _email_rate_addr.setdefault(fg_day_key, []).append(now)
         link = f"{SITE_URL}/api/auth/reset-password?token={token}&email={email}"
         await _send_email(email, f"[{SITE_NAME}] 重置密码",
             _email_html("密码重置", "<p style='font-size:14px;line-height:1.8'>您请求重置密码。</p><div style='text-align:center;margin:20px 0'><a href='" + link + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>重置密码</a></div><p style='font-size:12px;color:#9ca3af'>30分钟内有效，非本人操作请忽略。</p>"))

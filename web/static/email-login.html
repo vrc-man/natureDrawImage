@@ -215,7 +215,8 @@ document.getElementById('btn-login').addEventListener('click', async function() 
       body: JSON.stringify({
         email: document.getElementById('el-email').value.trim(),
         password: document.getElementById('el-pwd').value,
-        totp_code: document.getElementById('el-totp').value.trim()
+        totp_code: document.getElementById('el-totp').value.trim(),
+        turnstile_token: (typeof turnstile !== 'undefined' ? turnstile.getResponse('#turnstile-login-container') || '' : '')
       })
     });
     var d = await r.json();

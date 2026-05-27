@@ -937,6 +937,15 @@ async function loadEmailAuth() {
   } catch(e) { console.error(e); }
 }
 
+async function resetTotp(githubId) {
+  if (!confirm('确定重置此用户的 2FA？')) return;
+  try {
+    await api('POST', '/api/admin/email-users/reset-totp', { github_id: githubId });
+    alert('TOTP 已重置');
+    loadEmailAuth();
+  } catch(e) { alert('失败: ' + e.message); }
+}
+
 async function resendVerify(githubId) {
   try {
     await api('POST', '/api/admin/email-users/resend-verify', { github_id: githubId });
