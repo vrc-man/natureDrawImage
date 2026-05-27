@@ -143,7 +143,7 @@ async def _send_email(to: str, subject: str, body: str) -> bool:
     msg["To"] = to
     msg["Subject"] = subject
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, lambda: _smtp_send(msg))
         _email_sent_today.append(time.time())
         return True
@@ -225,8 +225,8 @@ async def _verify_turnstile(token: str, remote_ip: str = "") -> bool:
 # ═══ 验证邮件重试队列 ═══
 _verify_retry: Dict[str, dict] = {}
 _verify_abuse_ips: set = set()
-MAX_VERIFY_RETRIES = 3
-VERIFY_ABUSE_THRESHOLD = 3
+MAX_VERIFY_RETRIES = int(os.environ.get('VERIFY_MAX_RETRIES', '3'))
+VERIFY_ABUSE_THRESHOLD = int(os.environ.get('VERIFY_ABUSE_THRESHOLD', '3'))
 
 async def _retry_verify_loop():
     while True:
@@ -288,8 +288,11 @@ def init_email_auth():
     async def api_admin_invite_codes_generate(request: Request, payload: Dict[str, Any] = {}):
         if not getattr(request.state, "is_admin", False):
             raise HTTPException(403)
-        count = max(1, min(int(payload.get("count", 1)), 20))
-        max_uses = int(payload.get("max_uses", 1))
+        try:
+            count = max(1, min(int(payload.get("count", 1)), 20))
+            max_uses = int(payload.get("max_uses", 1))
+        except (ValueError, TypeError):
+            raise HTTPException(400, "参数无效")
         async with _invite_lock:
             codes = _load_invite_codes()
             generated = []
@@ -477,7 +480,7 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
   try {
     var r = await fetch('/api/auth/reset-password', {
       method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({token:'""" + token + """',email:'""" + email + """',password:p1})
+      body:JSON.stringify({token:'""" + _html.escape(token) + """',email:'""" + _html.escape(email) + """',password:p1})
     });
     var d = await r.json();
     if (r.ok) {
@@ -726,6 +729,7 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             if eu.get("verified"):
                 raise HTTPException(400, "邮箱已验证，无需重新发送")
             eu["verify_token"] = secrets.token_urlsafe(32)
+            eu["created_at"] = time.time()  # 重置24h窗口
             _save_email_users(email_users)
         vu = f"{SITE_URL}/api/auth/verify-email?token={eu['verify_token']}&email={email}"
         mail_ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
