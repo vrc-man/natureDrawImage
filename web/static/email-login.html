@@ -151,6 +151,8 @@ document.getElementById('link-back-to-login').addEventListener('click', function
 });
 
 document.getElementById('btn-forgot').addEventListener('click', async function() {
+  var btn = this;
+  if (btn.disabled) return; btn.disabled = true;
   var s = document.getElementById('forgot-status');
   s.textContent = ''; s.className = 'status';
   var email = document.getElementById('fg-email').value.trim();
@@ -166,11 +168,14 @@ document.getElementById('btn-forgot').addEventListener('click', async function()
     var d = await r.json();
     s.textContent = d.message;
     s.className = 'status success';
-  } catch(e) { s.textContent = '发送失败，请重试'; s.className = 'status error'; }
+    btn.disabled = false;
+  } catch(e) { s.textContent = '发送失败，请重试'; s.className = 'status error'; btn.disabled = false; }
 });
 
 // Login
 document.getElementById('btn-login').addEventListener('click', async function() {
+  var btn = this;
+  if (btn.disabled) return; btn.disabled = true;
   var s = document.getElementById('login-status');
   s.textContent = ''; s.className = 'status';
   try {
@@ -185,13 +190,17 @@ document.getElementById('btn-login').addEventListener('click', async function() 
     var d = await r.json();
     if (!r.ok) throw new Error(d.detail || '登录失败');
     location.href = '/';
-  } catch(e) { s.textContent = e.message; s.className = 'status error'; }
+  } catch(e) { s.textContent = e.message; s.className = 'status error'; btn.disabled = false; }
 });
 
 // Register
 document.getElementById('btn-register').addEventListener('click', async function() {
+  var btn = this;
+  if (btn.disabled) return; btn.disabled = true;
+  var pwd = document.getElementById('er-pwd').value;
   var s = document.getElementById('register-status');
   s.textContent = ''; s.className = 'status';
+  if (pwd.length < 6) { s.textContent = '密码至少6位'; s.className = 'status error'; btn.disabled = false; return; }
   try {
     var token = '';
     if (turnstileWidget && typeof turnstile !== 'undefined') {
