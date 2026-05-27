@@ -2591,9 +2591,11 @@ async function loadImages(reset = true) {
     d.items.forEach(it => {
       const url = '/api/output/thumb?path=' + encodeURIComponent(it.path);
       const safe = escHtml(it.path);
-      const ip = it.creator_ip ? `IP: ${escHtml(it.creator_ip)}` : '';
-      const gh = it.github_user ? ` | GH: ${escHtml(it.github_user)}` : '';
-      const info = (ip + gh) || '&nbsp;';
+      const ip = it.creator_ip ? `${escHtml(it.creator_ip)}` : '';
+      const login = it.creator_login || '';
+      const email = it.creator_email || '';
+      const parts = [ip, login, email].filter(Boolean);
+      const info = parts.length ? parts.join(' | ') : '&nbsp;';
       const wrapper = document.createElement('div');
       wrapper.className = 'relative border rounded p-1 bg-gray-50';
       wrapper.setAttribute('data-img-path', safe);

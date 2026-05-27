@@ -161,7 +161,6 @@ ACCESS_KEYS_FILE = Path(__file__).parent / "access_keys.json"
 _access_keys_lock = asyncio.Lock()
 GEN_LOG_FILE = Path(__file__).parent / "gen_log.json"
 _gen_log_lock = asyncio.Lock()
-_GEN_LOG_MAX = 20000
 
 # GitHub 用户 → 图片映射（用于"我的作品"）
 # user_images → SQLite
@@ -259,22 +258,13 @@ def _load_user_images() -> Dict[str, List[Dict[str, Any]]]:
     return db.load_user_images()  # SQLite
 
 async def _save_user_image(github_id: str, rel_path: str, prompt: str = "") -> None:
-    """记录用户生图映射。"""
+    """记录用户生图映射（单条安全写入，无全删全插）。"""
     if not github_id:
         return
-    async with _user_images_lock:
-        data = _load_user_images()
-        key = str(github_id)
-        items = data.get(key, [])
-        # 去重 + 最新在前
-        items = [i for i in items if i.get("path") != rel_path]
-        items.insert(0, {"path": rel_path, "prompt": prompt[:200], "time": _time_module.time()})
-        # 每人最多保留 200 条
-        data[key] = items[:200]
-        try:
-            save_user_images_bulk(data)
-        except Exception:
-            pass
+    try:
+        db.save_user_image(github_id, rel_path, prompt)
+    except Exception:
+        pass
 
 # ---------------- 用户 / 会话管理 ----------------
 # 用户数据：{github_id: {login, email, avatar_url, role, banned, banned_reason, created_at}}
@@ -288,19 +278,6 @@ _sessions_lock = asyncio.Lock()
 SESSION_MAX_AGE_SEC = 30 * 86400
 
 
-def _save_user_images_to_db(data):
-    try:
-        db._db().execute("DELETE FROM user_images")
-        for gid, entries in data.items():
-            for e in entries:
-                db._db().execute(
-                    "INSERT INTO user_images (github_id, path, prompt, time) VALUES (?,?,?,?)",
-                    (gid, e.get("path", ""), e.get("prompt", ""), e.get("time", 0)))
-        db._db().commit()
-    except Exception as _se:
-        print(f'[_save_users] ERROR: {type(_se).__name__}: {_se}')
-        import traceback as _stb
-        _stb.print_exc()
 def _load_json(path: Path) -> dict:
     try:
         if path.is_file():
@@ -309,18 +286,6 @@ def _load_json(path: Path) -> dict:
         pass
     return {}
 
-
-def save_user_images_bulk(data):
-    try:
-        db._db().execute("DELETE FROM user_images")
-        for gid, entries in data.items():
-            for e in entries:
-                db._db().execute("INSERT INTO user_images (github_id,path,prompt,time) VALUES (?,?,?,?)", (gid, e.get("path",""), e.get("prompt",""), e.get("time",0)))
-        db._db().commit()
-    except Exception as _se:
-        print(f'[_save_users] ERROR: {type(_se).__name__}: {_se}')
-        import traceback as _stb
-        _stb.print_exc()
 
 def _load_users() -> dict:
     return db.load_users()  # SQLite
@@ -1919,38 +1884,18 @@ async def _cleanup_stale_deleted_entries():
 
 
 async def _cleanup_stale_user_images():
-    """启动时清理 user_images.json 中磁盘文件已不存在的死记录（手动删磁盘文件等场景）。"""
+    """启动时清理 user_images 中磁盘文件已不存在的死记录。"""
     try:
         output_dir = OUTPUT_DIR.resolve()
-        changed = False
-        total_removed = 0
-        async with _user_images_lock:
-            data = _load_user_images()
-            if not data:
-                return
-            for uid in list(data.keys()):
-                entries = data[uid]
-                kept = []
-                for e in entries:
-                    rel = (e.get("path") or "").replace("\\", "/")
-                    try:
-                        fp = (OUTPUT_DIR / rel.lstrip("/")).resolve()
-                        if _is_safe_subpath(fp, output_dir) and fp.is_file():
-                            kept.append(e)
-                        else:
-                            total_removed += 1
-                    except Exception:
-                        kept.append(e)
-                if len(kept) < len(entries):
-                    changed = True
-                if kept:
-                    data[uid] = kept
-                else:
-                    del data[uid]
-            if changed:
-                save_user_images_bulk(data)
-        if changed:
-            print(f"[startup] user_images.json 清理了 {total_removed} 条死记录")
+        def exists(rel: str) -> bool:
+            try:
+                fp = (OUTPUT_DIR / rel.lstrip("/")).resolve()
+                return _is_safe_subpath(fp, output_dir) and fp.is_file()
+            except Exception:
+                return False
+        removed = db.cleanup_stale_user_images(exists)
+        if removed:
+            print(f"[startup] user_images 清理了 {removed} 条死记录")
     except Exception as e:
         print(f"[startup] 清理 user_images 失败: {e}")
 
@@ -1964,6 +1909,11 @@ async def _start_gc():
         migrate_from_json(data_dir)
     except Exception:
         pass  # 已迁移则跳过
+    # 从 gen_logs 回填 user_images 缺失的历史数据
+    try:
+        db.backfill_user_images_from_gen_logs()
+    except Exception:
+        pass
     global _gc_task
     _safe_task(_cleanup_expired_access_keys(), "cleanup_expired_access_keys")
     _safe_task(_cleanup_stale_user_images(), "cleanup_stale_user_images")
@@ -2008,6 +1958,35 @@ _deletion_log_lock = asyncio.Lock()
 def _load_deletion_log() -> List[Dict[str, Any]]:
     return db.load_deletion_log()
 
+# gen_logs 路径→用户缓存，避免批量删图时重复扫全表
+_gen_logs_path_cache: Optional[Dict[str, Tuple[str, str]]] = None
+
+def _ensure_gen_logs_cache() -> None:
+    global _gen_logs_path_cache
+    if _gen_logs_path_cache is not None:
+        return
+    _gen_logs_path_cache = {}
+    try:
+        rows = db._db().execute(
+            "SELECT github_id, login, file_paths FROM gen_logs WHERE file_paths != '[]'"
+        ).fetchall()
+        for r in rows:
+            try:
+                fps = json.loads(r["file_paths"])
+            except Exception:
+                continue
+            for fp in (fps if isinstance(fps, list) else []):
+                fp = str(fp).replace("\\", "/")
+                if fp and fp not in _gen_logs_path_cache:
+                    _gen_logs_path_cache[fp] = (r["github_id"], r["login"] or r["github_id"])
+    except Exception:
+        pass
+
+def _gen_logs_lookup(path: str) -> Tuple[str, str]:
+    """从 gen_logs.file_paths 查找 path 对应的 (github_id, login)。"""
+    _ensure_gen_logs_cache()
+    return _gen_logs_path_cache.get(path, ("", ""))
+
 async def _record_deletion(rel_path: str, github_id: str, login: str,
                           creator_gid: str = "", creator_login: str = ""):
     """将删除图片的缩略图移动到存档目录，并记录删除日志。
@@ -2035,7 +2014,7 @@ async def _record_deletion(rel_path: str, github_id: str, login: str,
             ip_row = db.lookup_creator_ip(key)
             if ip_row:
                 creator_ip = ip_row
-            # 从 SQLite user_images 查原始生图者
+            # 从 user_images 查原始生图者
             ui = _load_user_images()
             for uid_, entries in ui.items():
                 for e in entries:
@@ -2044,9 +2023,12 @@ async def _record_deletion(rel_path: str, github_id: str, login: str,
                         break
                 if creator_github_id:
                     break
+            # 从 gen_logs.file_paths 补充查找（user_images 可能缺失）
+            if not creator_github_id:
+                creator_github_id, creator_login = _gen_logs_lookup(key)
             if creator_github_id:
                 users_ = _load_users()
-                creator_login = users_.get(creator_github_id, {}).get("login", creator_github_id)
+                creator_login = creator_login or users_.get(creator_github_id, {}).get("login", creator_github_id)
         except Exception:
             pass
     entry = {
@@ -6133,7 +6115,6 @@ async def api_delete_my_image(request: Request, payload: DeleteImagePayload):
     rel_path = str(payload.path or "").strip()
     if not _validate_rel_path(rel_path):
         raise HTTPException(400, "无效路径")
-    key = github_id
     # 先查生图者信息（删除前必须查，删后就没了）
     creator_gid = github_id
     creator_login = user.get("login", github_id)
@@ -6143,24 +6124,10 @@ async def api_delete_my_image(request: Request, payload: DeleteImagePayload):
         owned = {i.get("path", "") for i in data.get(github_id, [])}
         if rel_path not in owned:
             raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
-        # 从 user_images.json 中移除记录
-        if key in data:
-            data[key] = [i for i in data[key] if i.get("path", "") != rel_path]
-            try:
-                save_user_images_bulk(data)
-            except Exception:
-                pass
+        db.remove_user_image(github_id, rel_path)
     # 标记删除
     async with _deleted_images_lock:
-        deleted = _load_deleted_images()
-        paths = deleted.get(key, [])
-        if rel_path not in paths:
-            paths.append(rel_path)
-            deleted[key] = paths
-            try:
-                db.save_deleted_images(deleted)
-            except Exception:
-                pass
+        db.add_deleted_image(github_id, rel_path)
     # 清理精选列表
     feats = _read_featured()
     if rel_path in feats:
@@ -6182,87 +6149,6 @@ async def api_delete_my_image(request: Request, payload: DeleteImagePayload):
     # 文件由 GC / 启动清理统一处理，此处仅标记
     return {"ok": True}
 
-
-async def _bg_delete_files(paths: List[str], delay: float = 30.0) -> None:
-    """后台延迟删除磁盘文件 + 清理 creator_ips.txt 映射。"""
-    await asyncio.sleep(delay)
-    output_dir = Path(OUTPUT_DIR_STR)
-    for rel_path in paths:
-        # 防御性校验：确保不会逃逸出 output_dir
-        if not _validate_rel_path(rel_path):
-            continue
-        fp = (output_dir / rel_path).resolve()
-        if not _is_safe_subpath(fp, output_dir):
-            continue
-        # 检查文件是否已被新用户重新认领（ComfyUI 复用文件名），是则跳过删除
-        user_images = _load_user_images()
-        reclaimed = any(
-            any(e.get("path", "") == rel_path for e in entries)
-            for entries in user_images.values()
-        )
-        if reclaimed:
-            print(f"[GC] 跳过删除（已被重新认领）: {rel_path}")
-            # 仅清理 deleted_images.json 记录，不删文件
-            try:
-                async with _deleted_images_lock:
-                    deleted = _load_deleted_images()
-                    changed = False
-                    for key in list(deleted.keys()):
-                        paths = deleted[key]
-                        if rel_path in paths:
-                            paths.remove(rel_path)
-                            changed = True
-                            if paths:
-                                deleted[key] = paths
-                            else:
-                                del deleted[key]
-                    if changed:
-                        db.save_deleted_images(deleted)
-            except Exception as e:
-                print(f"[GC] 清理 deleted_images 记录失败: {rel_path} — {e}")
-            continue
-        # 删除磁盘文件
-        try:
-            if fp.is_file():
-                fp.unlink()
-                _clean_thumb_for_path(rel_path)
-                print(f"[GC] 用户标记删除文件: {rel_path}")
-        except Exception as e:
-            print(f"[GC] 删除文件失败: {rel_path} — {e}")
-        # 清理 creator_ips.txt 映射（TSV 格式）
-        try:
-            async with _creator_map_lock:
-                if CREATOR_MAP_FILE.is_file():
-                    lines: list[str] = []
-                    with open(CREATOR_MAP_FILE, "r", encoding="utf-8") as f:
-                        for line in f:
-                            line = line.rstrip("\r\n")
-                            if line and "\t" in line and line.split("\t", 1)[0] != rel_path:
-                                lines.append(line)
-                    tmp = CREATOR_MAP_FILE.with_suffix(".txt.tmp")
-                    with open(tmp, "w", encoding="utf-8") as f:
-                        f.write("\n".join(lines) + "\n")
-                    os.replace(tmp, CREATOR_MAP_FILE)
-        except Exception as e:
-            print(f"[GC] 清理 creator_ips 映射失败: {rel_path} — {e}")
-        # 清理 deleted_images.json 中对应记录
-        try:
-            async with _deleted_images_lock:
-                deleted = _load_deleted_images()
-                changed = False
-                for key in list(deleted.keys()):
-                    paths = deleted[key]
-                    if rel_path in paths:
-                        paths.remove(rel_path)
-                        changed = True
-                        if paths:
-                            deleted[key] = paths
-                        else:
-                            del deleted[key]
-                if changed:
-                    db.save_deleted_images(deleted)
-        except Exception as e:
-            print(f"[GC] 清理 deleted_images 记录失败: {rel_path} — {e}")
 
 
 # ---------------- 用户管理 (admin only) ----------------
@@ -6540,10 +6426,10 @@ async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0):
     if limit <= 0:
         limit = 200
     page = raw[offset:offset + limit]
-    items = [
-        {"path": rel, "ip": ip_map.get(rel, ""), "mtime": mt}
-        for mt, rel, _ in page
-    ]
+    items = []
+    for mt, rel in [(x[0], x[1]) for x in page]:
+        ip = ip_map.get(rel, "")
+        items.append({"path": rel, "ip": ip, "mtime": mt})
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
@@ -6599,21 +6485,8 @@ async def api_admin_delete(request: Request, payload: Dict[str, Any]):
         await _write_featured(feats)
     # 自动忽略该图所有待处理举报
     await _auto_dismiss_reports_for_image(rel)
-    # 同步清理 user_images.json
-    async with _user_images_lock:
-        data = _load_user_images()
-        changed = False
-        for uid in list(data.keys()):
-            entries = data[uid]
-            kept = [e for e in entries if (e.get("path") or "").replace("\\", "/") != key]
-            if len(kept) < len(entries):
-                changed = True
-                if kept:
-                    data[uid] = kept
-                else:
-                    del data[uid]
-        if changed:
-            save_user_images_bulk(data)
+    # 同步清理 user_images
+    db.remove_user_image_by_path(rel)
     return {"ok": True}
 
 
@@ -6675,9 +6548,9 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
                 failed.append(rel)
         except Exception:
             failed.append(rel)
-    # 标记到 deleted_images.json
+    # 标记到 deleted_images
+    del_set = set(r.replace("\\", "/") for r in deleted)
     if deleted:
-        del_set = set(r.replace("\\", "/") for r in deleted)
         async with _deleted_images_lock:
             _del = _load_deleted_images()
             paths = _del.get("__admin__", [])
@@ -6726,21 +6599,8 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
                 report_changed = True
         if report_changed:
             await _save_reports(reports)
-        # 同步清理 user_images.json
-        async with _user_images_lock:
-            data = _load_user_images()
-            changed = False
-            for uid in list(data.keys()):
-                entries = data[uid]
-                kept = [e for e in entries if (e.get("path") or "").replace("\\", "/") not in del_set]
-                if len(kept) < len(entries):
-                    changed = True
-                    if kept:
-                        data[uid] = kept
-                    else:
-                        del data[uid]
-            if changed:
-                save_user_images_bulk(data)
+        # 同步清理 user_images
+        db.remove_user_images_by_paths(del_set)
     return {"ok": True, "deleted": len(deleted), "failed": len(failed)}
 
 
@@ -6782,28 +6642,40 @@ async def api_admin_images(request: Request, limit: int = 50, offset: int = 0):
         items = [(mt, rel, sz) for (mt, rel, sz) in items if rel not in deleted_paths]
     total = len(items)
     sliced = items[offset:offset + max(0, min(limit, 2000))]
-    # 查 creator_ip 和 github_user 映射
-    ip_map: Dict[str, str] = {}
-    try:
-        if CREATOR_MAP_FILE.is_file():
-            for ln in CREATOR_MAP_FILE.read_text(encoding="utf-8").splitlines():
-                if "\t" in ln:
-                    parts = ln.split("\t", 1)
-                    ip_map[parts[0].strip()] = parts[1].strip()
-    except Exception:
-        pass
+    # 查 creator_ip 和 github_user 映射（均从 SQLite 读取）
+    ip_map: Dict[str, str] = db.load_creator_map()
     user_map: Dict[str, str] = {}  # path → github_id
+    user_login_map: Dict[str, str] = {}  # path → login
     user_images = _load_user_images()
     for uid, entries in user_images.items():
         for entry in entries:
             p = (entry.get("path") or "").replace("\\", "/")
             if p:
                 user_map[p] = uid
+    # 从 gen_logs 缓存补充 path→user 映射
+    _ensure_gen_logs_cache()
+    if _gen_logs_path_cache:
+        for fp, (gid, glogin) in _gen_logs_path_cache.items():
+            if fp and fp not in user_map:
+                user_map[fp] = gid
+                user_login_map[fp] = glogin
+    # 预加载所有用户信息，用于补充 login/email
+    users = _load_users()
     result = []
     for mt, rel, sz in sliced:
         creator_ip = ip_map.get(rel, "")
         github_user = user_map.get(rel, "")
-        result.append({"path": rel, "mtime": mt, "size": sz, "creator_ip": creator_ip, "github_user": github_user})
+        creator_login = ""
+        creator_email = ""
+        if github_user:
+            u = users.get(github_user, {})
+            creator_login = user_login_map.get(rel, "") or u.get("login", github_user)
+            creator_email = u.get("email", "")
+        result.append({
+            "path": rel, "mtime": mt, "size": sz,
+            "creator_ip": creator_ip, "github_user": github_user,
+            "creator_login": creator_login, "creator_email": creator_email
+        })
     return {"items": result, "total": total, "output_dir": str(OUTPUT_DIR), "exists": True}
 
 
@@ -6845,20 +6717,7 @@ async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any])
             pass
     # 2. 清理 user_images.json（移除被删图片的归属记录）
     async with _user_images_lock:
-        user_images = _load_user_images()
-        user_changed = False
-        for uid in list(user_images.keys()):
-            before = len(user_images[uid])
-            user_images[uid] = [e for e in user_images[uid] if e.get("path", "") not in del_set]
-            if len(user_images[uid]) < before:
-                user_changed = True
-            if not user_images[uid]:
-                del user_images[uid]
-        if user_changed:
-            try:
-                save_user_images_bulk(user_images)
-            except Exception:
-                pass
+        db.remove_user_images_by_paths(del_set)
     # 3. 清理 creator_ips.txt
     async with _creator_map_lock:
         try:
@@ -7628,20 +7487,7 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
             feats = [x for x in feats if x != image_path]
             await _write_featured(feats)
         # 同步清理 user_images.json（避免「我的作品」中出现悬空条目）
-        async with _user_images_lock:
-            ui_data = _load_user_images()
-            ui_changed = False
-            for uid in list(ui_data.keys()):
-                entries = ui_data[uid]
-                kept2 = [e for e in entries if (e.get("path") or "").replace("\\", "/") != key]
-                if len(kept2) < len(entries):
-                    ui_changed = True
-                    if kept2:
-                        ui_data[uid] = kept2
-                    else:
-                        del ui_data[uid]
-            if ui_changed:
-                save_user_images_bulk(ui_data)
+        db.remove_user_image_by_path(key)
         for r in reports:
             if r.get("status") == "pending" and r.get("image_path") == image_path and r.get("id") != report_id:
                 r["status"] = "resolved"

@@ -154,13 +154,13 @@ def save_user_image(github_id: str, path: str, prompt: str) -> None:
     _db().execute(
         "INSERT INTO user_images (github_id, path, prompt, time) VALUES (?,?,?,?)",
         (github_id, path, prompt[:100], _time_module.time()))
-    # 每人最多 200 条
+    # 每人最多 10000 条
     count = _db().execute(
         "SELECT COUNT(*) as c FROM user_images WHERE github_id=?", (github_id,)).fetchone()["c"]
-    if count > 200:
+    if count > 10000:
         oldest = _db().execute(
             "SELECT id FROM user_images WHERE github_id=? ORDER BY time ASC LIMIT ?",
-            (github_id, count - 200)).fetchall()
+            (github_id, count - 10000)).fetchall()
         for o in oldest:
             _db().execute("DELETE FROM user_images WHERE id=?", (o["id"],))
     _db().commit()
@@ -169,6 +169,70 @@ def save_user_image(github_id: str, path: str, prompt: str) -> None:
 def remove_user_image(github_id: str, path: str) -> None:
     _db().execute("DELETE FROM user_images WHERE github_id=? AND path=?", (github_id, path))
     _db().commit()
+
+
+def remove_user_image_by_path(path: str) -> int:
+    """删除所有该路径的 user_images 记录，返回删除数。"""
+    r = _db().execute("DELETE FROM user_images WHERE path=?", (path,))
+    _db().commit()
+    return r.rowcount
+
+
+def remove_user_images_by_paths(paths: set) -> int:
+    """批量删除 user_images 记录，返回删除数。"""
+    if not paths:
+        return 0
+    placeholders = ",".join("?" * len(paths))
+    r = _db().execute(
+        f"DELETE FROM user_images WHERE path IN ({placeholders})",
+        list(paths))
+    _db().commit()
+    return r.rowcount
+
+
+def cleanup_stale_user_images(existing_paths_fn) -> int:
+    """删除文件已不存在的 user_images 记录，返回删除数。"""
+    rows = _db().execute("SELECT id, path FROM user_images").fetchall()
+    removed = 0
+    for r in rows:
+        if not existing_paths_fn(r["path"]):
+            _db().execute("DELETE FROM user_images WHERE id=?", (r["id"],))
+            removed += 1
+    if removed:
+        _db().commit()
+    return removed
+
+
+def backfill_user_images_from_gen_logs() -> int:
+    """从 gen_logs.file_paths 回填 user_images 缺失的数据，返回新增条数。"""
+    import json as _json
+    added = 0
+    existing = set(
+        r["path"] for r in _db().execute("SELECT path FROM user_images").fetchall()
+    )
+    rows = _db().execute(
+        "SELECT github_id, prompt, file_paths, created_at FROM gen_logs WHERE file_paths != '[]'"
+    ).fetchall()
+    for r in rows:
+        gid = r["github_id"]
+        prompt = (r["prompt"] or "")[:100]
+        ts = r["created_at"] or _time_module.time()
+        try:
+            fps = _json.loads(r["file_paths"])
+        except Exception:
+            continue
+        for fp in (fps if isinstance(fps, list) else []):
+            fp = str(fp).replace("\\", "/")
+            if fp and fp not in existing:
+                _db().execute(
+                    "INSERT INTO user_images (github_id, path, prompt, time) VALUES (?,?,?,?)",
+                    (gid, fp, prompt, ts))
+                existing.add(fp)
+                added += 1
+    _db().commit()
+    if added:
+        print(f"[backfill] user_images 从 gen_logs 回填 {added} 条")
+    return added
 
 
 def cleanup_stale_user_images(existing_paths_fn) -> int:
@@ -209,20 +273,25 @@ def remove_deleted_image(github_id: str, path: str) -> None:
 
 
 def save_deleted_images(data: Dict[str, List[str]]) -> None:
-    """全量写入（GC 回写用）。"""
-    _db().execute("DELETE FROM deleted_images")
-    for gid, paths in data.items():
-        for p in paths:
-            _db().execute(
-                "INSERT INTO deleted_images (github_id, path) VALUES (?,?)", (gid, p))
-    _db().commit()
+    """全量写入（仅迁移/启动清理等批量场景使用，有事务保护）。"""
+    _db().execute("BEGIN IMMEDIATE")
+    try:
+        _db().execute("DELETE FROM deleted_images")
+        for gid, paths in data.items():
+            for p in paths:
+                _db().execute(
+                    "INSERT INTO deleted_images (github_id, path) VALUES (?,?)", (gid, p))
+        _db().commit()
+    except Exception:
+        _db().execute("ROLLBACK")
+        raise
 
 
 # ═══════════════════════════════════════════
 # 生图日志
 # ═══════════════════════════════════════════
 
-_GEN_LOG_MAX = 20000  # 最大条数
+_GEN_LOG_MAX = 100000  # 最大条数
 
 
 def load_gen_logs() -> Dict[str, Dict]:
@@ -313,7 +382,7 @@ def clear_gen_logs(date_from: float = 0, date_to: float = 0, *, unlink_all: bool
 # 删除日志（回收站）
 # ═══════════════════════════════════════════
 
-_DELETION_LOG_MAX = 20000
+_DELETION_LOG_MAX = 100000
 
 
 def load_deletion_log() -> List[Dict]:

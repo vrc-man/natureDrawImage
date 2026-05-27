@@ -298,6 +298,18 @@ SCHEMA = [
         expires_at  REAL NOT NULL DEFAULT 0
     )
     """,
+
+    # ── 发信日志 ──
+    """
+    CREATE TABLE IF NOT EXISTS email_logs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipient   TEXT NOT NULL DEFAULT '',
+        subject     TEXT NOT NULL DEFAULT '',
+        status      TEXT NOT NULL DEFAULT 'ok',
+        error       TEXT NOT NULL DEFAULT '',
+        created_at  REAL NOT NULL DEFAULT 0
+    )
+    """,
 ]
 
 

@@ -180,10 +180,9 @@ async def _send_email(to: str, subject: str, body: str) -> bool:
 
 def _log_email(to: str, subject: str, status: str, error: str):
     try:
-        etype = "register" if "验证" in subject else "reset" if "重置" in subject else ""
         db = get_db()
-        db.execute("INSERT INTO email_logs (recipient, subject, type, status, error, created_at) VALUES (?,?,?,?,?,?)",
-                   (to, subject, etype, status, error, time.time()))
+        db.execute("INSERT INTO email_logs (recipient, subject, status, error, created_at) VALUES (?,?,?,?,?)",
+                   (to, subject, status, error, time.time()))
         db.commit()
     except Exception:
         pass
