@@ -144,6 +144,14 @@ function switchTab(tab) {
 tabLogin.addEventListener('click', function() { switchTab('login'); });
 tabRegister.addEventListener('click', function() { switchTab('register'); });
 
+// 初始渲染登录页 Turnstile
+setTimeout(function() {
+  var lc = document.getElementById('turnstile-login-container');
+  if (lc && typeof turnstile !== 'undefined') {
+    try { turnstile.render('#turnstile-login-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU', theme: 'light' }); } catch(e) {}
+  }
+}, 200);
+
 // Forgot password flow
 document.getElementById('link-forgot').addEventListener('click', function(e) {
   e.preventDefault();
