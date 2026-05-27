@@ -864,6 +864,7 @@ async function loadEmailAuth() {
           '<button data-code="' + escHtml(c.code) + '" class="btn-del-invite-code text-[10px] px-1.5 py-0.5 bg-red-100 text-red-500 rounded hover:bg-red-200 flex-shrink-0">删除</button>' +
           '</div>';
       }).join('');
+      document.querySelectorAll('.btn-copy-invite-code').forEach(b => { b.addEventListener('click', function() { navigator.clipboard.writeText(this.dataset.code).then(function() { this.textContent = '已复制'; setTimeout(function() { this.textContent = '复制'; }, 2000); }.bind(this)); }); });
       document.querySelectorAll('.btn-del-invite-code').forEach(b => {
         b.addEventListener('click', () => deleteInviteCode(b.dataset.code));
       });
@@ -951,7 +952,7 @@ async function toggleEmailUserBan(githubId, currentlyBanned) {
   loadEmailAuth();
 }
 
-async function deleteInviteCode(code) {
+async async function deleteInviteCode(code) {
   if (!confirm('确定删除邀请码 ' + code + ' ？')) return;
   await api('POST', '/api/admin/invite-codes/delete', { code });
   loadEmailAuth();
