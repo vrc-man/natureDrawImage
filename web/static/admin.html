@@ -873,13 +873,24 @@ async function loadEmailAuth() {
             '<span class="text-[10px] px-1 rounded ' + (u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-200 text-gray-500') + '">' + escHtml(u.role || 'user') + '</span>' +
             '<span class="text-gray-400 text-[10px]">' + (u.created_at ? formatTime(u.created_at) : '') + '</span>' +
             '<button data-gid="' + escHtml(u.github_id) + '" data-banned="' + banned + '" class="btn-toggle-email-ban text-[10px] px-2 py-0.5 text-white rounded ' + banCls + '">' + banLabel + '</button>' +
+            (u.verified ? '' : '<button data-gid="' + escHtml(u.github_id) + '" class="btn-resend-verify text-[10px] px-2 py-0.5 bg-blue-100 text-blue-500 rounded hover:bg-blue-200 ml-1">重发验证</button>') +
             '</div>';
         }).join('') + '</div>';
+      document.querySelectorAll('.btn-resend-verify').forEach(b => {
+        b.addEventListener('click', () => resendVerify(b.dataset.gid));
+      });
       document.querySelectorAll('.btn-toggle-email-ban').forEach(b => {
         b.addEventListener('click', () => toggleEmailUserBan(b.dataset.gid, b.dataset.banned === 'true'));
       });
     }
   } catch (e) { $('email-users-list').textContent = '失败: ' + e.message; }
+}
+
+async function resendVerify(githubId) {
+  try {
+    await api('POST', '/api/admin/email-users/resend-verify', { github_id: githubId });
+    alert('验证邮件已发送');
+  } catch(e) { alert('失败: ' + e.message); }
 }
 
 async function toggleEmailUserBan(githubId, currentlyBanned) {

@@ -318,7 +318,7 @@ def init_email_auth():
                 if mail_ok:
                     return {"ok": True, "message": "注册成功！请查收验证邮件并点击链接激活账号。"}
                 else:
-                    return {"ok": True, "message": "注册成功！邮件发送拥堵，请稍后重试。或手动访问验证链接: " + vu}
+                    return {"ok": True, "message": "注册成功！邮件发送拥堵，请耐心等待，验证邮件将在稍后自动送达: " + vu}
         except HTTPException:
             raise
         except Exception as _e:
@@ -624,6 +624,32 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             })
         items.sort(key=lambda u: u.get("created_at", 0))
         return {"users": items}
+
+    @app.post("/api/admin/email-users/resend-verify")
+    async def api_admin_resend_verify(request: Request, payload: Dict[str, Any] = {}):
+        if not getattr(request.state, "is_admin", False):
+           raise HTTPException(403)
+        github_id = str(payload.get("github_id", "")).strip()
+        if not github_id or not github_id.startswith("email:"):
+            raise HTTPException(400, "Invalid github_id")
+        email = github_id[6:]
+        async with _email_users_lock:
+            email_users = _load_email_users()
+            eu = email_users.get(email)
+            if not eu:
+                raise HTTPException(404, "用户不存在")
+            if eu.get("verified"):
+                raise HTTPException(400, "邮箱已验证，无需重新发送")
+            eu["verify_token"] = secrets.token_urlsafe(32)
+            _save_email_users(email_users)
+        vu = f"{SITE_URL}/api/auth/verify-email?token={eu['verify_token']}&email={email}"
+        mail_ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
+            f"<p>请点击以下链接验证邮箱：</p><p><a href='{vu}'>{vu}</a></p>")
+        if mail_ok:
+            return {"ok": True, "message": "验证邮件已重新发送"}
+        else:
+            return {"ok": True, "message": "发送拥堵，请稍后重试。手动验证: " + vu}
+
 
     @app.post("/api/admin/email-users/ban")
     async def api_admin_email_user_ban(request: Request, payload: Dict[str, Any] = {}):
