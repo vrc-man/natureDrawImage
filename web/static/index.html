@@ -1410,13 +1410,11 @@ $('btn-submit-key').addEventListener('click', async () => {
       $('access-key-error').classList.remove('hidden');
       $('access-key-error').textContent = d.error || '密钥无效';
       $('btn-submit-key').disabled = false;
-      try { localStorage.removeItem('cached_key'); } catch {}
       return;
     }
     $('access-key-success').classList.remove('hidden');
     $('access-key-success').textContent = '✓ 密钥验证成功，正在解锁...';
     // 缓存密钥到浏览器，后续自动提交
-    try { localStorage.setItem('cached_key', key); } catch {}
     setTimeout(() => {
       $('access-page').classList.add('hidden');
       $('generate-main').classList.remove('hidden');
@@ -1835,13 +1833,7 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
         $('access-page').classList.remove('hidden');
         $('generate-main').classList.add('hidden');
         $('tab-bar').classList.add('hidden');
-        // 自动提交缓存的密钥
-        let cachedKey = '';
-        try { cachedKey = localStorage.getItem('cached_key') || ''; } catch {}
-        if (cachedKey) {
-          $('access-key-input').value = cachedKey;
-          $('btn-submit-key').click();
-        }
+
       } else {
         $('access-page').classList.add('hidden');
         $('generate-main').classList.remove('hidden');
