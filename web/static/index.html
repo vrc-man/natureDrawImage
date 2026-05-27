@@ -1829,7 +1829,7 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
       // 非管理员 + 未验证密钥 → 显示密钥输入页，隐藏主界面
       if (!d.is_admin && !d.access_granted) {
         if (d.key_status === 'expired') {
-          .textContent = '密钥已过期，请联系 admin@hjmmb.com 获取新密钥';
+          .textContent = '您的密钥已过期，请输入新密钥或联系管理员获取';
           .classList.remove('hidden');
         }
         $('access-page').classList.remove('hidden');
