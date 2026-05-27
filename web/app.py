@@ -2994,8 +2994,9 @@ async def api_whoami(request: Request):
         async with _cooldown_lock:
             last_ts = _RATE_LAST_TS.get(ip, 0.0)
         cd_remain = max(0, int(cooldown_sec - (_time_module.time() - last_ts) + 0.5)) if not (user.get("role") == "admin") else 0
-        # 自动认领已绑定的密钥
-        if not access_granted and user.get("role") != "admin":
+        # 自动认领已绑定的密钥 + 状态检测（一次加锁完成）
+        key_status = "none"
+        if user.get("role") != "admin":
             uid = str(user.get("github_id", ""))
             async with _access_keys_lock:
                 akeys = _load_access_keys()
@@ -3006,34 +3007,20 @@ async def api_whoami(request: Request):
                         ea = v.get("expires_at", 0)
                         mu = v.get("max_uses", 0)
                         uc = v.get("used_count", 0)
-                        if da and now2 > da + 2: continue
-                        if ea and now2 > ea + 60: continue
-                        if mu > 0 and uc >= mu: continue
-                        access_granted = True
-                        claimed_key = k
-                        async with _sessions_lock:
-                            sessions3 = _load_sessions()
-                            s2 = sessions3.get(token)
-                            if s2:
-                                s2["access_granted"] = True
-                                s2["claimed_key"] = k
-                                await _save_sessions(sessions3)
+                        expired = (da and now2 > da + 2) or (ea and now2 > ea + 60) or (mu > 0 and uc >= mu)
+                        if expired:
+                            key_status = "expired"
+                        elif not access_granted:
+                            access_granted = True
+                            claimed_key = k
+                            async with _sessions_lock:
+                                sessions3 = _load_sessions()
+                                s2 = sessions3.get(token)
+                                if s2:
+                                    s2["access_granted"] = True
+                                    s2["claimed_key"] = k
+                                    await _save_sessions(sessions3)
                         break
-        # 检查密钥状态（用于前端提示）
-        key_status = "none"  # none / valid / expired
-        if not access_granted and user.get("role") != "admin":
-            uid = str(user.get("github_id", ""))
-            akeys = _load_access_keys()
-            for v in akeys.get("keys", {}).values():
-                if str(v.get("used_by", "")) == uid:
-                    now3 = _time_module.time()
-                    da = v.get("disabled_at", 0)
-                    ea = v.get("expires_at", 0)
-                    mu = v.get("max_uses", 0)
-                    uc = v.get("used_count", 0)
-                    if (da and now3 > da + 2) or (ea and now3 > ea + 60) or (mu > 0 and uc >= mu):
-                        key_status = "expired"
-                    break
 
         return {
             "login": user.get("login"),
