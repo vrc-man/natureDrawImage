@@ -821,6 +821,40 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
 
     # ── 管理员：邮箱用户管理 ──
 
+    @app.get("/api/admin/email-dashboard")
+    async def api_admin_email_dashboard(request: Request):
+        if not getattr(request.state, "is_admin", False):
+            raise HTTPException(403)
+        codes = _load_invite_codes()
+        invite_items = [{"code": k, **v} for k, v in codes.items()]
+        invite_items.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+        users = _load_email_users()
+        user_items = []
+        for email, eu in users.items():
+            user_items.append({
+                "github_id": "email:" + email,
+                "login": email.split("@")[0], "email": email,
+                "role": eu.get("role", "user"),
+                "banned": bool(eu.get("banned", False)),
+                "verified": bool(eu.get("verified", False)),
+                "totp_enabled": bool(eu.get("totp_enabled", False)),
+                "created_at": eu.get("created_at", 0),
+            })
+        user_items.sort(key=lambda u: u.get("created_at", 0))
+        limits = {
+            "reg_hourly_limit_per_ip": _get_email_config_int("REG_HOURLY_LIMIT_PER_IP", 3),
+            "reg_daily_limit_per_ip": _get_email_config_int("REG_DAILY_LIMIT_PER_IP", 10),
+            "reg_daily_limit_per_email": _get_email_config_int("REG_DAILY_LIMIT_PER_EMAIL", 3),
+        }
+        return {
+            "invite_codes": invite_items,
+            "email_users": user_items,
+            "limits": limits,
+            "rate_limits": _load_rate_limits(),
+            "abuse_ips": list(_verify_abuse_ips),
+        }
+
+
     @app.get("/api/admin/email-users")
     async def api_admin_email_users(request: Request):
         if not getattr(request.state, "is_admin", False):

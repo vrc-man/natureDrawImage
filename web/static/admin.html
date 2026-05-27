@@ -845,8 +845,10 @@ async function loadEmailLogs() {
 
 async function loadEmailAuth() {
   try {
-    const d = await api('GET', '/api/admin/invite-codes');
-    const items = d.items || [];
+    const d = await api('GET', '/api/admin/email-dashboard');
+
+    // Invite codes
+    const items = d.invite_codes || [];
     if (!items.length) {
       $('invite-codes-list').innerHTML = '<div class="text-gray-400 text-xs">暂无邀请码</div>';
     } else {
@@ -864,63 +866,63 @@ async function loadEmailAuth() {
           '<button data-code="' + escHtml(c.code) + '" class="btn-del-invite-code text-[10px] px-1.5 py-0.5 bg-red-100 text-red-500 rounded hover:bg-red-200 flex-shrink-0">删除</button>' +
           '</div>';
       }).join('');
-      document.querySelectorAll('.btn-copy-invite-code').forEach(b => { b.addEventListener('click', function() { navigator.clipboard.writeText(this.dataset.code).then(function() { this.textContent = '已复制'; setTimeout(function() { this.textContent = '复制'; }, 2000); }.bind(this)); }); });
       document.querySelectorAll('.btn-del-invite-code').forEach(b => {
         b.addEventListener('click', () => deleteInviteCode(b.dataset.code));
       });
     }
-  } catch (e) { $('invite-codes-list').textContent = '失败: ' + e.message; }
 
-  try {
-    const cfg = await api('GET', '/api/admin/email-config');
-    $('cfg-hourly-ip').value = cfg.reg_hourly_limit_per_ip;
-    $('cfg-daily-ip').value = cfg.reg_daily_limit_per_ip;
-    $('cfg-daily-email').value = cfg.reg_daily_limit_per_email;
-  } catch(e){console.error(e)}
+    // Limits
+    $('cfg-hourly-ip').value = (d.limits || {}).reg_hourly_limit_per_ip || 3;
+    $('cfg-daily-ip').value = (d.limits || {}).reg_daily_limit_per_ip || 10;
+    $('cfg-daily-email').value = (d.limits || {}).reg_daily_limit_per_email || 3;
 
-  try {
-    const d = await api('GET', '/api/admin/email-users');
-    const emailUsers = d.users || [];
+    // Rate limits
+    if (d.rate_limits) {
+      var labels = {'login_max_per_email_per_min':'Login/min/email','login_max_per_ip_per_min':'Login/min/IP','login_lockout_fails':'Lockout fails','login_lockout_seconds':'Lockout sec','reg_per_ip_per_hour':'Reg/hr/IP','reg_per_ip_per_day':'Reg/day/IP','reg_per_email_per_day':'Reg/day/email','reg_ip_cooldown_seconds':'IP cooldown sec','forgot_pw_per_email_per_hour':'Reset/hr','forgot_pw_per_email_per_day':'Reset/day','reset_link_expire_seconds':'Link expire sec','email_global_per_day':'Email/day','email_global_per_min':'Email/min','verify_retry_max':'Retry max','verify_abuse_threshold':'Abuse threshold'};
+      var h = '';
+      for (var k in d.rate_limits) {
+        h += '<label style="display:flex;flex-direction:column;gap:2px"><span style="color:#6b7280">' + (labels[k]||k) + '</span><input id="rl-' + k + '" type="number" min="0" style="border:1px solid #e5e7eb;border-radius:6px;padding:4px 6px" value="' + d.rate_limits[k] + '" /></label>';
+      }
+      $('rate-limits-grid').innerHTML = h;
+    }
+
+    // Email users
+    var emailUsers = d.email_users || [];
     $('email-users-count').textContent = '(' + emailUsers.length + ')';
     if (!emailUsers.length) {
-      $('email-users-list').innerHTML = '<div class="text-gray-400 text-xs">暂无邮箱注册用户</div>';
+      $('email-users-list').innerHTML = '<div class="text-gray-400 text-xs">No email users</div>';
     } else {
       $('email-users-list').innerHTML = '<div class="flex flex-col gap-1">' +
-        emailUsers.map(u => {
-          const banned = u.banned;
-          const rowCls = banned ? 'bg-red-100' : 'bg-gray-50';
-          const banLabel = banned ? '解封' : '封禁';
-          const banCls = banned ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600';
-          const email = (u.github_id || '').replace('email:', '');
+        emailUsers.map(function(u) {
+          var banned = u.banned;
+          var rowCls = banned ? 'bg-red-100' : 'bg-gray-50';
+          var banLabel = banned ? 'Unban' : 'Ban';
+          var banCls = banned ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600';
+          var email = (u.github_id || '').replace('email:', '');
           return '<div class="flex items-center gap-2 ' + rowCls + ' rounded px-2 py-1 text-xs">' +
-            '<span class="inline-block w-2 h-2 rounded-full flex-shrink-0 ' + (onlineGithubIds.has(u.github_id) ? 'bg-green-500' : 'bg-gray-300') + '" title="' + (onlineGithubIds.has(u.github_id) ? '在线' : '离线') + '"></span>' +
+            '<span class="inline-block w-2 h-2 rounded-full flex-shrink-0 ' + (onlineGithubIds.has(u.github_id) ? 'bg-green-500' : 'bg-gray-300') + '"></span>' +
             '<span class="font-medium flex-1">' + escHtml(u.login || '?') + '</span>' +
             '<span class="text-gray-400 text-[10px]">' + escHtml(email) + '</span>' +
             '<span class="text-[10px] px-1 rounded ' + (u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-200 text-gray-500') + '">' + escHtml(u.role || 'user') + '</span>' +
             '<span class="text-gray-400 text-[10px]">' + (u.created_at ? formatTime(u.created_at) : '') + '</span>' +
-            (u.totp_enabled ? '<button data-gid="' + escHtml(u.github_id) + '" class="btn-reset-totp text-[10px] px-2 py-0.5 bg-purple-100 text-purple-500 rounded hover:bg-purple-200 ml-1">重置2FA</button>' : '') +
+            (u.totp_enabled ? '<button data-gid="' + escHtml(u.github_id) + '" class="btn-reset-totp text-[10px] px-2 py-0.5 bg-purple-100 text-purple-500 rounded hover:bg-purple-200 ml-1">Reset 2FA</button>' : '') +
             '<button data-gid="' + escHtml(u.github_id) + '" data-banned="' + banned + '" class="btn-toggle-email-ban text-[10px] px-2 py-0.5 text-white rounded ' + banCls + '">' + banLabel + '</button>' +
-            (u.verified ? '' : '<button data-gid="' + escHtml(u.github_id) + '" class="btn-resend-verify text-[10px] px-2 py-0.5 bg-blue-100 text-blue-500 rounded hover:bg-blue-200 ml-1">重发验证</button>') +
+            (u.verified ? '' : '<button data-gid="' + escHtml(u.github_id) + '" class="btn-resend-verify text-[10px] px-2 py-0.5 bg-blue-100 text-blue-500 rounded hover:bg-blue-200 ml-1">Resend</button>') +
             '</div>';
         }).join('') + '</div>';
-      document.querySelectorAll('.btn-reset-totp').forEach(b => { b.addEventListener('click', () => resetTotp(b.dataset.gid)); });
-      document.querySelectorAll('.btn-resend-verify').forEach(b => {
-        b.addEventListener('click', () => resendVerify(b.dataset.gid));
-      });
-      document.querySelectorAll('.btn-toggle-email-ban').forEach(b => {
-        b.addEventListener('click', () => toggleEmailUserBan(b.dataset.gid, b.dataset.banned === 'true'));
-      });
+      document.querySelectorAll('.btn-reset-totp').forEach(function(b) { b.addEventListener('click', function() { resetTotp(b.dataset.gid); }); });
+      document.querySelectorAll('.btn-toggle-email-ban').forEach(function(b) { b.addEventListener('click', function() { toggleEmailUserBan(b.dataset.gid, b.dataset.banned === 'true'); }); });
+      document.querySelectorAll('.btn-resend-verify').forEach(function(b) { b.addEventListener('click', function() { resendVerify(b.dataset.gid); }); });
     }
-  } catch (e) { $('email-users-list').textContent = '失败: ' + e.message; }
-  try {
-    const abuse = await api('GET', '/api/admin/email-abuse-ips');
-    const ips = abuse.ips || [];
+
+    // Abuse IPs
+    var ips = d.abuse_ips || [];
     if (ips.length > 0) {
       $('abuse-ips-bar').classList.remove('hidden');
-      let html = '';
-      for (const ip of ips) {
-        html += '<code style="background:#fee2e2;padding:1px 4px;border-radius:4px;margin:0 2px">' + escHtml(ip) + '</code> ';
-        html += '<button data-ip="' + escHtml(ip) + '" class="btn-remove-abuse" style="font-size:10px;color:#ef4444;cursor:pointer;border:none;background:none">[移除]</button> ';
+      var html = '';
+      for (var i = 0; i < ips.length; i++) {
+        html += '<code style="background:#fee2e2;padding:1px 4px;border-radius:4px;margin:0 2px">' + escHtml(ips[i]) + '</code> ';
+        html += '<button data-ip="' + escHtml(ips[i]) + '" class="btn-remove-abuse" style="font-size:10px;color:#ef4444;cursor:pointer;border:none;background:none">[X]</button> ';
       }
       $('abuse-ips-list').innerHTML = html;
       document.querySelectorAll('.btn-remove-abuse').forEach(function(b) {
@@ -932,16 +934,7 @@ async function loadEmailAuth() {
     } else {
       $('abuse-ips-bar').classList.add('hidden');
     }
-  } catch(e){console.error(e)}
-}
-
-async function resetTotp(githubId) {
-  if (!confirm('确定重置此用户的 2FA？')) return;
-  try {
-    await api('POST', '/api/admin/email-users/reset-totp', { github_id: githubId });
-    alert('TOTP 已重置');
-    loadEmailAuth();
-  } catch(e) { alert('失败: ' + e.message); }
+  } catch(e) { console.error(e); }
 }
 
 async function resendVerify(githubId) {
