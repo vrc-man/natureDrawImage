@@ -86,11 +86,16 @@ def _load_invite_codes() -> dict:
 
 def _save_invite_codes(data: dict):
     db = get_db()
-    db.execute("DELETE FROM invite_codes")
-    for k, v in data.items():
-        db.execute("INSERT INTO invite_codes VALUES (?,?,?,?)",
-                   (k, v.get("used_count", 0), v.get("max_uses", 1), v.get("created_at", 0)))
-    db.commit()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        db.execute("DELETE FROM invite_codes")
+        for k, v in data.items():
+            db.execute("INSERT INTO invite_codes VALUES (?,?,?,?)",
+                       (k, v.get("used_count", 0), v.get("max_uses", 1), v.get("created_at", 0)))
+        db.commit()
+    except Exception:
+        db.execute("ROLLBACK")
+        raise
 
 def _load_email_users() -> dict:
     rows = get_db().execute("SELECT * FROM email_users").fetchall()

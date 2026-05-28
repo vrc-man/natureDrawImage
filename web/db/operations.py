@@ -504,10 +504,20 @@ def save_report(report: Dict) -> None:
 
 
 def save_reports(reports: List[Dict]) -> None:
-    _db().execute("DELETE FROM reports")
-    for r in reports:
-        save_report(r)
-    _db().commit()
+    _db().execute("BEGIN IMMEDIATE")
+    try:
+        _db().execute("DELETE FROM reports")
+        for r in reports:
+            _db().execute(
+                "INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?,?,?,?)",
+                (r.get("id", ""), r.get("image_path", ""),
+                 r.get("reporter_gid", ""), r.get("reporter_login", ""),
+                 r.get("reason", ""), r.get("status", "pending"),
+                 r.get("timestamp", 0), r.get("resolved_action", "")))
+        _db().commit()
+    except Exception:
+        _db().execute("ROLLBACK")
+        raise
 
 
 # ═══════════════════════════════════════════
@@ -520,10 +530,15 @@ def load_featured() -> List[str]:
 
 
 def save_featured(paths: List[str]) -> None:
-    _db().execute("DELETE FROM featured")
-    for i, p in enumerate(paths):
-        _db().execute("INSERT INTO featured (path, sort_order) VALUES (?,?)", (p, i))
-    _db().commit()
+    _db().execute("BEGIN IMMEDIATE")
+    try:
+        _db().execute("DELETE FROM featured")
+        for i, p in enumerate(paths):
+            _db().execute("INSERT INTO featured (path, sort_order) VALUES (?,?)", (p, i))
+        _db().commit()
+    except Exception:
+        _db().execute("ROLLBACK")
+        raise
 
 
 # ═══════════════════════════════════════════
@@ -536,10 +551,15 @@ def load_banned_ips() -> List[str]:
 
 
 def save_banned_ips(ips: List[str]) -> None:
-    _db().execute("DELETE FROM banned_ips")
-    for ip in ips:
-        _db().execute("INSERT INTO banned_ips VALUES (?)", (ip,))
-    _db().commit()
+    _db().execute("BEGIN IMMEDIATE")
+    try:
+        _db().execute("DELETE FROM banned_ips")
+        for ip in ips:
+            _db().execute("INSERT INTO banned_ips VALUES (?)", (ip,))
+        _db().commit()
+    except Exception:
+        _db().execute("ROLLBACK")
+        raise
 
 
 # ═══════════════════════════════════════════
@@ -576,12 +596,17 @@ def load_styles() -> List[Dict]:
 
 
 def save_styles(styles: List[Dict]) -> None:
-    _db().execute("DELETE FROM styles")
-    for i, s in enumerate(styles):
-        _db().execute(
-            "INSERT INTO styles (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
-            (s.get("name", ""), s.get("tags", ""), s.get("alias", ""), s.get("thumbnail", ""), i))
-    _db().commit()
+    _db().execute("BEGIN IMMEDIATE")
+    try:
+        _db().execute("DELETE FROM styles")
+        for i, s in enumerate(styles):
+            _db().execute(
+                "INSERT INTO styles (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
+                (s.get("name", ""), s.get("tags", ""), s.get("alias", ""), s.get("thumbnail", ""), i))
+        _db().commit()
+    except Exception:
+        _db().execute("ROLLBACK")
+        raise
 
 
 def load_resolutions() -> Dict[str, Any]:
@@ -590,12 +615,17 @@ def load_resolutions() -> Dict[str, Any]:
 
 
 def save_resolutions(presets: List[Dict]) -> None:
-    _db().execute("DELETE FROM resolutions")
-    for i, r in enumerate(presets):
-        _db().execute(
-            "INSERT INTO resolutions (w, h, label, sort_order) VALUES (?,?,?,?)",
-            (r.get("w", 0), r.get("h", 0), r.get("label", ""), i))
-    _db().commit()
+    _db().execute("BEGIN IMMEDIATE")
+    try:
+        _db().execute("DELETE FROM resolutions")
+        for i, r in enumerate(presets):
+            _db().execute(
+                "INSERT INTO resolutions (w, h, label, sort_order) VALUES (?,?,?,?)",
+                (r.get("w", 0), r.get("h", 0), r.get("label", ""), i))
+        _db().commit()
+    except Exception:
+        _db().execute("ROLLBACK")
+        raise
 
 
 def load_workflow_meta() -> List[Dict]:
@@ -604,12 +634,17 @@ def load_workflow_meta() -> List[Dict]:
 
 
 def save_workflow_meta(meta: List[Dict]) -> None:
-    _db().execute("DELETE FROM workflow_meta")
-    for i, m in enumerate(meta):
-        _db().execute(
-            "INSERT INTO workflow_meta (workflow, thumbnail, lora_link, display_name, sort_order) VALUES (?,?,?,?,?)",
-            (m.get("workflow", ""), m.get("thumbnail", ""), m.get("lora_link", ""), m.get("display_name", ""), i))
-    _db().commit()
+    _db().execute("BEGIN IMMEDIATE")
+    try:
+        _db().execute("DELETE FROM workflow_meta")
+        for i, m in enumerate(meta):
+            _db().execute(
+                "INSERT INTO workflow_meta (workflow, thumbnail, lora_link, display_name, sort_order) VALUES (?,?,?,?,?)",
+                (m.get("workflow", ""), m.get("thumbnail", ""), m.get("lora_link", ""), m.get("display_name", ""), i))
+        _db().commit()
+    except Exception:
+        _db().execute("ROLLBACK")
+        raise
 
 
 # ═══════════════════════════════════════════
