@@ -2904,7 +2904,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
   <p class="subtitle">使用前请阅读以下协议</p>
   <p class="cookie-notice">继续使用本网站即表示你同意以下协议及隐私政策中所述的 Cookie 使用方式。</p>
   <label class="agree-label">
-    <input type="checkbox" id="agree-check" onchange="_updateButtons()" />
+    <input type="checkbox" id="agree-check" onchange="_onCheckboxChange()" />
     我已阅读并同意 <a href="/static/privacy.html" target="_blank">用户协议与隐私政策</a>
   </label>
   <div id="turnstile-welcome-container"></div>
@@ -2919,6 +2919,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
 
 <script>
 var _turnstilePassed = false;
+var _turnstileRendered = false;
 function _updateButtons() {
   var ok = document.getElementById('agree-check').checked && _turnstilePassed;
   document.getElementById('btn-github').disabled = !ok;
@@ -2928,12 +2929,17 @@ function _onTurnstilePass() {
   _turnstilePassed = true;
   _updateButtons();
 }
-window.addEventListener('load', function() {
-  var c = document.getElementById('turnstile-welcome-container');
-  if (c && typeof turnstile !== 'undefined') {
-    try { turnstile.render('#turnstile-welcome-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU', theme: 'light', callback: _onTurnstilePass }); } catch(e) {}
+function _onCheckboxChange() {
+  var checked = document.getElementById('agree-check').checked;
+  if (checked && !_turnstileRendered) {
+    _turnstileRendered = true;
+    var c = document.getElementById('turnstile-welcome-container');
+    if (c && typeof turnstile !== 'undefined') {
+      try { turnstile.render('#turnstile-welcome-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU', theme: 'light', callback: _onTurnstilePass }); } catch(e) {}
+    }
   }
-});
+  _updateButtons();
+}
 </script>
 
 </body>
