@@ -84,7 +84,6 @@
     <button type="button" class="pw-toggle" onclick="var i=document.getElementById('el-pwd');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'">👁</button>
     </div>
     <input id="el-totp" type="text" placeholder="两步验证码（未开启请留空）" autocomplete="off" inputmode="numeric" maxlength="6" />
-    <div id="turnstile-login-container" style="margin-bottom:10px;min-height:65px"></div>
     <button id="btn-login" class="btn btn-login">登录</button>
     <span id="login-status" class="status"></span>
     <p style="text-align:center;margin-top:6px"><a href="#" id="link-forgot" style="font-size:12px;color:#9ca3af;text-decoration:none">忘记密码？</a></p>
@@ -143,15 +142,6 @@ function switchTab(tab) {
   if (tab === 'login') {
     tabLogin.classList.add('active'); tabRegister.classList.remove('active');
     panelLogin.classList.add('active'); panelRegister.classList.remove('active');
-    if (turnstileWidget) { turnstile.reset(turnstileWidget); }
-    // Render login Turnstile
-    var lc = document.getElementById('turnstile-login-container');
-    if (lc && typeof turnstile !== 'undefined') {
-      setTimeout(function() {
-        lc.innerHTML = '';
-        try { turnstile.render('#turnstile-login-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU', theme: 'light' }); } catch(e) {}
-      }, 100);
-    }
   } else {
     tabRegister.classList.add('active'); tabLogin.classList.remove('active');
     panelRegister.classList.add('active'); panelLogin.classList.remove('active');
@@ -175,14 +165,6 @@ function switchTab(tab) {
 
 tabLogin.addEventListener('click', function() { switchTab('login'); });
 tabRegister.addEventListener('click', function() { switchTab('register'); });
-
-// 初始渲染登录页 Turnstile
-setTimeout(function() {
-  var lc = document.getElementById('turnstile-login-container');
-  if (lc && typeof turnstile !== 'undefined') {
-    try { turnstile.render('#turnstile-login-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU', theme: 'light' }); } catch(e) {}
-  }
-}, 200);
 
 // Forgot password flow
 document.getElementById('link-forgot').addEventListener('click', function(e) {
@@ -244,8 +226,7 @@ document.getElementById('btn-login').addEventListener('click', async function() 
       body: JSON.stringify({
         email: document.getElementById('el-email').value.trim(),
         password: document.getElementById('el-pwd').value,
-        totp_code: document.getElementById('el-totp').value.trim(),
-        turnstile_token: (typeof turnstile !== 'undefined' ? turnstile.getResponse('#turnstile-login-container') || '' : '')
+        totp_code: document.getElementById('el-totp').value.trim()
       })
     });
     var d = await r.json();
