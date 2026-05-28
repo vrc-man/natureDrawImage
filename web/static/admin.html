@@ -1064,6 +1064,7 @@ function rowHTML(it) {
       data-path="${escHtml(it.path)}" data-mtime="${it.mtime || ''}" data-ip="${escHtml(it.ip || '?')}" />
     <div class="text-[10px] mt-1 break-all">${escHtml(it.path)}</div>
     <div class="text-[10px] text-gray-500">${t}</div>
+    <div class="text-[10px] text-purple-600 truncate" title="${escHtml(it.creator_email || '')}">${escHtml(it.creator_login || '')}</div>
     <div class="flex items-center justify-between gap-1 mt-1">
       <span class="text-[10px] font-mono bg-amber-100 text-amber-800 rounded px-1 break-all">${escHtml(it.ip || '?')}</span>
       ${banBtn}

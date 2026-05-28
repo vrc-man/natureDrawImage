@@ -6458,9 +6458,18 @@ async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0):
         limit = 200
     page = raw[offset:offset + limit]
     items = []
+    # 预加载 users 表用于补 creator_login
+    _users_cache = _load_users()
     for mt, rel in [(x[0], x[1]) for x in page]:
         ip = ip_map.get(rel, "")
-        items.append({"path": rel, "ip": ip, "mtime": mt})
+        creator_login = ""
+        creator_email = ""
+        github_id, login_from_log = _gen_logs_lookup(rel)
+        if github_id:
+            u = _users_cache.get(github_id, {})
+            creator_login = u.get("login", "") or login_from_log
+            creator_email = u.get("email", "")
+        items.append({"path": rel, "ip": ip, "mtime": mt, "creator_login": creator_login, "creator_email": creator_email})
     return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
