@@ -1539,7 +1539,7 @@ function showLightbox() {
     dl.href = u; dl.download = it.title || '';
   }
   if (it.relPath && _currentUser && _currentUser.is_admin) {
-    fetch('/api/output/creator?path=' + encodeURIComponent(it.relPath)).then(r => r.json()).then(d => { if (d && d.creator_ip) $('lb-creator').textContent = 'IP: ' + d.creator_ip; }).catch(() => {});
+    fetch('/api/output/creator?path=' + encodeURIComponent(it.relPath)).then(r => r.json()).then(d => { if (d && d.github_id) $('lb-creator').textContent = '👤 ' + (d.github_login || d.github_id); }).catch(() => {});
   }
   $('lb-root').classList.add('open');
   if (!$('lb-root').dataset.locked) { lockScroll(); $('lb-root').dataset.locked = '1'; }

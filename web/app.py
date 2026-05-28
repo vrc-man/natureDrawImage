@@ -186,6 +186,8 @@ async def _save_gen_log(github_id: str, _login: str, prompt: str, workflow: str,
         u = _load_users().get(github_id, {})
         login = u.get("login", github_id)
     db.save_gen_log(github_id, login or github_id, prompt, workflow, count, status, client_ip, negative_prompt, file_paths)
+    global _gen_logs_path_cache
+    _gen_logs_path_cache = None
 
 async def _increment_key_usage(github_id: str):
     """确认密钥使用（已由 _ws_verify_key 原子预扣，此处仅做耗尽日志记录）。"""
