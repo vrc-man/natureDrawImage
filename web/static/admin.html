@@ -1051,12 +1051,12 @@ $('btn-del-selected-email-logs').addEventListener('click', async function() {
   var ids = [];
   document.querySelectorAll('.elog-check:checked').forEach(function(cb) { ids.push(parseInt(cb.dataset.id)); });
   if (!ids.length) { alert('请先勾选要删除的记录'); return; }
-  if (!confirm('确定删除选中的 ' + ids.length + ' 条记录？')) return;
+  if (prompt('请输入「确认」以删除选中的 ' + ids.length + ' 条记录：') !== '确认') return;
   await api('POST', '/api/admin/email-logs/clear', { ids: ids });
   loadEmailLogs();
 });
 $('btn-clear-email-logs').addEventListener('click', async function() {
-  if (!confirm('确定清空所有发信日志？')) return;
+  if (prompt('清空操作不可恢复。请输入「清空全部」以确认：') !== '清空全部') return;
   await api('POST', '/api/admin/email-logs/clear', {});
   loadEmailLogs();
 });
