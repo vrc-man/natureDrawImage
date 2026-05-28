@@ -2854,6 +2854,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
 <meta name="robots" content="noindex, nofollow" />
 <meta name="generator" content="Modified 2026-05 by vrc-man | Based on afoim/natureDrawImage (AGPLv3) | https://github.com/vrc-man/natureDrawImage" />
 <title>二次元绘梦</title>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -2892,6 +2893,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
   .agree-label { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; color: #4b5563; margin-bottom: 4px; cursor: pointer; }
   .agree-label input { width: 16px; height: 16px; accent-color: #f472b6; cursor: pointer; }
   .agree-label a { color: #f472b6; text-decoration: underline; }
+  #turnstile-welcome-container { margin-bottom: 10px; min-height: 65px; display: flex; justify-content: center; }
   .footer { margin-top: 20px; font-size: 11px; color: #c4b5c0; }
   .footer a { color: #9ca3af; text-decoration: underline; }
 </style>
@@ -2902,9 +2904,10 @@ _WELCOME_HTML = """<!DOCTYPE html>
   <p class="subtitle">使用前请阅读以下协议</p>
   <p class="cookie-notice">继续使用本网站即表示你同意以下协议及隐私政策中所述的 Cookie 使用方式。</p>
   <label class="agree-label">
-    <input type="checkbox" id="agree-check" onchange="document.getElementById('btn-github').disabled=!this.checked;document.getElementById('btn-email').disabled=!this.checked" />
+    <input type="checkbox" id="agree-check" onchange="_updateButtons()" />
     我已阅读并同意 <a href="/static/privacy.html" target="_blank">用户协议与隐私政策</a>
   </label>
+  <div id="turnstile-welcome-container"></div>
   <div class="btn-row">
     <button id="btn-github" class="login-btn" disabled onclick="location.href='/auth/login'">🔑 GitHub 登录</button>
     <button id="btn-email" class="login-btn email-btn" disabled onclick="location.href='/auth/email-login'">📧 邮箱登录/注册</button>
@@ -2914,6 +2917,25 @@ _WELCOME_HTML = """<!DOCTYPE html>
   </div>
 </div>
 
+<script>
+var _turnstilePassed = false;
+function _updateButtons() {
+  var ok = document.getElementById('agree-check').checked && _turnstilePassed;
+  document.getElementById('btn-github').disabled = !ok;
+  document.getElementById('btn-email').disabled = !ok;
+}
+function _onTurnstilePass() {
+  _turnstilePassed = true;
+  _updateButtons();
+}
+window.addEventListener('load', function() {
+  var c = document.getElementById('turnstile-welcome-container');
+  if (c && typeof turnstile !== 'undefined') {
+    try { turnstile.render('#turnstile-welcome-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU', theme: 'light', callback: _onTurnstilePass }); } catch(e) {}
+  }
+});
+</script>
+
 </body>
 </html>"""
 
@@ -2921,7 +2943,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
 async def index(request: Request):
     if not getattr(request.state, "user", None):
         resp = Response(content=_WELCOME_HTML, media_type="text/html")
-        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
     return _serve_html(STATIC_DIR / "index.html", nonce=getattr(request.state, "csp_nonce", ""))
 
