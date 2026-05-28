@@ -1239,8 +1239,6 @@ async function compressImage(file) {
   const origKB = (file.size / 1024).toFixed(0);
   const newKB = (blob.size / 1024).toFixed(0);
   appendLog(`📐 图片压缩: ${origKB}KB → ${newKB}KB (${w}x${h})`);
-  // 保留原始扩展名信息
-  best.name = file.name.replace(/\.[^.]+$/, '.jpg');
   return blob;
 }
 
