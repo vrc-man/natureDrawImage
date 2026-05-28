@@ -1841,6 +1841,7 @@ function _renderKeyInfo(ki, isAdmin, accessGranted) {
       // 冷却倒计时
       if (d.cooldown_total) { _cooldownDefault = d.cooldown_total; }
       if (d.cooldown_remaining > 0) { startCooldown(d.cooldown_remaining); }
+      pollMyQueue();  // 立即检查队列中是否有任务
     } else {
       label.textContent = '登录';
       label.className = 'px-2 py-1 rounded-full bg-emerald-50 text-emerald-600 cursor-pointer font-medium';
