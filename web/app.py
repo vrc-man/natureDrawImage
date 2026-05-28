@@ -295,10 +295,18 @@ def _load_users() -> dict:
 
 async def _save_users(users: dict) -> None:
     try:
-        db._db().execute("DELETE FROM users")
+        conn = db._db()
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM users")
         for gid, u in users.items():
-            db.save_user(gid, u.get("login",""), u.get("email",""), u.get("avatar_url",""), u.get("role","user"))
-        db._db().commit()
+            conn.execute("""
+                INSERT INTO users (github_id, login, email, avatar_url, role, created_at)
+                VALUES (?,?,?,?,?,?)
+                ON CONFLICT(github_id) DO UPDATE SET
+                    login=excluded.login, email=excluded.email,
+                    avatar_url=excluded.avatar_url
+            """, (gid, u.get("login",""), u.get("email",""), u.get("avatar_url",""), u.get("role","user"), _time_module.time()))
+        conn.commit()
     except Exception as _se:
         print(f'[_save_users] ERROR: {type(_se).__name__}: {_se}')
         import traceback as _stb
@@ -309,11 +317,13 @@ def _load_sessions() -> dict:
 
 async def _save_sessions(sessions: dict) -> None:
     try:
-        db._db().execute("DELETE FROM sessions")
+        conn = db._db()
+        conn.execute("BEGIN")
+        conn.execute("DELETE FROM sessions")
         for token, s in sessions.items():
-            db._db().execute("INSERT INTO sessions VALUES (?,?,?,?,?)",
+            conn.execute("INSERT INTO sessions VALUES (?,?,?,?,?)",
                 (token, s.get("github_id",""), s.get("expires_at",0), s.get("access_granted",0), s.get("claimed_key","")))
-        db._db().commit()
+        conn.commit()
     except Exception as _se:
         print(f'[_save_users] ERROR: {type(_se).__name__}: {_se}')
         import traceback as _stb
