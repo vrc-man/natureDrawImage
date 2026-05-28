@@ -129,6 +129,7 @@ _PIL_MAX_PIXELS = 100_000_000  # 1亿像素
 # 信任的反代 IP（逗号分隔）。设为 "*" 信任所有（危险！），设为 "" 不信任任何代理
 # 如果有 nginx/Cloudflare 反代，填反代 IP，否则 X-Forwarded-For 会被忽略
 TRUSTED_PROXY_IPS = os.environ.get("TRUSTED_PROXY_IPS", "127.0.0.1,::1")
+CONTACT_EMAIL = os.environ.get("CONTACT_EMAIL", "")
 
 COMFYUI_API = f"http://{COMFYUI_HOST}:{COMFYUI_PORT}"
 LMS_API = f"http://{LMS_HOST}:{LMS_PORT}"
@@ -2905,7 +2906,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
   <p class="cookie-notice">继续使用本网站即表示你同意以下协议及隐私政策中所述的 Cookie 使用方式。</p>
   <label class="agree-label">
     <input type="checkbox" id="agree-check" onchange="_onCheckboxChange()" />
-    我已阅读并同意 <a href="/static/privacy.html" target="_blank">用户协议与隐私政策</a>
+    我已阅读并同意 <a href="/privacy" target="_blank">用户协议与隐私政策</a>
   </label>
   <div id="turnstile-welcome-container"></div>
   <div class="btn-row">
@@ -2952,6 +2953,16 @@ async def index(request: Request):
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
     return _serve_html(STATIC_DIR / "index.html", nonce=getattr(request.state, "csp_nonce", ""))
+
+
+@app.get("/privacy")
+async def privacy_page(request: Request):
+    """用户协议与隐私政策页面（邮箱从环境变量读取，不硬编码在HTML中）。"""
+    content = (STATIC_DIR / "privacy.html").read_text(encoding="utf-8")
+    content = content.replace("__CONTACT_EMAIL__", CONTACT_EMAIL or "huimeng@hjmmb.com")
+    resp = Response(content=content, media_type="text/html")
+    resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    return resp
 
 
 @app.get("/access")
