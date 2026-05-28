@@ -3617,6 +3617,20 @@ async def api_output_featured(request: Request):
     return {"items": items, "total": len(items), "tip": _limits.get("featured_tip", "")}
 
 
+@app.get("/api/output/creator")
+async def api_output_creator(request: Request, path: str = ""):
+    """查询图片的生图者信息（用于管理员灯箱显示）。"""
+    if not path:
+        raise HTTPException(400, "path required")
+    rel = path.strip().replace("\\", "/")
+    github_id, login = _gen_logs_lookup(rel)
+    if github_id:
+        users = _load_users()
+        u = users.get(github_id, {})
+        return {"github_id": github_id, "github_login": u.get("login", "") or login, "github_email": u.get("email", "")}
+    return {"github_id": "", "github_login": "", "github_email": ""}
+
+
 @app.get("/api/output/file")
 async def api_output_file(request: Request, path: str, full: int = 0):
     user = _get_user_from_session(request)
