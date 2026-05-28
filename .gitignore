@@ -60,3 +60,10 @@ gcbackups
 *.db-wal
 node_modules/
 web/rate_limits.json
+
+# ── opencode 本地配置 ──
+.opencode/
+
+# ── 压缩包/归档 ──
+*.7z
+*.zip
