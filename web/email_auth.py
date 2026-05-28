@@ -681,7 +681,9 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             email_users = _load_email_users()
             eu = email_users.get(email)
             if not eu:
-                raise HTTPException(400)
+                raise HTTPException(404)
+            if eu.get("totp_enabled"):
+                return {"ok": True, "secret": eu["totp_secret"], "enabled": True}
             eu["totp_secret"] = _generate_totp_secret()
             eu["totp_enabled"] = False
             _save_email_users(email_users)

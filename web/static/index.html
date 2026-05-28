@@ -1868,6 +1868,13 @@ async function showTotpModal() {
     try {
       const r = await fetch('/api/auth/totp-setup', {method:'POST'});
       const d = await r.json();
+      if (d.enabled) {
+        $('totp-setup-step').classList.add('hidden');
+        $('totp-enabled-step').classList.remove('hidden');
+        modal.classList.remove('hidden');
+        modal.classList.add('flex');
+        return;
+      }
       _totpSecret = d.secret;
       $('totp-secret-display').textContent = _totpSecret;
       $('totp-qrcode').src = '/api/auth/totp-qrcode?t=' + Date.now();
