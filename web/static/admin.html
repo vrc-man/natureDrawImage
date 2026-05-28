@@ -2562,7 +2562,7 @@ async function forceUnlock() {
 function startQueuePolling() {
   loadQueue();
   if (_queueTimer) clearInterval(_queueTimer);
-  _queueTimer = setInterval(loadQueue, 2000);
+  _queueTimer = setInterval(loadQueue, 1000);
 }
 
 $('btn-refresh-queue').addEventListener('click', loadQueue);
