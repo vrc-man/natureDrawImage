@@ -1051,7 +1051,7 @@ $('btn-del-selected-email-logs').addEventListener('click', async function() {
   var ids = [];
   document.querySelectorAll('.elog-check:checked').forEach(function(cb) { ids.push(parseInt(cb.dataset.id)); });
   if (!ids.length) { alert('请先勾选要删除的记录'); return; }
-  if (prompt('请输入「确认」以删除选中的 ' + ids.length + ' 条记录：') !== '确认') return;
+  if (prompt('请输入「确认删除发信日志」以删除选中的 ' + ids.length + ' 条记录：') !== '确认删除发信日志') return;
   await api('POST', '/api/admin/email-logs/clear', { ids: ids });
   loadEmailLogs();
 });

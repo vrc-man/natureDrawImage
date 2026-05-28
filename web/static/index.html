@@ -1067,6 +1067,7 @@ function appendLog(line) { const el = $('log'); el.textContent += line + '\n'; }
 
 function startRun() {
   if ($('btn-run').disabled) return;
+  $('btn-run').disabled = true;
   const direct = $('direct').value.trim();
   const nl = $('nl').value.trim();
   const neg = $('negative_prompt').value.trim();
@@ -1080,9 +1081,9 @@ function showGenNotice(direct, nl, neg, w, h) {
   const m = $('gen-notice-modal');
   m.classList.remove('hidden'); m.classList.add('flex');
   lockScroll(); m.dataset.locked = '1';
-  const close = () => { m.classList.add('hidden'); m.classList.remove('flex'); if (m.dataset.locked) { unlockScroll(); delete m.dataset.locked; } };
-  $('gen-notice-accept').onclick = () => { close(); _genNoticeAcked = true; document.cookie = 'genNoticeAcked=1; path=/; max-age=31536000; Secure; SameSite=Lax'; actuallyStartRun(direct, nl, neg, w, h); };
-  $('gen-notice-cancel').onclick = close;
+  const closeModal = () => { m.classList.add('hidden'); m.classList.remove('flex'); if (m.dataset.locked) { unlockScroll(); delete m.dataset.locked; } };
+  $('gen-notice-accept').onclick = () => { closeModal(); _genNoticeAcked = true; document.cookie = 'genNoticeAcked=1; path=/; max-age=31536000; Secure; SameSite=Lax'; actuallyStartRun(direct, nl, neg, w, h); };
+  $('gen-notice-cancel').onclick = () => { closeModal(); $('btn-run').disabled = false; };
 }
 
 async function actuallyStartRun(direct, nl, neg, w, h) {
