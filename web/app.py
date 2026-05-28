@@ -2959,7 +2959,7 @@ async def index(request: Request):
 async def privacy_page(request: Request):
     """用户协议与隐私政策页面（邮箱从环境变量读取，不硬编码在HTML中）。"""
     content = (STATIC_DIR / "privacy.html").read_text(encoding="utf-8")
-    content = content.replace("__CONTACT_EMAIL__", CONTACT_EMAIL or "huimeng@hjmmb.com")
+    content = content.replace("__CONTACT_EMAIL__", CONTACT_EMAIL or "admin@example.com")
     resp = Response(content=content, media_type="text/html")
     resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     return resp
