@@ -58,11 +58,19 @@
 .pw-wrap { position: relative; }
 .pw-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 16px; user-select: none; color: #9ca3af; background: none; border: none; }
 .pw-toggle:hover { color: #f472b6; }
+.modal-overlay { position: fixed; inset: 0; z-index: 999; background: rgba(0,0,0,0.3); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; padding: 20px; }
+.modal-overlay.show { display: flex; }
+.modal-box { background: #fff; border-radius: 24px; max-width: 400px; width: 100%; padding: 32px 24px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+.modal-box .icon { font-size: 48px; margin-bottom: 12px; }
+.modal-box h3 { font-size: 18px; font-weight: 700; color: #1f2937; margin-bottom: 8px; }
+.modal-box p { font-size: 14px; color: #6b7280; margin-bottom: 20px; line-height: 1.6; }
+.modal-box .btn { width: 100%; padding: 11px; border: 0; border-radius: 14px; font-size: 15px; font-weight: 600; cursor: pointer; transition: all .2s; color: #fff; background: linear-gradient(135deg, #f472b6, #fb7185); box-shadow: 0 4px 20px rgba(244,114,182,0.3); }
+.modal-box .btn:hover { transform: translateY(-1px); }
 </style>
 </head>
 <body>
 <div class="card">
-  <h2>📧 邮箱认证</h2>
+  <h2>📧 邮箱注册登陆</h2>
   <div class="tab-row">
     <button id="tab-login" class="active">登录</button>
     <button id="tab-register">注册</button>
@@ -111,6 +119,16 @@
   </div>
 
   <a href="/" class="back-link">← 返回首页</a>
+</div>
+
+<!-- 注册成功弹窗 -->
+<div id="reg-success-modal" class="modal-overlay">
+  <div class="modal-box">
+    <div class="icon">📧</div>
+    <h3>注册成功！</h3>
+    <p id="reg-success-msg">请查收验证邮件并点击链接激活账号后登录。</p>
+    <button class="btn" onclick="closeRegSuccess()">前往登录</button>
+  </div>
 </div>
 
 <script>
@@ -267,12 +285,15 @@ document.getElementById('btn-register').addEventListener('click', async function
     });
     var d = await r.json();
     if (!r.ok) throw new Error(d.detail || '注册失败');
-    s.textContent = d.message;
-    s.className = 'status success';
-    // Switch to login tab after successful registration
-    setTimeout(function() { switchTab('login'); }, 2000);
+    // 显示注册成功弹窗
+    document.getElementById('reg-success-msg').textContent = d.message || '注册成功！请查收验证邮件并点击链接激活账号后登录。';
+    document.getElementById('reg-success-modal').classList.add('show');
   } catch(e) { s.textContent = e.message; s.className = 'status error'; btn.disabled = false; }
 });
+function closeRegSuccess() {
+  document.getElementById('reg-success-modal').classList.remove('show');
+  switchTab('login');
+}
 </script>
 </body>
 </html>
