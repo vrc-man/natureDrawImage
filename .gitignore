@@ -36,7 +36,6 @@ web/gen_log.json
 web/queue_state.json
 web/user_images.json
 web/deleted_images.json
-web/static/privacy.html
 
 # ── 运行时图片 & 资源 ──
 web/deletion_log.json
