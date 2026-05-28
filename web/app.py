@@ -2877,22 +2877,21 @@ _WELCOME_HTML = """<!DOCTYPE html>
   }
   h1 { font-size: 22px; font-weight: 700; margin-bottom: 4px; color: #1f2937; }
   .subtitle { font-size: 13px; color: #9ca3af; margin-bottom: 20px; }
-  .notice {
-    background: rgba(255,241,242,0.6); border: 1px solid rgba(244,114,182,0.15);
-    border-radius: 16px; padding: 18px; text-align: left; margin-bottom: 20px;
-  }
-  .notice h3 { font-size: 14px; font-weight: 600; color: #be185d; margin-bottom: 10px; }
-  .notice ul { list-style: none; padding: 0; }
-  .notice li { font-size: 13px; color: #4b5563; line-height: 1.7; padding: 2px 0 2px 16px; position: relative; }
-  .notice li::before { content: '•'; position: absolute; left: 2px; color: #f472b6; }
-  .notice li strong { color: #374151; }
   .login-btn {
-    display: block; width: 100%; background: linear-gradient(135deg, #f472b6, #fb7185);
-    color: #fff; border: 0; border-radius: 16px; padding: 12px; font-size: 15px; font-weight: 600;
+    flex: 1; background: linear-gradient(135deg, #f472b6, #fb7185);
+    color: #fff; border: 0; border-radius: 16px; padding: 12px; font-size: 14px; font-weight: 600;
     cursor: pointer; text-decoration: none; transition: all .2s;
     box-shadow: 0 4px 20px rgba(244,114,182,0.3);
   }
-  .login-btn:hover { transform: translateY(-1px); box-shadow: 0 6px 28px rgba(244,114,182,0.4); }
+  .login-btn:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 28px rgba(244,114,182,0.4); }
+  .login-btn:disabled { opacity: 0.5; cursor: not-allowed; box-shadow: none; }
+  .email-btn { background: linear-gradient(135deg, #34d399, #16a34a); box-shadow: 0 4px 20px rgba(52,211,153,0.2); }
+  .email-btn:hover:not(:disabled) { box-shadow: 0 6px 28px rgba(52,211,153,0.3); }
+  .btn-row { display: flex; gap: 10px; margin-top: 14px; }
+  .cookie-notice { font-size: 13px; color: #6b7280; margin-bottom: 14px; line-height: 1.6; }
+  .agree-label { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; color: #4b5563; margin-bottom: 4px; cursor: pointer; }
+  .agree-label input { width: 16px; height: 16px; accent-color: #f472b6; cursor: pointer; }
+  .agree-label a { color: #f472b6; text-decoration: underline; }
   .footer { margin-top: 20px; font-size: 11px; color: #c4b5c0; }
   .footer a { color: #9ca3af; text-decoration: underline; }
 </style>
@@ -2900,23 +2899,16 @@ _WELCOME_HTML = """<!DOCTYPE html>
 <body>
 <div class="card">
   <h1>🌸 二次元绘梦</h1>
-  <p class="subtitle">使用前请阅读以下声明</p>
-  <div class="notice">
-    <h3>📋 使用协议与免责声明</h3>
-    <ul>
-      <li>登录即表示您同意本站通过 GitHub OAuth <strong>获取您的用户名、用户ID及邮箱信息</strong>，仅用于<strong>账户识别与违规追溯</strong></li>
-      <li>您的 <strong>IP 地址将被记录</strong>，违规行为将被追溯</li>
-      <li>您应对自己生成的图片内容承担<strong>全部法律责任</strong></li>
-      <li>请遵守当地法律法规，<strong>不得生成违法、侵权或不当内容</strong></li>
-      <li>您的作品<strong>仅自己可见</strong>，本站不会擅自公开</li>
-      <li>本站有权<strong>保留违规证据</strong>（IP、用户名、邮箱、违规内容）</li>
-      <li>本站为个人非商业项目，不提供可用性保证</li>
-    </ul>
+  <p class="subtitle">使用前请阅读以下协议</p>
+  <p class="cookie-notice">继续使用本网站即表示你同意以下协议及隐私政策中所述的 Cookie 使用方式。</p>
+  <label class="agree-label">
+    <input type="checkbox" id="agree-check" onchange="document.getElementById('btn-github').disabled=!this.checked;document.getElementById('btn-email').disabled=!this.checked" />
+    我已阅读并同意 <a href="/static/privacy.html" target="_blank">用户协议与隐私政策</a>
+  </label>
+  <div class="btn-row">
+    <button id="btn-github" class="login-btn" disabled onclick="location.href='/auth/login'">🔑 GitHub 登录</button>
+    <button id="btn-email" class="login-btn email-btn" disabled onclick="location.href='/auth/email-login'">📧 邮箱登录/注册</button>
   </div>
-  <a href="/auth/login" class="login-btn">GitHub 登录</a>
-  <p style="text-align:center;margin-top:10px">
-    <a href="/auth/email-login" style="color:#9ca3af;font-size:13px;text-decoration:none">邮箱登录/注册</a>
-  </p>
   <div class="footer">
     Powered by <a href="https://github.com/afoim/natureDrawImage">natureDrawImage</a> (AGPLv3) | Modified by vrc-man since 2026-05 | <a href="https://github.com/vrc-man/natureDrawImage">源码</a>
   </div>
