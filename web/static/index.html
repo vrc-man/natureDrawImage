@@ -1067,12 +1067,14 @@ function appendLog(line) { const el = $('log'); el.textContent += line + '\n'; }
 
 function startRun() {
   if ($('btn-run').disabled) return;
-  $('btn-run').disabled = true;
   const direct = $('direct').value.trim();
   const nl = $('nl').value.trim();
+  if (!direct && !nl) { appendLog('❌ 请填写 prompt'); return; }
+  const w = parseInt($('width').value);
+  const h = parseInt($('height').value);
+  if (!w || !h) { appendLog('❌ 请选择分辨率'); return; }
+  $('btn-run').disabled = true;
   const neg = $('negative_prompt').value.trim();
-  let w = parseInt($('width').value) || null;
-  let h = parseInt($('height').value) || null;
   if (!_genNoticeAcked) { showGenNotice(direct, nl, neg, w, h); }
   else { actuallyStartRun(direct, nl, neg, w, h); }
 }
@@ -1354,13 +1356,13 @@ function finishRun() {
   // 清理图生图上传引用
   $('img1').value = '';
   $('img2').value = '';
-  pollMyQueue();
   // 生图完成后启动冷却倒计时（管理员豁免）
   if (!_currentUser || !_currentUser.is_admin) {
     const sec = _pendingCooldownSec >= 0 ? _pendingCooldownSec : (_cooldownDefault || 30);
     _pendingCooldownSec = -1;
-    startCooldown(sec);
+    startCooldown(sec);   // 先设冷却（阻断 pollMyQueue 误启用按钮）
   }
+  pollMyQueue();
 }
 
 // ==================== 事件绑定 ====================
