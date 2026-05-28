@@ -758,11 +758,16 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         return {"ok": True}
 
     @app.get("/api/admin/email-logs")
-    async def api_admin_email_logs(request: Request, limit: int = 50):
+    async def api_admin_email_logs(request: Request, limit: int = 50, date_from: float = 0, date_to: float = 0):
         if not getattr(request.state, "is_admin", False):
             raise HTTPException(403)
-        db = get_db()
-        rows = db.execute("SELECT * FROM email_logs ORDER BY id DESC LIMIT ?", (min(limit, 200),)).fetchall()
+        now = time.time()
+        date_from = date_from or 0
+        date_to = date_to or (now + 86400)
+        rows = get_db().execute(
+            "SELECT * FROM email_logs WHERE created_at >= ? AND created_at <= ? ORDER BY id DESC LIMIT ?",
+            (date_from, date_to, min(limit, 200))
+        ).fetchall()
         return {"logs": [dict(r) for r in rows]}
 
     @app.post("/api/admin/email-logs/clear")
