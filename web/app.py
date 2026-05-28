@@ -3104,6 +3104,19 @@ async def api_whoami(request: Request):
     return {"login": None, "is_admin": False, "logged_in": False, "access_granted": False}
 
 
+@app.get("/api/notifications")
+async def api_notifications(request: Request):
+    """轻量通知端点，仅返回未读通知数和队列数，供前端小圆点使用。"""
+    user = _get_user_from_session(request)
+    if not user:
+        return {"unread_notifications": 0, "my_queue_count": 0}
+    uid = str(user.get("github_id", ""))
+    return {
+        "unread_notifications": len(db.get_unread_notifications(uid)),
+        "my_queue_count": sum(1 for qi in _task_queue if str(qi.get("github_id", "")) == uid),
+    }
+
+
 @app.post("/api/whoami/read-notifications")
 async def api_read_notifications(request: Request):
     """标记所有通知为已读。"""

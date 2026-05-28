@@ -1653,11 +1653,11 @@ let _cooldownDefault = 30;
   };
 })();
 let _gpuTimer = setInterval(pollGPU, _gpuInterval);
-// 通知轮询 5s
+// 通知轮询 2s
 setInterval(async () => {
   if (!_currentUser || !_currentUser.logged_in) return;
   try {
-    const r = await fetch('/api/whoami');
+    const r = await fetch('/api/notifications');
     const d = await r.json();
     const nc = d.unread_notifications || 0;
     const qc = d.my_queue_count || 0;
@@ -1677,7 +1677,7 @@ setInterval(async () => {
       count2.classList.add('hidden');
     }
   } catch(e){console.error(e)}
-}, 5000);
+}, 2000);
 
 // ==================== 公告 ====================
 async function loadAnnouncement() {
