@@ -294,40 +294,32 @@ def _load_users() -> dict:
     return db.load_users()  # SQLite
 
 async def _save_users(users: dict) -> None:
-    try:
-        conn = db._db()
-        conn.execute("BEGIN")
-        conn.execute("DELETE FROM users")
-        for gid, u in users.items():
-            conn.execute("""
-                INSERT INTO users (github_id, login, email, avatar_url, role, created_at)
-                VALUES (?,?,?,?,?,?)
-                ON CONFLICT(github_id) DO UPDATE SET
-                    login=excluded.login, email=excluded.email,
-                    avatar_url=excluded.avatar_url
-            """, (gid, u.get("login",""), u.get("email",""), u.get("avatar_url",""), u.get("role","user"), _time_module.time()))
-        conn.commit()
-    except Exception as _se:
-        print(f'[_save_users] ERROR: {type(_se).__name__}: {_se}')
-        import traceback as _stb
-        _stb.print_exc()
+    for gid, u in users.items():
+        db._db().execute("""
+            INSERT INTO users (github_id, login, email, avatar_url, role, banned, banned_reason, created_at)
+            VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(github_id) DO UPDATE SET
+                login=excluded.login, email=excluded.email,
+                avatar_url=excluded.avatar_url,
+                role=excluded.role,
+                banned=excluded.banned,
+                banned_reason=excluded.banned_reason
+        """, (gid, u.get("login",""), u.get("email",""), u.get("avatar_url",""),
+              u.get("role","user"), int(u.get("banned",0)), u.get("banned_reason",""),
+              u.get("created_at", _time_module.time())))
 
 def _load_sessions() -> dict:
     return db.load_sessions()  # SQLite
 
 async def _save_sessions(sessions: dict) -> None:
-    try:
-        conn = db._db()
-        conn.execute("BEGIN")
-        conn.execute("DELETE FROM sessions")
-        for token, s in sessions.items():
-            conn.execute("INSERT INTO sessions VALUES (?,?,?,?,?)",
-                (token, s.get("github_id",""), s.get("expires_at",0), s.get("access_granted",0), s.get("claimed_key","")))
-        conn.commit()
-    except Exception as _se:
-        print(f'[_save_users] ERROR: {type(_se).__name__}: {_se}')
-        import traceback as _stb
-        _stb.print_exc()
+    for token, s in sessions.items():
+        db.save_session(
+            token,
+            s.get("github_id", ""),
+            s.get("expires_at", 0),
+            int(s.get("access_granted", 0)),
+            s.get("claimed_key", ""),
+        )
 
 async def _create_session(github_id: str) -> str:
     """创建会话，返回 token。管理员自动获得 access_granted。"""
@@ -363,7 +355,6 @@ def _get_user_from_session(request: Request) -> Optional[dict]:
     if now > sess.get("expires_at", 0):
         return None
     # 滑动过期：剩余时间不足一半时自动续期为完整 30 天（每 token 每日最多续一次）
-    # 仅更新内存中的会话，持久化由后续 _save_sessions 触发（避免无锁写文件）
     half_life = SESSION_MAX_AGE_SEC / 2
     remaining = sess.get("expires_at", 0) - now
     if remaining < half_life:
@@ -371,6 +362,8 @@ def _get_user_from_session(request: Request) -> Optional[dict]:
         if now - _last_refresh > 86400:  # 24 小时内不重复续
             sess["expires_at"] = now + SESSION_MAX_AGE_SEC
             _session_refresh_tracker[token] = now
+            db.save_session(token, sess.get("github_id",""), sess["expires_at"],
+                           int(sess.get("access_granted",0)), sess.get("claimed_key",""))
     users = _load_users()
     user = users.get(str(sess.get("github_id")))
     if user:
@@ -1614,14 +1607,19 @@ async def _run_gc():
                     pass
             else:
                 still_failed.setdefault(github_id, []).append(rel_path)
-    # 写回 deleted_images.json：仅保留仍失败的条目
+    # 写回 deleted_images：仅保留仍失败的条目
     if gc_deleted > 0:
         async with _deleted_images_lock:
             try:
-                if still_failed:
-                    db.save_deleted_images(still_failed)
-                else:
-                    db.save_deleted_images({})
+                old = _load_deleted_images()
+                for gid, paths in old.items():
+                    for p in paths:
+                        if gid not in still_failed or p not in still_failed.get(gid, []):
+                            db.remove_deleted_image(gid, p)
+                for gid, paths in still_failed.items():
+                    for p in paths:
+                        if gid not in old or p not in old.get(gid, []):
+                            db.add_deleted_image(gid, p)
             except Exception:
                 pass
         # 同步清理 gen_log 中对应文件路径的记录
@@ -1868,12 +1866,13 @@ async def _ensure_thumb_cache():
     _safe_task(_async_batch_generate_thumbs(rels, OUTPUT_DIR_STR), "startup_thumbs")
 
 async def _cleanup_stale_deleted_entries():
-    """启动时同步 deleted_images.json：清理磁盘已不存在的过期记录。文件删除统一由 GC 处理。"""
+    """启动时同步 deleted_images：清理磁盘已不存在的过期记录。文件删除统一由 GC 处理。"""
     try:
         output_dir = Path(OUTPUT_DIR_STR)
         deleted = _load_deleted_images()
         if not deleted:
             return
+        old = {k: list(v) for k, v in deleted.items()}
         changed = False
         for key in list(deleted.keys()):
             paths = deleted[key]
@@ -1890,8 +1889,12 @@ async def _cleanup_stale_deleted_entries():
             else:
                 del deleted[key]
         if changed:
-            db.save_deleted_images(deleted)
-            print("[startup] deleted_images.json 过期记录已清理")
+            for gid, paths in old.items():
+                kept = deleted.get(gid, [])
+                for p in paths:
+                    if p not in kept:
+                        db.remove_deleted_image(gid, p)
+            print("[startup] deleted_images 过期记录已清理")
     except Exception as e:
         print(f"[startup] 清理 deleted_images 失败: {e}")
 
@@ -3287,9 +3290,10 @@ async def auth_logout(request: Request):
     """清除会话（POST 防止 CSRF 强制登出）。"""
     token = request.cookies.get("session", "")
     if token:
-        sessions = _load_sessions()
-        sessions.pop(token, None)
-        await _save_sessions(sessions)
+        async with _sessions_lock:
+            sessions = _load_sessions()
+            sessions.pop(token, None)
+            await _save_sessions(sessions)
     resp = JSONResponse({"ok": True})
     resp.delete_cookie("session", path="/", httponly=True, samesite="lax", secure=SITE_URL.startswith("https"))
     return resp
@@ -6530,17 +6534,12 @@ async def api_admin_delete(request: Request, payload: Dict[str, Any]):
         print(f"[ERROR] 管理员标记删除失败: {rel} — {type(e).__name__}: {e}")
         raise HTTPException(500, "标记删除失败")
     key = rel.replace("\\", "/")
-    # 标记到 deleted_images.json
+    # 标记到 deleted_images
     async with _deleted_images_lock:
-        deleted = _load_deleted_images()
-        paths = deleted.get("__admin__", [])
-        if key not in paths:
-            paths.append(key)
-            deleted["__admin__"] = paths
-            try:
-                db.save_deleted_images(deleted)
-            except Exception:
-                pass
+        try:
+            db.add_deleted_image("__admin__", key)
+        except Exception:
+            pass
     async with _creator_map_lock:
         try:
             if CREATOR_MAP_FILE.is_file():
@@ -6631,14 +6630,9 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
     del_set = set(r.replace("\\", "/") for r in deleted)
     if deleted:
         async with _deleted_images_lock:
-            _del = _load_deleted_images()
-            paths = _del.get("__admin__", [])
-            for d in del_set:
-                if d not in paths:
-                    paths.append(d)
-            _del["__admin__"] = paths
             try:
-                db.save_deleted_images(_del)
+                for d in del_set:
+                    db.add_deleted_image("__admin__", d)
             except Exception:
                 pass
     # 批量清理 creator_ips.txt 映射
@@ -6780,18 +6774,11 @@ async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any])
             await _record_deletion(p, "__admin__", "admin")
         except Exception:
             pass
-    # 1. 添加到 deleted_images.json
+    # 1. 添加到 deleted_images
     async with _deleted_images_lock:
-        deleted = _load_deleted_images()
-        admin_paths = deleted.get("__admin__", [])
-        existing = set(admin_paths)
-        for p in valid:
-            if p not in existing:
-                admin_paths.append(p)
-                existing.add(p)
-        deleted["__admin__"] = admin_paths
         try:
-            db.save_deleted_images(deleted)
+            for p in valid:
+                db.add_deleted_image("__admin__", p)
         except Exception:
             pass
     # 2. 清理 user_images.json（移除被删图片的归属记录）
@@ -7534,17 +7521,12 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
         except Exception:
             pass
         key = image_path.replace("\\", "/")
-        # 标记到 deleted_images.json
+        # 标记到 deleted_images
         async with _deleted_images_lock:
-            _del = _load_deleted_images()
-            paths2 = _del.get("__admin__", [])
-            if key not in paths2:
-                paths2.append(key)
-                _del["__admin__"] = paths2
-                try:
-                    db.save_deleted_images(_del)
-                except Exception:
-                    pass
+            try:
+                db.add_deleted_image("__admin__", key)
+            except Exception:
+                pass
         async with _creator_map_lock:
             try:
                 if CREATOR_MAP_FILE.is_file():

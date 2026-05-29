@@ -530,15 +530,13 @@ def load_featured() -> List[str]:
 
 
 def save_featured(paths: List[str]) -> None:
-    _db().execute("BEGIN IMMEDIATE")
-    try:
-        _db().execute("DELETE FROM featured")
-        for i, p in enumerate(paths):
-            _db().execute("INSERT INTO featured (path, sort_order) VALUES (?,?)", (p, i))
-        _db().commit()
-    except Exception:
-        _db().execute("ROLLBACK")
-        raise
+    old = {r["path"] for r in _db().execute("SELECT path FROM featured").fetchall()}
+    new_set = set(paths)
+    for p in old:
+        if p not in new_set:
+            _db().execute("DELETE FROM featured WHERE path=?", (p,))
+    for i, p in enumerate(paths):
+        _db().execute("INSERT OR REPLACE INTO featured (path, sort_order) VALUES (?,?)", (p, i))
 
 
 # ═══════════════════════════════════════════
@@ -551,15 +549,14 @@ def load_banned_ips() -> List[str]:
 
 
 def save_banned_ips(ips: List[str]) -> None:
-    _db().execute("BEGIN IMMEDIATE")
-    try:
-        _db().execute("DELETE FROM banned_ips")
-        for ip in ips:
-            _db().execute("INSERT INTO banned_ips VALUES (?)", (ip,))
-        _db().commit()
-    except Exception:
-        _db().execute("ROLLBACK")
-        raise
+    old = {r["ip"] for r in _db().execute("SELECT ip FROM banned_ips").fetchall()}
+    new_set = set(ips)
+    for ip in old:
+        if ip not in new_set:
+            _db().execute("DELETE FROM banned_ips WHERE ip=?", (ip,))
+    for ip in ips:
+        if ip not in old:
+            _db().execute("INSERT OR IGNORE INTO banned_ips VALUES (?)", (ip,))
 
 
 # ═══════════════════════════════════════════
