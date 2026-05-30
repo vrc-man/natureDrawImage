@@ -8060,6 +8060,18 @@ async def api_admin_gen_logs_clear(request: Request, date_from: float = 0, date_
     return {"ok": True, "message": f"已清空 {removed} 条日志"}
 
 
+@app.post("/api/admin/gen-logs/delete")
+async def api_admin_gen_logs_delete(request: Request, payload: Dict[str, Any] = {}):
+    """批量删除指定 log_id 的生图日志。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    ids = (payload or {}).get("ids", [])
+    if not ids or not isinstance(ids, list):
+        raise HTTPException(400, "ids (list) required")
+    removed = db.delete_gen_logs_by_ids(ids)
+    return {"ok": True, "removed": removed}
+
+
 # ==================== 删除记录（回收站） ====================
 
 @app.get("/api/admin/deletion-log")

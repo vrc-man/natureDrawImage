@@ -22,6 +22,9 @@
 /* 删除记录：预览模式下隐藏编辑控件 */
 .del-log-preview .del-log-check,
 .del-log-preview .btn-clear-deletion-record { display: none; }
+/* 生图日志：预览模式下隐藏编辑控件 */
+.gl-log-preview .gl-log-check,
+.gl-log-preview .gl-log-del { display: none; }
 </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
@@ -467,23 +470,38 @@
       </div>
       <div class="border-t pt-3">
         <h3 class="text-sm font-semibold mb-2">👤 邮箱注册用户 <span id="email-users-count" class="text-gray-400 text-xs">(0)</span></h3>
-        <div style="border-top:1px solid #fce7f3;padding-top:12px;margin-bottom:12px">
+        <div class="flex flex-wrap gap-2 mb-2 items-center text-xs">
+          <input id="eu-search" type="text" placeholder="邮箱/用户名搜索" class="border rounded px-2 py-1 text-xs w-32" />
+          <button id="btn-eu-filter" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
+          <button id="btn-eu-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
+        </div>
+        <div id="email-users-list" class="text-sm max-h-64 overflow-y-auto">加载中...</div>
+        <div class="flex items-center gap-2 mt-1 mb-2 text-xs">
+          <span id="eu-status" class="text-gray-500"></span>
+          <span class="text-gray-400" id="eu-pages"></span>
+        </div>
+        <div style="border-top:1px solid #fce7f3;padding-top:12px;margin-top:12px">
         <h3 style="font-size:14px;font-weight:600;margin-bottom:8px">⚙️ 速率限制 <button id="btn-save-rate-limits" style="margin-left:8px;font-size:12px;padding:2px 8px;background:#3b82f6;color:#fff;border:0;border-radius:6px;cursor:pointer">保存（重启生效）</button> <span id="rate-limits-status" style="font-size:12px;color:#6b7280"></span></h3>
         <div id="rate-limits-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px">加载中...</div>
       </div>
-      <div id="email-users-list" class="text-sm max-h-64 overflow-y-auto">加载中...</div>
       <div style="border-top:1px solid #fce7f3;padding-top:12px;margin-top:12px">
         <h3 class="text-sm font-semibold mb-2">📧 发信日志</h3>
         <div class="flex flex-wrap items-center gap-2 mb-2 text-xs">
           <input id="elog-date-from" type="date" class="border rounded px-2 py-1" />
           <span class="text-gray-400">~</span>
           <input id="elog-date-to" type="date" class="border rounded px-2 py-1" />
-          <button id="btn-filter-email-logs" class="px-2 py-1 bg-pink-100 text-pink-600 rounded hover:bg-pink-200">筛选</button>
+          <input id="elog-search" type="text" placeholder="收件人搜索" class="border rounded px-2 py-1 text-xs w-24" />
+          <button id="btn-filter-email-logs" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
+          <button id="btn-elog-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
           <button id="btn-refresh-email-logs" class="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
           <button id="btn-del-selected-email-logs" class="px-2 py-1 bg-amber-500 text-white rounded hover:bg-amber-600">删除选中</button>
           <button id="btn-clear-email-logs" class="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600">清空</button>
         </div>
         <div id="email-logs-list" class="text-xs max-h-64 overflow-y-auto">点击刷新查看</div>
+        <div class="flex items-center gap-2 mt-1 text-xs">
+          <span id="elog-status" class="text-gray-500"></span>
+          <span class="text-gray-400" id="elog-pages"></span>
+        </div>
       </div>
       <div id="abuse-ips-bar" class="hidden mt-2 pt-2 border-t text-xs"><span class="text-red-500">🚫 恶意IP：</span><span id="abuse-ips-list"></span> <button id="btn-clear-abuse" class="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-500 rounded hover:bg-red-200">清空全部</button></div>
       </div>
@@ -546,6 +564,7 @@
       </h2>
       <div class="flex gap-2">
         <button id="btn-refresh-gen-logs" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+        <button id="btn-edit-gen-logs" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">编辑</button>
         <button id="btn-clear-gen-logs" class="text-sm px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600">清空日志</button>
       </div>
     </div>
@@ -562,7 +581,11 @@
         <button id="btn-gen-logs-auto" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">自动刷新: 关</button>
         <input id="gen-logs-interval" type="number" value="30" min="5" max="300" class="w-12 text-xs text-center border rounded py-1" title="刷新间隔(秒)" />
       </div>
-      <div id="gen-logs-list" class="text-sm max-h-96 overflow-y-auto">加载中...</div>
+      <div id="gen-logs-batch-bar" class="hidden flex gap-2 mb-2 items-center text-xs">
+        <button id="btn-gen-logs-select-all" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">全选</button>
+        <button id="btn-gen-logs-del-selected" class="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs">🗑 删除选中 (<span id="gen-logs-sel-count">0</span>)</button>
+      </div>
+      <div id="gen-logs-list" class="text-sm max-h-96 overflow-y-auto gl-log-preview">加载中...</div>
       <div class="flex items-center gap-2 mt-2">
         <span id="gen-logs-status" class="text-xs text-gray-500"></span>
         <span class="text-xs text-gray-400" id="gen-logs-pages"></span>
@@ -919,52 +942,113 @@ async function toggleUserBan(githubId, currentlyBanned) {
 }
 
 // ==================== 邮箱认证管理 ====================
+// ── 邮箱注册用户分页 ──
+let _euPage = 0, _euTotal = 0;
+const _EU_PAGE_SIZE = 24;
+
+function _euQS() {
+  const q = []; q.push('limit='+_EU_PAGE_SIZE+'&offset='+(_euPage*_EU_PAGE_SIZE));
+  const s=$('eu-search').value.trim(); if(s) q.push('search='+encodeURIComponent(s));
+  return q.join('&');
+}
+function _euRenderPages() {
+  const tp=Math.ceil(_euTotal/_EU_PAGE_SIZE)||1,el=$('eu-pages');
+  if(tp<=1){el.textContent='';return;}
+  let h='';const p=_euPage;
+  if(p>0)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-eu="${p-1}">上一页</a>`;
+  const s=Math.max(0,p-2),e=Math.min(tp-1,p+2);
+  if(s>0)h+='<span class="mx-1 text-gray-400">...</span>';
+  for(let i=s;i<=e;i++)h+=i===p?`<span class="mx-1 font-bold text-gray-800">${i+1}</span>`:`<a href="#" class="text-blue-600 hover:underline mx-1" data-eu="${i}">${i+1}</a>`;
+  if(e<tp-1)h+='<span class="mx-1 text-gray-400">...</span>';
+  if(p<tp-1)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-eu="${p+1}">下一页</a>`;
+  el.innerHTML=h;
+  el.querySelectorAll('a[data-eu]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_euPage=parseInt(a.dataset.eu);loadEmailUsers();}));
+}
+async function loadEmailUsers() {
+  try {
+    const d = await api('GET', '/api/admin/email-users?' + _euQS());
+    const items = d.users || []; _euTotal = d.total || 0;
+    $('email-users-count').textContent = '(' + _euTotal + ')';
+    if (!items.length) {
+      $('email-users-list').innerHTML = '<div class="text-gray-400 text-xs">无邮箱用户</div>';
+      $('eu-status').textContent = ''; $('eu-pages').textContent = ''; return;
+    }
+    $('email-users-list').innerHTML = '<div class="flex flex-col gap-1">' + items.map(function(u) {
+      var banned = u.banned, rowCls = banned ? 'bg-red-100' : 'bg-gray-50', banLabel = banned ? 'Unban' : 'Ban', banCls = banned ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600';
+      var email = (u.github_id||'').replace('email:','');
+      return '<div class="flex items-center gap-2 ' + rowCls + ' rounded px-2 py-1 text-xs">' +
+        '<span class="inline-block w-2 h-2 rounded-full flex-shrink-0 ' + (onlineGithubIds.has(u.github_id)?'bg-green-500':'bg-gray-300') + '"></span>' +
+        '<span class="font-medium flex-1">' + escHtml(u.login||'?') + '</span>' +
+        '<span class="text-gray-400 text-[10px]">' + escHtml(email) + '</span>' +
+        '<span class="text-[10px] px-1 rounded ' + (u.role==='admin'?'bg-purple-100 text-purple-700':'bg-gray-200 text-gray-500') + '">' + escHtml(u.role||'user') + '</span>' +
+        '<span class="text-gray-400 text-[10px]">' + (u.created_at?formatTime(u.created_at):'') + '</span>' +
+        (u.totp_enabled?'<button data-gid="'+escHtml(u.github_id)+'" class="btn-reset-totp text-[10px] px-2 py-0.5 bg-purple-100 text-purple-500 rounded hover:bg-purple-200 ml-1">Reset 2FA</button>':'') +
+        (u.role==='admin'?'<span class="text-[10px] text-purple-400">不可封禁</span>':'<button data-gid="'+escHtml(u.github_id)+'" data-banned="'+banned+'" class="btn-toggle-email-ban text-[10px] px-2 py-0.5 text-white rounded '+banCls+'">'+banLabel+'</button>') +
+        (u.verified?'':'<button data-gid="'+escHtml(u.github_id)+'" class="btn-resend-verify text-[10px] px-2 py-0.5 bg-blue-100 text-blue-500 rounded hover:bg-blue-200 ml-1">Resend</button>') + '</div>';
+    }).join('') + '</div>';
+    document.querySelectorAll('.btn-reset-totp').forEach(function(b){b.addEventListener('click',function(){resetTotp(b.dataset.gid);});});
+    document.querySelectorAll('.btn-toggle-email-ban').forEach(function(b){b.addEventListener('click',function(){toggleEmailUserBan(b.dataset.gid,b.dataset.banned==='true');});});
+    document.querySelectorAll('.btn-resend-verify').forEach(function(b){b.addEventListener('click',function(){resendVerify(b.dataset.gid);});});
+    var start=_euPage*_EU_PAGE_SIZE+1,end=Math.min(start+items.length-1,_euTotal);
+    $('eu-status').textContent='显示 '+start+'-'+end+' / '+_euTotal+' 条';_euRenderPages();
+  } catch(e) { $('email-users-list').textContent='加载失败: '+e.message; }
+}
+
+// ── 发信日志分页 ──
+let _elPage = 0, _elTotal = 0;
+const _EL_PAGE_SIZE = 24;
+
+function _elQS() {
+  const q = []; q.push('limit='+_EL_PAGE_SIZE+'&offset='+(_elPage*_EL_PAGE_SIZE));
+  const f=$('elog-date-from').value,t=$('elog-date-to').value,s=$('elog-search').value.trim();
+  if(f) q.push('date_from='+(new Date(f+'T00:00:00').getTime()/1000));
+  if(t) q.push('date_to='+(new Date(t+'T23:59:59').getTime()/1000));
+  if(s) q.push('search='+encodeURIComponent(s));
+  return q.join('&');
+}
+function _elRenderPages() {
+  const tp=Math.ceil(_elTotal/_EL_PAGE_SIZE)||1,el=$('elog-pages');
+  if(tp<=1){el.textContent='';return;}
+  let h='';const p=_elPage;
+  if(p>0)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-el="${p-1}">上一页</a>`;
+  const s=Math.max(0,p-2),e=Math.min(tp-1,p+2);
+  if(s>0)h+='<span class="mx-1 text-gray-400">...</span>';
+  for(let i=s;i<=e;i++)h+=i===p?`<span class="mx-1 font-bold text-gray-800">${i+1}</span>`:`<a href="#" class="text-blue-600 hover:underline mx-1" data-el="${i}">${i+1}</a>`;
+  if(e<tp-1)h+='<span class="mx-1 text-gray-400">...</span>';
+  if(p<tp-1)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-el="${p+1}">下一页</a>`;
+  el.innerHTML=h;
+  el.querySelectorAll('a[data-el]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_elPage=parseInt(a.dataset.el);loadEmailLogs();}));
+}
 async function loadEmailLogs() {
   try {
-    var dateFrom = $('elog-date-from').value;
-    var dateTo = $('elog-date-to').value;
-    var params = 'limit=50';
-    if (dateFrom) params += '&date_from=' + (new Date(dateFrom + 'T00:00:00').getTime() / 1000);
-    if (dateTo) params += '&date_to=' + (new Date(dateTo + 'T23:59:59').getTime() / 1000);
-    const d = await api('GET', '/api/admin/email-logs?' + params);
-    const logs = d.logs || [];
-    if (!logs.length) { $('email-logs-list').innerHTML = '<div class="text-gray-400 py-4 text-center">暂无记录</div>'; return; }
-    var html = '<table class="w-full border-collapse">' +
-      '<thead><tr class="bg-gray-100 text-gray-600">' +
+    const d = await api('GET', '/api/admin/email-logs?' + _elQS());
+    const logs = d.logs || []; _elTotal = d.total || 0;
+    if (!logs.length) { $('email-logs-list').innerHTML = '<div class="text-gray-400 py-4 text-center">暂无记录</div>'; $('elog-status').textContent=''; $('elog-pages').textContent=''; return; }
+    var html = '<table class="w-full border-collapse"><thead><tr class="bg-gray-100 text-gray-600">' +
       '<th class="p-1 w-6"><input type="checkbox" id="elog-select-all" /></th>' +
-      '<th class="p-1 text-left">时间</th>' +
-      '<th class="p-1 text-left">收件人</th>' +
-      '<th class="p-1 text-left">主题</th>' +
-      '<th class="p-1 w-12">状态</th>' +
-      '<th class="p-1 w-6"></th></tr></thead><tbody>';
+      '<th class="p-1 text-left">时间</th><th class="p-1 text-left">收件人</th><th class="p-1 text-left">主题</th>' +
+      '<th class="p-1 w-12">状态</th><th class="p-1 w-6"></th></tr></thead><tbody>';
     logs.forEach(function(l) {
-      var statusColor = l.status === 'ok' ? 'text-green-600' : l.status === 'fail' ? 'text-red-500' : 'text-amber-500';
-      var statusText = l.status === 'ok' ? '成功' : l.status === 'fail' ? '失败' : '限流';
-      var time = l.created_at ? new Date(l.created_at*1000).toLocaleString('zh-CN') : '?';
+      var sc = l.status==='ok'?'text-green-600':l.status==='fail'?'text-red-500':'text-amber-500';
+      var st = l.status==='ok'?'成功':l.status==='fail'?'失败':'限流';
+      var tm = l.created_at?new Date(l.created_at*1000).toLocaleString('zh-CN'):'?';
       html += '<tr class="border-t border-gray-100 hover:bg-gray-50">' +
-        '<td class="p-1"><input type="checkbox" class="elog-check" data-id="' + l.id + '" /></td>' +
-        '<td class="p-1 whitespace-nowrap text-gray-500">' + time + '</td>' +
-        '<td class="p-1">' + escHtml(l.recipient) + '</td>' +
-        '<td class="p-1 text-gray-600">' + escHtml(l.subject) + '</td>' +
-        '<td class="p-1 ' + statusColor + ' font-medium text-center">' + statusText + '</td>' +
-        '<td class="p-1"><button class="elog-del-one text-red-400 hover:text-red-600" data-id="' + l.id + '">×</button></td>' +
-        '</tr>';
+        '<td class="p-1"><input type="checkbox" class="elog-check" data-id="'+l.id+'" /></td>' +
+        '<td class="p-1 whitespace-nowrap text-gray-500">'+tm+'</td>' +
+        '<td class="p-1">'+escHtml(l.recipient)+'</td>' +
+        '<td class="p-1 text-gray-600">'+escHtml(l.subject)+'</td>' +
+        '<td class="p-1 '+sc+' font-medium text-center">'+st+'</td>' +
+        '<td class="p-1"><button class="elog-del-one text-red-400 hover:text-red-600" data-id="'+l.id+'">×</button></td></tr>';
     });
     html += '</tbody></table>';
     $('email-logs-list').innerHTML = html;
-    // 全选
-    $('elog-select-all').onclick = function() {
-      document.querySelectorAll('.elog-check').forEach(function(c) { c.checked = this.checked; }.bind(this));
-    };
-    // 单行删除
+    $('elog-select-all').onclick = function() { document.querySelectorAll('.elog-check').forEach(function(c){c.checked=this.checked;}.bind(this)); };
     document.querySelectorAll('.elog-del-one').forEach(function(b) {
-      b.onclick = async function() {
-        if (!confirm('确定删除此条？')) return;
-        await api('POST', '/api/admin/email-logs/clear', { ids: [parseInt(this.dataset.id)] });
-        loadEmailLogs();
-      };
+      b.onclick = async function() { if(!confirm('确定删除此条？'))return; await api('POST','/api/admin/email-logs/clear',{ids:[parseInt(this.dataset.id)]}); loadEmailLogs(); };
     });
-  } catch(e) { $('email-logs-list').textContent = '失败: ' + e.message; }
+    var start=_elPage*_EL_PAGE_SIZE+1,end=Math.min(start+logs.length-1,_elTotal);
+    $('elog-status').textContent='显示 '+start+'-'+end+' / '+_elTotal+' 条';_elRenderPages();
+  } catch(e) { $('email-logs-list').textContent='失败: '+e.message; }
 }
 
 async function loadEmailAuth() {
@@ -1010,34 +1094,9 @@ async function loadEmailAuth() {
       $('rate-limits-grid').innerHTML = h;
     }
 
-    // Email users
-    var emailUsers = d.email_users || [];
-    $('email-users-count').textContent = '(' + emailUsers.length + ')';
-    if (!emailUsers.length) {
-      $('email-users-list').innerHTML = '<div class="text-gray-400 text-xs">No email users</div>';
-    } else {
-      $('email-users-list').innerHTML = '<div class="flex flex-col gap-1">' +
-        emailUsers.map(function(u) {
-          var banned = u.banned;
-          var rowCls = banned ? 'bg-red-100' : 'bg-gray-50';
-          var banLabel = banned ? 'Unban' : 'Ban';
-          var banCls = banned ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600';
-          var email = (u.github_id || '').replace('email:', '');
-          return '<div class="flex items-center gap-2 ' + rowCls + ' rounded px-2 py-1 text-xs">' +
-            '<span class="inline-block w-2 h-2 rounded-full flex-shrink-0 ' + (onlineGithubIds.has(u.github_id) ? 'bg-green-500' : 'bg-gray-300') + '"></span>' +
-            '<span class="font-medium flex-1">' + escHtml(u.login || '?') + '</span>' +
-            '<span class="text-gray-400 text-[10px]">' + escHtml(email) + '</span>' +
-            '<span class="text-[10px] px-1 rounded ' + (u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-200 text-gray-500') + '">' + escHtml(u.role || 'user') + '</span>' +
-            '<span class="text-gray-400 text-[10px]">' + (u.created_at ? formatTime(u.created_at) : '') + '</span>' +
-            (u.totp_enabled ? '<button data-gid="' + escHtml(u.github_id) + '" class="btn-reset-totp text-[10px] px-2 py-0.5 bg-purple-100 text-purple-500 rounded hover:bg-purple-200 ml-1">Reset 2FA</button>' : '') +
-            (u.role === 'admin' ? '<span class="text-[10px] text-purple-400">不可封禁</span>' : '<button data-gid="' + escHtml(u.github_id) + '" data-banned="' + banned + '" class="btn-toggle-email-ban text-[10px] px-2 py-0.5 text-white rounded ' + banCls + '">' + banLabel + '</button>') +
-            (u.verified ? '' : '<button data-gid="' + escHtml(u.github_id) + '" class="btn-resend-verify text-[10px] px-2 py-0.5 bg-blue-100 text-blue-500 rounded hover:bg-blue-200 ml-1">Resend</button>') +
-            '</div>';
-        }).join('') + '</div>';
-      document.querySelectorAll('.btn-reset-totp').forEach(function(b) { b.addEventListener('click', function() { resetTotp(b.dataset.gid); }); });
-      document.querySelectorAll('.btn-toggle-email-ban').forEach(function(b) { b.addEventListener('click', function() { toggleEmailUserBan(b.dataset.gid, b.dataset.banned === 'true'); }); });
-      document.querySelectorAll('.btn-resend-verify').forEach(function(b) { b.addEventListener('click', function() { resendVerify(b.dataset.gid); }); });
-    }
+    // Email users count + trigger paginated load
+    $('email-users-count').textContent = '(' + (d.email_users_total || d.email_users?.length || 0) + ')';
+    loadEmailUsers();
 
     // Abuse IPs
     var ips = d.abuse_ips || [];
@@ -1157,8 +1216,11 @@ $('btn-save-rate-limits').addEventListener('click', async function() {
   } catch(e) { $('rate-limits-status').textContent = '失败: ' + e.message; }
 });
 
-$('btn-refresh-email-logs').addEventListener('click', loadEmailLogs);
-$('btn-filter-email-logs').addEventListener('click', loadEmailLogs);
+$('btn-eu-filter').addEventListener('click', function(){_euPage=0;loadEmailUsers();});
+$('btn-eu-reset').addEventListener('click', function(){$('eu-search').value='';_euPage=0;loadEmailUsers();});
+$('btn-refresh-email-logs').addEventListener('click', function(){_elPage=0;loadEmailLogs();});
+$('btn-filter-email-logs').addEventListener('click', function(){_elPage=0;loadEmailLogs();});
+$('btn-elog-reset').addEventListener('click', function(){$('elog-date-from').value='';$('elog-date-to').value='';$('elog-search').value='';_elPage=0;loadEmailLogs();});
 $('btn-del-selected-email-logs').addEventListener('click', async function() {
   var ids = [];
   document.querySelectorAll('.elog-check:checked').forEach(function(cb) { ids.push(parseInt(cb.dataset.id)); });
@@ -2204,14 +2266,7 @@ document.querySelectorAll('[data-toggle]').forEach(h => {
       if (id === 'gen-logs-body') loadGenLogs();
       if (id === 'deletion-log-body') loadDeletionLog();
     }
-    // 删除记录：展开时才根据按钮状态决定是否轮询，折叠时停止
-    if (id === 'deletion-log-body') {
-      if (collapsed) {
-        if (_delLogPollTimer) { clearInterval(_delLogPollTimer); _delLogPollTimer = null; }
-      } else {
-        _updateDelLogPoll();
-      }
-    }
+
   });
 });
 
@@ -3015,7 +3070,6 @@ $('gen-logs-list').addEventListener('click', (e) => {
 });
 
 async function loadGenLogs(reset = true) {
-  if (reset) $('gen-logs-list').textContent = '加载中...';
   try {
     const d = await api('GET', '/api/admin/gen-logs?' + _glQS());
     const items = d.items || [];
@@ -3037,7 +3091,9 @@ async function loadGenLogs(reset = true) {
       const negPromptFull = it.negative_prompt || '';
       const negPromptText = escHtml(negPromptFull.substring(0, 80));
       const wf = escHtml((it.workflow || '').split('/').pop() || '-');
-      return `<div class="border-b border-gray-100 py-1.5 text-[10px]">
+      const lid = escHtml(it.log_id||'');
+      return `<div class="border-b border-gray-100 py-1.5 text-[10px] relative">
+        <input type="checkbox" class="gl-log-check absolute top-1 left-1 w-3 h-3 cursor-pointer z-10" data-log-id="${lid}" />
         <div class="flex justify-between items-center text-gray-400">
           <div class="flex items-center gap-2">
             <span>${t}</span>
@@ -3075,7 +3131,8 @@ $('btn-gen-logs-auto').addEventListener('click', _glToggleAuto);
 $('gen-logs-interval').addEventListener('change', () => { _glStopAuto(); _glStartAuto(); });
 $('btn-clear-gen-logs').addEventListener('click', async () => {
   const qs = _glQS();
-  const msg = '确认清空所有生图日志？此操作不可恢复。';
+  const hasDate = $('gen-logs-date-from').value || $('gen-logs-date-to').value;
+  const msg = hasDate ? '确认清空当前日期范围内的生图日志？此操作不可恢复。' : '确认清空所有生图日志？此操作不可恢复。';
   if (!confirm(msg)) return;
   const input = prompt('请输入"确认删除生图日志"以继续：');
   if (input !== '确认删除生图日志') { alert('输入不匹配，已取消'); return; }
@@ -3086,6 +3143,24 @@ $('btn-clear-gen-logs').addEventListener('click', async () => {
   } catch (e) {
     $('gen-logs-status').textContent = '清空失败: ' + e.message;
   }
+});
+
+// 生图日志编辑/选择模式
+let _glSelected = new Set();
+$('btn-edit-gen-logs').addEventListener('click',()=>{
+  const grid=$('gen-logs-list'),ed=grid.classList.toggle('gl-log-preview'),b=$('btn-edit-gen-logs'),bb=$('gen-logs-batch-bar');
+  if(ed){b.textContent='编辑';b.className='text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300';bb.classList.add('hidden');_glSelected.clear();document.querySelectorAll('.gl-log-check').forEach(c=>c.checked=false);$('gen-logs-sel-count').textContent='0';}
+  else{b.textContent='退出编辑';b.className='text-sm px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600';_updateGlSelection();}
+});
+function _updateGlSelection(){_glSelected.clear();document.querySelectorAll('.gl-log-check:checked').forEach(c=>_glSelected.add(c.dataset.logId));$('gen-logs-sel-count').textContent=_glSelected.size;$('gen-logs-batch-bar').classList.toggle('hidden',_glSelected.size===0);}
+$('gen-logs-list').addEventListener('change',(e)=>{if(e.target.closest('.gl-log-check'))_updateGlSelection();});
+$('btn-gen-logs-select-all').addEventListener('click',()=>{const c=document.querySelectorAll('.gl-log-check'),a=Array.from(c).every(x=>x.checked);c.forEach(x=>{x.checked=!a;});_updateGlSelection();});
+$('btn-gen-logs-del-selected').addEventListener('click',async()=>{
+  if(!_glSelected.size)return; if(!confirm(`确定删除选中的 ${_glSelected.size} 条生图日志？`))return;
+  const i=prompt(`请输入"确认删除生图日志"以继续删除 ${_glSelected.size} 条记录：`); if(i!=='确认删除生图日志'){alert('输入不匹配，已取消');return;}
+  const ids=Array.from(_glSelected); let done=0;
+  try{const d=await api('POST','/api/admin/gen-logs/delete',{ids});done=d.removed||0;}catch(e){alert('删除失败: '+e.message);}
+  _glSelected.clear();_updateGlSelection();loadGenLogs(true);
 });
 
 // ── GC 系统 ──
@@ -3147,7 +3222,6 @@ async function loadGcStats() {
   } catch(e){$('gc-stats-summary').textContent='加载失败';}
 }
 async function loadGcLogs(reset) {
-  if (reset) $('gc-log-list').textContent = '加载中...';
   await loadGcStats();
   try {
     const d = await api('GET','/api/admin/gc/logs?'+_gcQS());
@@ -3263,7 +3337,6 @@ function _delRenderPages() {
   el.querySelectorAll('a[data-dl]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_delPage=parseInt(a.dataset.dl);loadDeletionLog(true);}));
 }
 async function loadDeletionLog(reset) {
-  if(reset)$('deletion-log-grid').textContent='加载中...';
   try {
     const d=await api('GET','/api/admin/deletion-log?'+_delQS());
     const items=d.items||[];_delTotal=d.total||0;$('deletion-log-count').textContent=_delTotal;
@@ -3289,7 +3362,7 @@ $('del-log-interval').addEventListener('change',()=>{_delStopAuto();_delStartAut
 $('btn-del-log-filter').addEventListener('click',()=>{_delPage=0;loadDeletionLog(true);});
 $('btn-del-log-reset').addEventListener('click',()=>{$('del-log-search').value='';$('del-log-date-from').value='';$('del-log-date-to').value='';_delPage=0;loadDeletionLog(true);});
 $('btn-clear-deletion-log').addEventListener('click',async()=>{
-  const dp=_delQS(); const msg=dp?'确认清空当前日期范围内的删除记录？':'确认清空全部删除记录？';
+  const hasDate=$('del-log-date-from').value||$('del-log-date-to').value; const msg=hasDate?'确认清空当前日期范围内的删除记录？':'确认清空全部删除记录？';
   if(!confirm(msg))return; const i=prompt('请输入"确认删除删除记录"以继续：');
   if(i!=='确认删除删除记录'){alert('输入不匹配，已取消');return;}
   try{

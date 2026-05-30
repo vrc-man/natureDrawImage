@@ -761,17 +761,27 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         return {"ok": True}
 
     @app.get("/api/admin/email-logs")
-    async def api_admin_email_logs(request: Request, limit: int = 50, date_from: float = 0, date_to: float = 0):
+    async def api_admin_email_logs(request: Request, limit: int = 24, offset: int = 0,
+                                    date_from: float = 0, date_to: float = 0, search: str = ""):
         if not getattr(request.state, "is_admin", False):
             raise HTTPException(403)
         now = time.time()
         date_from = date_from or 0
         date_to = date_to or (now + 86400)
+        where = ["created_at >= ?", "created_at <= ?"]
+        params = [date_from, date_to]
+        if search.strip():
+            where.append("recipient LIKE ?")
+            params.append("%" + search.strip() + "%")
+        w = " AND ".join(where)
+        cnt = get_db().execute(f"SELECT COUNT(*) as c FROM email_logs WHERE {w}", params).fetchone()["c"]
+        limit = max(1, min(limit, 200))
+        offset = max(0, offset)
         rows = get_db().execute(
-            "SELECT * FROM email_logs WHERE created_at >= ? AND created_at <= ? ORDER BY id DESC LIMIT ?",
-            (date_from, date_to, min(limit, 200))
+            f"SELECT * FROM email_logs WHERE {w} ORDER BY id DESC LIMIT ? OFFSET ?",
+            params + [limit, offset]
         ).fetchall()
-        return {"logs": [dict(r) for r in rows]}
+        return {"logs": [dict(r) for r in rows], "total": cnt}
 
     @app.post("/api/admin/email-logs/clear")
     async def api_admin_email_logs_clear(request: Request, payload: Dict[str, Any] = {}):

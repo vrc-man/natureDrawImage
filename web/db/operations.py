@@ -361,6 +361,13 @@ def query_gen_logs(login: str = "", date_from: float = 0, date_to: float = 0,
     return [dict(r) for r in rows], total
 
 
+def delete_gen_logs_by_ids(log_ids: list) -> int:
+    placeholders = ",".join(["?"] * len(log_ids))
+    _db().execute(f"DELETE FROM gen_logs WHERE log_id IN ({placeholders})", log_ids)
+    _db().commit()
+    return len(log_ids)
+
+
 def clear_gen_logs(date_from: float = 0, date_to: float = 0, *, unlink_all: bool = False) -> int:
     if unlink_all:
         removed = _db().execute("SELECT COUNT(*) as c FROM gen_logs").fetchone()["c"]
