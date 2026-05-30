@@ -264,6 +264,18 @@ SCHEMA = [
     )
     """,
 
+    # ── GC 日志 ──
+    """
+    CREATE TABLE IF NOT EXISTS gc_logs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp   REAL NOT NULL,
+        duration    REAL NOT NULL DEFAULT 0,
+        cleaned     TEXT NOT NULL DEFAULT '{}',
+        backup_dir  TEXT NOT NULL DEFAULT ''
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_gc_logs_timestamp ON gc_logs(timestamp)",
+
     # ── 邮箱用户 ──
     """
     CREATE TABLE IF NOT EXISTS email_users (
@@ -310,6 +322,7 @@ SCHEMA = [
         created_at  REAL NOT NULL DEFAULT 0
     )
     """,
+    "CREATE INDEX IF NOT EXISTS idx_email_logs_created ON email_logs(created_at)",
 ]
 
 

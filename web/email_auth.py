@@ -837,6 +837,11 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         invite_items = [{"code": k, **v} for k, v in codes.items()]
         invite_items.sort(key=lambda x: x.get("created_at", 0), reverse=True)
         users = _load_email_users()
+        limits = {
+            "reg_hourly_limit_per_ip": _get_email_config_int("REG_HOURLY_LIMIT_PER_IP", 3),
+            "reg_daily_limit_per_ip": _get_email_config_int("REG_DAILY_LIMIT_PER_IP", 10),
+            "reg_daily_limit_per_email": _get_email_config_int("REG_DAILY_LIMIT_PER_EMAIL", 3),
+        }
         user_items = []
         for email, eu in users.items():
             user_items.append({
@@ -849,14 +854,10 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
                 "created_at": eu.get("created_at", 0),
             })
         user_items.sort(key=lambda u: u.get("created_at", 0))
-        limits = {
-            "reg_hourly_limit_per_ip": _get_email_config_int("REG_HOURLY_LIMIT_PER_IP", 3),
-            "reg_daily_limit_per_ip": _get_email_config_int("REG_DAILY_LIMIT_PER_IP", 10),
-            "reg_daily_limit_per_email": _get_email_config_int("REG_DAILY_LIMIT_PER_EMAIL", 3),
-        }
         return {
             "invite_codes": invite_items,
             "email_users": user_items,
+            "email_users_total": len(users),
             "limits": limits,
             "rate_limits": _load_rate_limits(),
             "abuse_ips": list(_verify_abuse_ips),
@@ -864,12 +865,17 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
 
 
     @app.get("/api/admin/email-users")
-    async def api_admin_email_users(request: Request):
+    async def api_admin_email_users(request: Request, search: str = "",
+                                     limit: int = 20, offset: int = 0):
         if not getattr(request.state, "is_admin", False):
             raise HTTPException(403)
         users = _load_email_users()
         items = []
         for email, eu in users.items():
+            if search.strip():
+                s = search.strip().lower()
+                if s not in email.lower() and s not in email.split("@")[0].lower():
+                    continue
             items.append({
                 "github_id": "email:" + email,
                 "login": email.split("@")[0],
@@ -883,7 +889,11 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
                 "created_at": eu.get("created_at", 0),
             })
         items.sort(key=lambda u: u.get("created_at", 0))
-        return {"users": items}
+        total = len(items)
+        offset = max(0, offset)
+        limit = max(1, min(limit, 200))
+        items = items[offset:offset + limit]
+        return {"users": items, "total": total}
 
     @app.post("/api/admin/email-users/resend-verify")
     async def api_admin_resend_verify(request: Request, payload: Dict[str, Any] = {}):

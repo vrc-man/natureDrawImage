@@ -437,7 +437,11 @@
         <span class="inline-block w-4 text-gray-400" data-arrow="email-auth-body">▸</span>
         📧 邮箱认证管理
       </h2>
-      <button id="btn-refresh-email-auth" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+      <div class="flex gap-2">
+        <button id="btn-refresh-email-auth" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+        <button id="btn-email-auth-auto" class="text-sm px-3 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300">自动刷新: 关</button>
+        <input id="email-auth-interval" type="number" value="30" min="5" max="300" class="w-12 text-xs text-center border rounded py-1" title="刷新间隔(秒)" />
+      </div>
     </div>
     <div id="email-auth-body" class="hidden">
       <div class="mb-4">
@@ -547,18 +551,21 @@
     </div>
     <div id="gen-logs-body" class="hidden">
       <p class="text-xs text-gray-500 mb-2">记录每次生图的用户、prompt、工作流、状态等信息，最多保留 20000 条。</p>
-      <div class="flex gap-2 mb-2 items-center text-xs">
-        <label class="text-gray-500">日期筛选:</label>
-        <input id="gen-logs-date-from" type="date" class="border rounded px-2 py-1 text-xs" title="开始日期" />
+      <div class="flex flex-wrap gap-2 mb-2 items-center text-xs">
+        <input id="gen-logs-search" type="text" placeholder="用户名搜索" class="border rounded px-2 py-1 text-xs w-28" />
+        <label class="text-gray-500">日期:</label>
+        <input id="gen-logs-date-from" type="date" class="border rounded px-2 py-1 text-xs" />
         <span class="text-gray-400">—</span>
-        <input id="gen-logs-date-to" type="date" class="border rounded px-2 py-1 text-xs" title="结束日期" />
+        <input id="gen-logs-date-to" type="date" class="border rounded px-2 py-1 text-xs" />
         <button id="btn-gen-logs-filter" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
         <button id="btn-gen-logs-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
+        <button id="btn-gen-logs-auto" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">自动刷新: 关</button>
+        <input id="gen-logs-interval" type="number" value="30" min="5" max="300" class="w-12 text-xs text-center border rounded py-1" title="刷新间隔(秒)" />
       </div>
       <div id="gen-logs-list" class="text-sm max-h-96 overflow-y-auto">加载中...</div>
       <div class="flex items-center gap-2 mt-2">
-        <button id="btn-gen-logs-more" class="hidden text-xs px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">加载更多</button>
         <span id="gen-logs-status" class="text-xs text-gray-500"></span>
+        <span class="text-xs text-gray-400" id="gen-logs-pages"></span>
       </div>
     </div>
   </div>
@@ -581,11 +588,12 @@
     </div>
     <div id="deletion-log-body" class="hidden">
       <p class="text-xs text-gray-500 mb-2">用户或管理员删除的图片存档，可查看缩略图确认后清理。最多保留 20000 条。</p>
-      <div class="flex gap-2 mb-2 items-center text-xs">
-        <label class="text-gray-500">日期筛选:</label>
-        <input id="del-log-date-from" type="date" class="border rounded px-2 py-1 text-xs" title="开始日期" />
+      <div class="flex flex-wrap gap-2 mb-2 items-center text-xs">
+        <input id="del-log-search" type="text" placeholder="用户名搜索" class="border rounded px-2 py-1 text-xs w-28" />
+        <label class="text-gray-500">日期:</label>
+        <input id="del-log-date-from" type="date" class="border rounded px-2 py-1 text-xs" />
         <span class="text-gray-400">—</span>
-        <input id="del-log-date-to" type="date" class="border rounded px-2 py-1 text-xs" title="结束日期" />
+        <input id="del-log-date-to" type="date" class="border rounded px-2 py-1 text-xs" />
         <button id="btn-del-log-filter" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
         <button id="btn-del-log-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
       </div>
@@ -594,6 +602,10 @@
         <button id="btn-del-log-del-selected" class="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs">🗑 删除选中 (<span id="del-log-sel-count">0</span>)</button>
       </div>
       <div id="deletion-log-grid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 del-log-preview"></div>
+      <div class="flex items-center gap-2 mt-2">
+        <span id="del-log-status" class="text-xs text-gray-500"></span>
+        <span class="text-xs text-gray-400" id="del-log-pages"></span>
+      </div>
     </div>
   </div>
 
@@ -703,6 +715,61 @@
       </div>
     </div>
   </div>
+
+  <!-- GC 系统 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="gc-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="gc-body">&#x25B8;</span>
+        &#x1F9F9; GC 系统
+        <span class="text-xs text-gray-500 font-normal">(<span id="gc-stats-summary">-</span>)</span>
+      </h2>
+      <div class="flex gap-2">
+        <button id="btn-refresh-gc" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+      </div>
+    </div>
+    <div id="gc-body" class="hidden">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div class="bg-blue-50 rounded-lg p-3 text-center">
+          <div class="text-xs text-blue-500 font-medium">重启次数</div>
+          <div id="gc-restart-count" class="text-xl font-bold text-blue-700 mt-1">-</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-3 text-center">
+          <div class="text-xs text-green-500 font-medium">累计生图</div>
+          <div id="gc-total-images" class="text-xl font-bold text-green-700 mt-1">-</div>
+        </div>
+        <div class="bg-purple-50 rounded-lg p-3 text-center">
+          <div class="text-xs text-purple-500 font-medium">上次 GC</div>
+          <div id="gc-last-time" class="text-md font-bold text-purple-700 mt-1">-</div>
+        </div>
+        <div class="bg-orange-50 rounded-lg p-3 text-center">
+          <div class="text-xs text-orange-500 font-medium">在线</div>
+          <div id="gc-online" class="text-xl font-bold text-orange-700 mt-1">-</div>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-2 mb-3">
+        <button id="btn-gc-run" class="px-3 py-1.5 bg-red-500 text-white rounded hover:bg-red-600 text-sm font-medium">&#x26A0; 立即执行 GC</button>
+        <button id="btn-gc-run-no-backup" class="px-3 py-1.5 bg-orange-500 text-white rounded hover:bg-orange-600 text-sm font-medium">&#x26A0; GC（不备份）</button>
+        <button id="btn-gc-clear-log" class="px-3 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 text-sm font-medium">清空日志</button>
+      </div>
+      <div id="gc-status" class="text-xs text-gray-500 mb-2"></div>
+      <div class="flex flex-wrap gap-2 mb-2 items-center text-xs">
+        <label class="text-gray-500">日期:</label>
+        <input id="gc-date-from" type="date" class="border rounded px-2 py-1 text-xs" />
+        <span class="text-gray-400">—</span>
+        <input id="gc-date-to" type="date" class="border rounded px-2 py-1 text-xs" />
+        <button id="btn-gc-filter" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
+        <button id="btn-gc-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
+        <button id="btn-gc-auto" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">自动刷新: 关</button>
+        <input id="gc-interval" type="number" value="30" min="5" max="300" class="w-12 text-xs text-center border rounded py-1" title="刷新间隔(秒)" />
+      </div>
+      <div id="gc-log-list" class="text-sm max-h-96 overflow-y-auto">加载中...</div>
+      <div class="flex items-center gap-2 mt-2">
+        <span id="gc-log-status" class="text-xs text-gray-500"></span>
+        <span class="text-xs text-gray-400" id="gc-log-pages"></span>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -775,6 +842,9 @@ async function loadBans() {
 
 async function ban(ip) {
   if (!ip) return;
+  if (!confirm(`确认封禁 IP ${ip}？`)) return;
+  const i = prompt('即将封禁 IP，请输入"确认封禁"以继续：');
+  if (i !== '确认封禁') { alert('输入不匹配，已取消'); return; }
   await api('POST', '/api/admin/ban', { ip });
   $('ban-input').value = '';
   loadBans();
@@ -782,6 +852,9 @@ async function ban(ip) {
 }
 
 async function unban(ip) {
+  if (!confirm(`确认解封 IP ${ip}？`)) return;
+  const i = prompt('即将解封 IP，请输入"确认解封"以继续：');
+  if (i !== '确认解封') { alert('输入不匹配，已取消'); return; }
   await api('POST', '/api/admin/unban', { ip });
   loadBans();
   loadRecent();
@@ -832,10 +905,14 @@ async function loadUsers() {
 async function toggleUserBan(githubId, currentlyBanned) {
   if (currentlyBanned) {
     if (!confirm('确定解封用户 ' + githubId + ' ？')) return;
+    const i = prompt('即将解封用户，请输入"确认解封"以继续：');
+    if (i !== '确认解封') { alert('输入不匹配，已取消'); return; }
     await api('POST', '/api/admin/users/unban', { github_id: githubId });
   } else {
+    if (!confirm('确定封禁用户 ' + githubId + ' ？')) return;
+    const i = prompt('即将封禁用户，请输入"确认封禁"以继续：');
+    if (i !== '确认封禁') { alert('输入不匹配，已取消'); return; }
     const reason = prompt('封禁原因（可选）：');
-    if (reason === null) return;
     await api('POST', '/api/admin/users/ban', { github_id: githubId, reason: reason || '' });
   }
   loadUsers();
@@ -974,6 +1051,9 @@ async function loadEmailAuth() {
       $('abuse-ips-list').innerHTML = html;
       document.querySelectorAll('.btn-remove-abuse').forEach(function(b) {
         b.addEventListener('click', async function() {
+          if (!confirm('确认移除恶意IP ' + b.dataset.ip + ' ？')) return;
+          const i = prompt('即将移除恶意IP，请输入"确认移除"以继续：');
+          if (i !== '确认移除') { alert('输入不匹配，已取消'); return; }
           await api('POST', '/api/admin/email-abuse-ips/clear', { ip: b.dataset.ip });
           loadEmailAuth();
         });
@@ -1003,10 +1083,14 @@ async function resendVerify(githubId) {
 async function toggleEmailUserBan(githubId, currentlyBanned) {
   if (currentlyBanned) {
     if (!confirm('确定解封用户 ' + githubId + ' ？')) return;
+    const i = prompt('即将解封用户，请输入"确认解封"以继续：');
+    if (i !== '确认解封') { alert('输入不匹配，已取消'); return; }
     await api('POST', '/api/admin/email-users/unban', { github_id: githubId });
   } else {
+    if (!confirm('确定封禁用户 ' + githubId + ' ？')) return;
+    const i = prompt('即将封禁用户，请输入"确认封禁"以继续：');
+    if (i !== '确认封禁') { alert('输入不匹配，已取消'); return; }
     const reason = prompt('封禁原因（可选）：');
-    if (reason === null) return;
     await api('POST', '/api/admin/email-users/ban', { github_id: githubId, reason: reason || '' });
   }
   loadEmailAuth();
@@ -1017,6 +1101,29 @@ async function deleteInviteCode(code) {
   await api('POST', '/api/admin/invite-codes/delete', { code });
   loadEmailAuth();
 }
+
+// 邮箱管理自动刷新
+let _eaTimer = null, _eaAutoEnabled = false;
+function _eaToggleAuto() {
+  _eaAutoEnabled = !_eaAutoEnabled;
+  const b = $('btn-email-auth-auto');
+  if (_eaAutoEnabled) {
+    b.textContent = '自动刷新'; b.className = 'text-sm px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600';
+    _eaStartAuto();
+  } else {
+    b.textContent = '自动刷新: 关'; b.className = 'text-sm px-3 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300';
+    _eaStopAuto();
+  }
+}
+function _eaStopAuto() { if (_eaTimer) { clearInterval(_eaTimer); _eaTimer = null; } }
+function _eaStartAuto() {
+  _eaStopAuto();
+  if (!_eaAutoEnabled) return;
+  const sec = parseInt($('email-auth-interval').value) || 30;
+  _eaTimer = setInterval(() => loadEmailAuth(), sec * 1000);
+}
+$('btn-email-auth-auto').addEventListener('click', _eaToggleAuto);
+$('email-auth-interval').addEventListener('change', () => { _eaStopAuto(); _eaStartAuto(); });
 
 $('btn-save-email-config').addEventListener('click', async () => {
   $('email-config-status').textContent = '保存中...';
@@ -2080,7 +2187,6 @@ $('ban-input').addEventListener('keydown', e => { if (e.key === 'Enter') ban($('
 
 // 折叠：点击带 data-toggle 的标题，切换对应 id 的显隐 + 箭头
 const _toggleLoaded = {};
-let _delLogPollTimer = null;
 document.querySelectorAll('[data-toggle]').forEach(h => {
   h.addEventListener('click', e => {
     // 点到右侧的「刷新」按钮等不触发折叠
@@ -2342,8 +2448,10 @@ $('lb-next').addEventListener('click', () => { lbState.index = (lbState.index + 
 $('lb-ban-user').addEventListener('click', async () => {
   const gid = $('lb-ban-user').dataset.githubId;
   if (!gid) return;
+  if (!confirm('确定封禁用户 ' + gid + ' ？')) return;
+  const i = prompt('即将封禁用户，请输入"确认封禁"以继续：');
+  if (i !== '确认封禁') { alert('输入不匹配，已取消'); return; }
   const reason = prompt('封禁原因（可选）：');
-  if (reason === null) return; // 用户取消
   try {
     await api('POST', '/api/admin/users/ban', { github_id: gid, reason: reason || '' });
     alert('已封禁用户 ' + gid);
@@ -2864,17 +2972,38 @@ $('btn-gen-access-keys').addEventListener('click', async () => {
 });
 
 // ==================== 生图日志 ====================
-let _genLogsOffset = 0;
-let _genLogsTotal = 0;
-let _genLogsItems = [];
+// ==================== 生图日志 ====================
+let _glPage = 0, _glTotal = 0;
+const _GL_PAGE_SIZE = 24;
+let _glTimer = null, _glAutoEnabled = false;
 
-function _genLogsDateParams() {
-  const from = $('gen-logs-date-from').value;
-  const to = $('gen-logs-date-to').value;
-  const params = [];
-  if (from) params.push('date_from=' + (new Date(from + 'T00:00:00').getTime() / 1000));
-  if (to) params.push('date_to=' + (new Date(to + 'T23:59:59').getTime() / 1000));
-  return params.join('&');
+function _glQS() {
+  const q = []; q.push('limit='+_GL_PAGE_SIZE+'&offset='+(_glPage*_GL_PAGE_SIZE));
+  const s=$('gen-logs-search').value.trim(); if(s) q.push('login='+encodeURIComponent(s));
+  const f=$('gen-logs-date-from').value,t=$('gen-logs-date-to').value;
+  if(f) q.push('date_from='+(new Date(f+'T00:00:00').getTime()/1000));
+  if(t) q.push('date_to='+(new Date(t+'T23:59:59').getTime()/1000));
+  return q.join('&');
+}
+function _glToggleAuto() {
+  _glAutoEnabled=!_glAutoEnabled; const b=$('btn-gen-logs-auto');
+  if(_glAutoEnabled){b.textContent='自动刷新';b.className='px-2 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-xs';_glStartAuto();}
+  else{b.textContent='自动刷新: 关';b.className='px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs';_glStopAuto();}
+}
+function _glStopAuto(){if(_glTimer){clearInterval(_glTimer);_glTimer=null;}}
+function _glStartAuto(){_glStopAuto();if(!_glAutoEnabled||_glPage!==0)return;_glTimer=setInterval(()=>loadGenLogs(false),(parseInt($('gen-logs-interval').value)||30)*1000);}
+function _glRenderPages() {
+  const tp=Math.ceil(_glTotal/_GL_PAGE_SIZE)||1,el=$('gen-logs-pages');
+  if(tp<=1){el.textContent='';return;}
+  let h='';const p=_glPage;
+  if(p>0)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-gl="${p-1}">上一页</a>`;
+  const s=Math.max(0,p-2),e=Math.min(tp-1,p+2);
+  if(s>0)h+='<span class="mx-1 text-gray-400">...</span>';
+  for(let i=s;i<=e;i++)h+=i===p?`<span class="mx-1 font-bold text-gray-800">${i+1}</span>`:`<a href="#" class="text-blue-600 hover:underline mx-1" data-gl="${i}">${i+1}</a>`;
+  if(e<tp-1)h+='<span class="mx-1 text-gray-400">...</span>';
+  if(p<tp-1)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-gl="${p+1}">下一页</a>`;
+  el.innerHTML=h;
+  el.querySelectorAll('a[data-gl]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_glPage=parseInt(a.dataset.gl);loadGenLogs(true);}));
 }
 
 // 复制按钮事件代理
@@ -2886,30 +3015,19 @@ $('gen-logs-list').addEventListener('click', (e) => {
 });
 
 async function loadGenLogs(reset = true) {
-  if (reset) {
-    _genLogsOffset = 0;
-    _genLogsItems = [];
-    $('gen-logs-list').textContent = '加载中...';
-  }
+  if (reset) $('gen-logs-list').textContent = '加载中...';
   try {
-    let url = '/api/admin/gen-logs?limit=20&offset=' + _genLogsOffset;
-    const dateParams = _genLogsDateParams();
-    if (dateParams) url += '&' + dateParams;
-    const d = await api('GET', url);
+    const d = await api('GET', '/api/admin/gen-logs?' + _glQS());
     const items = d.items || [];
-    _genLogsTotal = d.total || 0;
-    $('gen-logs-count').textContent = _genLogsTotal;
-    if (reset) {
-      _genLogsItems = items;
-    } else {
-      _genLogsItems = _genLogsItems.concat(items);
-    }
-    if (!_genLogsItems.length) {
+    _glTotal = d.total || 0;
+    $('gen-logs-count').textContent = _glTotal;
+    if (!items.length) {
       $('gen-logs-list').innerHTML = '<div class="text-gray-400">暂无日志</div>';
-      $('btn-gen-logs-more').classList.add('hidden');
+      $('gen-logs-status').textContent = '';
+      $('gen-logs-pages').textContent = '';
       return;
     }
-    $('gen-logs-list').innerHTML = _genLogsItems.map(it => {
+    $('gen-logs-list').innerHTML = items.map(it => {
       const t = new Date((it.created_at || 0) * 1000).toLocaleString('zh-CN');
       const stColor = it.status === 'success' ? 'text-green-600' : 'text-red-600';
       const stLabel = it.status === 'success' ? '✓' : '✗';
@@ -2936,40 +3054,33 @@ async function loadGenLogs(reset = true) {
         ${negPromptFull ? `<div class="text-gray-500 truncate">⚠️ ${negPromptText}</div>` : ''}
       </div>`;
     }).join('');
-    $('gen-logs-status').textContent = `显示 ${_genLogsItems.length} / ${_genLogsTotal} 条`;
-    const moreBtn = $('btn-gen-logs-more');
-    if (_genLogsItems.length < _genLogsTotal) {
-      moreBtn.classList.remove('hidden');
-      moreBtn.textContent = '加载更多';
-    } else {
-      moreBtn.classList.add('hidden');
-    }
+    const start = _glPage * _GL_PAGE_SIZE + 1;
+    const end = Math.min(start + items.length - 1, _glTotal);
+    $('gen-logs-status').textContent = `显示 ${start}-${end} / ${_glTotal} 条`;
+    _glRenderPages(); _glStartAuto();
   } catch (e) {
     $('gen-logs-list').textContent = '加载失败: ' + e.message;
   }
 }
 
-$('btn-refresh-gen-logs').addEventListener('click', () => loadGenLogs(true));
-$('btn-gen-logs-filter').addEventListener('click', () => loadGenLogs(true));
+$('btn-refresh-gen-logs').addEventListener('click', () => { _glPage = 0; loadGenLogs(true); });
+$('btn-gen-logs-filter').addEventListener('click', () => { _glPage = 0; loadGenLogs(true); });
 $('btn-gen-logs-reset').addEventListener('click', () => {
+  $('gen-logs-search').value = '';
   $('gen-logs-date-from').value = '';
   $('gen-logs-date-to').value = '';
-  loadGenLogs(true);
+  _glPage = 0; loadGenLogs(true);
 });
-$('btn-gen-logs-more').addEventListener('click', () => {
-  _genLogsOffset += 20;
-  loadGenLogs(false);
-});
+$('btn-gen-logs-auto').addEventListener('click', _glToggleAuto);
+$('gen-logs-interval').addEventListener('change', () => { _glStopAuto(); _glStartAuto(); });
 $('btn-clear-gen-logs').addEventListener('click', async () => {
-  const dateParams = _genLogsDateParams();
-  const msg = dateParams ? '确认清空当前日期范围内的生图日志？此操作不可恢复。' : '确认清空所有生图日志？此操作不可恢复。';
+  const qs = _glQS();
+  const msg = '确认清空所有生图日志？此操作不可恢复。';
   if (!confirm(msg)) return;
   const input = prompt('请输入"确认删除生图日志"以继续：');
   if (input !== '确认删除生图日志') { alert('输入不匹配，已取消'); return; }
   try {
-    let url = '/api/admin/gen-logs';
-    if (dateParams) url += '?' + dateParams;
-    const d = await api('DELETE', url);
+    const d = await api('DELETE', '/api/admin/gen-logs?' + qs);
     $('gen-logs-status').textContent = '✓ ' + (d.message || '日志已清空');
     loadGenLogs(true);
   } catch (e) {
@@ -2977,183 +3088,232 @@ $('btn-clear-gen-logs').addEventListener('click', async () => {
   }
 });
 
-// ==================== 删除记录 ====================
-function _delLogDateParams() {
-  const from = $('del-log-date-from').value;
-  const to = $('del-log-date-to').value;
-  const params = [];
-  if (from) params.push('date_from=' + (new Date(from + 'T00:00:00').getTime() / 1000));
-  if (to) params.push('date_to=' + (new Date(to + 'T23:59:59').getTime() / 1000));
-  return params.join('&');
-}
+// ── GC 系统 ──
+let _gcPage = 0, _gcTotal = 0;
+const _GC_PAGE_SIZE = 20;
+let _gcTimer = null, _gcAutoEnabled = false;
 
-async function loadDeletionLog() {
-  $('deletion-log-grid').textContent = '加载中...';
+function _gcQS() {
+  const q = [];
+  q.push('limit=' + _GC_PAGE_SIZE + '&offset=' + (_gcPage * _GC_PAGE_SIZE));
+  const f = $('gc-date-from').value, t = $('gc-date-to').value;
+  if (f) q.push('min_time=' + (new Date(f+'T00:00:00').getTime()/1000));
+  if (t) q.push('max_time=' + (new Date(t+'T23:59:59').getTime()/1000));
+  return q.join('&');
+}
+function _gcToggleAuto() {
+  _gcAutoEnabled = !_gcAutoEnabled;
+  const b = $('btn-gc-auto');
+  if (_gcAutoEnabled) {
+    b.textContent = '自动刷新'; b.className = 'px-2 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-xs';
+    _gcStartAuto();
+  } else {
+    b.textContent = '自动刷新: 关'; b.className = 'px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs';
+    _gcStopAuto();
+  }
+}
+function _gcStopAuto() { if (_gcTimer) { clearInterval(_gcTimer); _gcTimer = null; } }
+function _gcStartAuto() {
+  _gcStopAuto();
+  if (!_gcAutoEnabled || _gcPage !== 0) return;
+  _gcTimer = setInterval(() => loadGcLogs(false), (parseInt($('gc-interval').value)||30)*1000);
+}
+function _gcPages() {
+  const tp = Math.ceil(_gcTotal/_GC_PAGE_SIZE)||1, el = $('gc-log-pages');
+  if (tp<=1) { el.textContent=''; return; }
+  let h=''; const p=_gcPage;
+  if(p>0) h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-gp="${p-1}">上一页</a>`;
+  const s=Math.max(0,p-2),e=Math.min(tp-1,p+2);
+  if(s>0) h+='<span class="mx-1 text-gray-400">...</span>';
+  for(let i=s;i<=e;i++) h+=i===p?`<span class="mx-1 font-bold text-gray-800">${i+1}</span>`:`<a href="#" class="text-blue-600 hover:underline mx-1" data-gp="${i}">${i+1}</a>`;
+  if(e<tp-1) h+='<span class="mx-1 text-gray-400">...</span>';
+  if(p<tp-1) h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-gp="${p+1}">下一页</a>`;
+  el.innerHTML=h;
+  el.querySelectorAll('a[data-gp]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_gcPage=parseInt(a.dataset.gp);loadGcLogs(true);}));
+}
+async function loadGcStats() {
   try {
-    let url = '/api/admin/deletion-log';
-    const dp = _delLogDateParams();
-    if (dp) url += '?' + dp;
-    const d = await api('GET', url);
-    const items = d.items || [];
-    $('deletion-log-count').textContent = d.total || 0;
-    if (!items.length) {
-      $('deletion-log-grid').innerHTML = '<div class="text-gray-400 text-xs col-span-full">暂无删除记录</div>';
-      return;
-    }
-    $('deletion-log-grid').innerHTML = items.map(it => {
-      const t = it.deleted_at ? new Date(it.deleted_at * 1000).toLocaleString('zh-CN') : (it.time ? new Date(it.time * 1000).toLocaleString('zh-CN') : '?');
-      const thumb = it.thumb_url
-        ? `<img src="${escHtml(it.thumb_url)}" loading="lazy"
-            class="lb-thumb w-full aspect-square object-cover rounded bg-gray-100 cursor-pointer"
-            data-path="${escHtml(it.path)}" data-del-thumb="${escHtml(it.thumb_url)}" />`
-        : '<div class="w-full aspect-square rounded bg-gray-200 flex items-center justify-center text-gray-400 text-xs">无缩略图</div>';
-      const creator = it.creator_login
-        ? `生图: ${escHtml(it.creator_login)}${it.creator_ip ? ' (' + escHtml(it.creator_ip) + ')' : ''}`
-        : (it.creator_ip ? `生图 IP: ${escHtml(it.creator_ip)}` : '');
-      return `<div class="border rounded p-1 bg-red-50 relative" data-del-path="${escHtml(it.path)}">
-        <input type="checkbox" class="del-log-check absolute top-0.5 left-0.5 w-3 h-3 cursor-pointer z-10" data-path="${escHtml(it.path)}" />
-        ${thumb}
-        <div class="text-[9px] mt-1 text-gray-500">👤 删除: ${escHtml(it.deleted_by_login || it.login || '?')}</div>
-        ${creator ? `<div class="text-[9px] text-gray-500">🎨 ${creator}</div>` : ''}
-        <div class="text-[9px] text-gray-400">${t}</div>
-        <div class="text-[9px] text-gray-400 truncate">📁 ${escHtml(it.path.split('/').pop() || it.path)}</div>
-        <button class="btn-clear-deletion-record mt-1 w-full text-[10px] bg-white border border-red-300 text-red-500 rounded px-1 py-0.5 hover:bg-red-100" data-path="${escHtml(it.path)}">清理记录</button>
-      </div>`;
+    const d = await api('GET','/api/admin/gc/stats');
+    $('gc-restart-count').textContent = d.restart_count ?? '-';
+    $('gc-total-images').textContent = d.total_images ?? '-';
+    $('gc-online').textContent = (d.online_users??0)+' / 队列 '+(d.queue_size??0);
+    if (d.last_gc_time) {
+      const t = new Date(d.last_gc_time*1000);
+      const n = new Date(); const dm = Math.floor((n-t)/60000);
+      $('gc-last-time').textContent = t.toLocaleString('zh-CN') + ' (' +
+        (dm<1?'刚刚':dm<60?dm+' 分钟前':Math.floor(dm/60)+' 小时前')+')';
+    } else $('gc-last-time').textContent = '从未运行';
+    $('gc-stats-summary').textContent = '重启 '+(d.restart_count??0)+' · 生图 '+(d.total_images??0);
+  } catch(e){$('gc-stats-summary').textContent='加载失败';}
+}
+async function loadGcLogs(reset) {
+  if (reset) $('gc-log-list').textContent = '加载中...';
+  await loadGcStats();
+  try {
+    const d = await api('GET','/api/admin/gc/logs?'+_gcQS());
+    const items = d.items||[]; _gcTotal = d.total||0;
+    if (!items.length) { $('gc-log-list').innerHTML = '<div class="text-gray-400">暂无 GC 日志</div>'; $('gc-log-pages').textContent=''; return; }
+    $('gc-log-list').innerHTML = items.map(it=>{
+      const t = new Date((it.timestamp||0)*1000).toLocaleString('zh-CN');
+      const dur = (it.duration||0).toFixed(1);
+      const c = it.cleaned||{};
+      const p=[];
+      if(c.resolved_reports)p.push('举报 '+c.resolved_reports);
+      if(c.orphan_thumbs)p.push('缩略图 '+c.orphan_thumbs);
+      if(c.orphan_creator_entries)p.push('映射 '+c.orphan_creator_entries);
+      if(c.retry_delete_success)p.push('删文件 '+c.retry_delete_success);
+      if(c.stale_featured)p.push('精选 '+c.stale_featured);
+      if(c.expired_sessions)p.push('会话 '+c.expired_sessions);
+      if(c.backup_dir)p.push('备份');
+      if(c.error)p.push('错误');
+      return '<div class="border-b border-gray-100 py-1.5 text-[10px]">'+
+        '<div class="flex justify-between"><span class="text-gray-400">'+t+'</span><span>⏱ '+dur+'s</span></div>'+
+        '<div class="flex justify-between">'+
+        '<span class="'+(c.error?'text-red-600':'text-green-600')+'">'+escHtml(p.join(' ')||'无清理项')+'</span>'+
+        (it.backup_dir?'<span class="text-gray-400" title="'+escHtml(it.backup_dir)+'">📦 已备份</span>':'')+'</div></div>';
     }).join('');
-  } catch (e) {
-    $('deletion-log-grid').textContent = '加载失败: ' + e.message;
-  }
+    const start = _gcPage*_GC_PAGE_SIZE+1;
+    const end = Math.min(start+items.length-1,_gcTotal);
+    $('gc-log-status').textContent = '显示 '+start+'-'+end+' / '+_gcTotal+' 条';
+    _gcPages(); _gcStartAuto();
+  } catch(e){$('gc-log-list').textContent='加载失败: '+e.message;}
 }
-
-$('btn-refresh-deletion-log').addEventListener('click', () => loadDeletionLog());
-$('btn-edit-del-log').addEventListener('click', () => {
-  const grid = $('deletion-log-grid');
-  const editing = grid.classList.toggle('del-log-preview');
-  const btn = $('btn-edit-del-log');
-  const clearBtn = $('btn-clear-deletion-log');
-  const batchBar = $('del-log-batch-bar');
-  if (editing) {
-    btn.textContent = '编辑';
-    btn.classList.remove('bg-orange-500'); btn.classList.add('bg-gray-200');
-    clearBtn.classList.add('hidden');
-    batchBar.classList.add('hidden');
-    _delLogSelected.clear();
-    document.querySelectorAll('.del-log-check').forEach(c => c.checked = false);
-  } else {
-    btn.textContent = '退出编辑';
-    btn.classList.remove('bg-gray-200'); btn.classList.add('bg-orange-500');
-    clearBtn.classList.remove('hidden');
-    _updateDelLogSelection();
-  }
-});
-$('btn-auto-del-log').addEventListener('click', () => {
-  const btn = $('btn-auto-del-log');
-  if (_delLogPollTimer) {
-    clearInterval(_delLogPollTimer);
-    _delLogPollTimer = null;
-    btn.textContent = '自动刷新: 关';
-    btn.classList.remove('bg-emerald-500');
-    btn.classList.add('bg-blue-500');
-  } else {
-    _updateDelLogPoll();
-  }
-});
-function _updateDelLogPoll() {
-  const btn = $('btn-auto-del-log');
-  const body = $('deletion-log-body');
-  if (!body || body.classList.contains('hidden')) return;
-  if (!_delLogPollTimer) {
-    var sec = parseInt($('del-log-interval').value) || 10;
-    _delLogPollTimer = setInterval(loadDeletionLog, sec * 1000);
-    btn.textContent = '自动刷新: 开';
-    btn.classList.remove('bg-blue-500');
-    btn.classList.add('bg-emerald-500');
-  }
+async function _gcRun(backup) {
+  $('gc-status').textContent = '⏳ GC 已触发...'; $('gc-status').className = 'text-xs text-blue-500 mb-2';
+  try {
+    await api('POST','/api/admin/gc',backup?{backup:true}:{});
+    let r=0; const poll=setInterval(async()=>{
+      try {
+        const s=await api('GET','/api/admin/gc/status');
+        if(s.status==='done'){clearInterval(poll);_gcDone(s.cleaned);}
+        else if(s.status==='error'){clearInterval(poll);$('gc-status').textContent='✗ GC 失败: '+(s.error||'未知');$('gc-status').className='text-xs text-red-600 mb-2';loadGcLogs(true);}
+        else if(++r>60){clearInterval(poll);$('gc-status').textContent='⏰ 超时';$('gc-status').className='text-xs text-orange-500 mb-2';}
+      }catch(e){}
+    },1000);
+  }catch(e){$('gc-status').textContent='✗ 触发失败: '+e.message;$('gc-status').className='text-xs text-red-600 mb-2';}
 }
-$('btn-del-log-filter').addEventListener('click', () => loadDeletionLog());
-$('btn-del-log-reset').addEventListener('click', () => {
-  $('del-log-date-from').value = '';
-  $('del-log-date-to').value = '';
-  loadDeletionLog();
+async function _gcRunNoBackup() { _gcRun(false); }
+function _gcDone(c) {
+  const p=[];
+  if(c.resolved_reports)p.push('举报 '+c.resolved_reports);
+  if(c.orphan_thumbs)p.push('缩略图 '+c.orphan_thumbs);
+  if(c.orphan_creator_entries)p.push('映射 '+c.orphan_creator_entries);
+  if(c.retry_delete_success)p.push('删文件 '+c.retry_delete_success);
+  if(c.stale_featured)p.push('精选 '+c.stale_featured);
+  if(c.expired_sessions)p.push('会话 '+c.expired_sessions);
+  $('gc-status').textContent = '✓ GC 完成'+(p.length?'：'+p.join(', '):''); $('gc-status').className='text-xs text-green-600 mb-2';
+  loadGcLogs(true);
+}
+$('btn-refresh-gc').addEventListener('click',()=>{_gcPage=0;loadGcLogs(true);});
+$('btn-gc-run').addEventListener('click',async()=>{
+  if(!confirm('确认执行 GC？将先备份再清理。此操作不可恢复。'))return;
+  const i=prompt('即将执行 GC 清理，请输入"确认清理"以继续：');
+  if(i!=='确认清理'){alert('输入不匹配，已取消');return;}
+  _gcRun(true);
 });
-$('btn-clear-deletion-log').addEventListener('click', async () => {
-  const dp = _delLogDateParams();
-  const msg = dp ? '确认清空当前日期范围内的删除记录？' : '确认清空全部删除记录？';
-  if (!confirm(msg)) return;
-  const input = prompt('请输入"确认删除删除记录"以继续：');
-  if (input !== '确认删除删除记录') { alert('输入不匹配，已取消'); return; }
-  try {
-    const body = {};
-    if (dp) {
-      const from = $('del-log-date-from').value;
-      const to = $('del-log-date-to').value;
-      if (from) body.date_from = new Date(from + 'T00:00:00').getTime() / 1000;
-      if (to) body.date_to = new Date(to + 'T23:59:59').getTime() / 1000;
-    }
-    const d = await api('POST', '/api/admin/deletion-log/clear', body);
-    alert(d.message || '已清空');
-    loadDeletionLog();
-  } catch (e) {
-    alert('清空失败: ' + e.message);
-  }
+$('btn-gc-run-no-backup').addEventListener('click',async()=>{
+  if(!confirm('确认执行 GC？将直接清理不备份。此操作不可恢复。'))return;
+  const i=prompt('即将执行 GC 清理，请输入"确认清理"以继续：');
+  if(i!=='确认清理'){alert('输入不匹配，已取消');return;}
+  _gcRun(false);
 });
-$('deletion-log-grid').addEventListener('click', async (e) => {
-  // 勾选框
-  const cb = e.target.closest('.del-log-check');
-  if (cb) {
-    _updateDelLogSelection();
-    return;
-  }
-  const btn = e.target.closest('.btn-clear-deletion-record');
-  if (!btn) return;
-  const path = btn.dataset.path;
-  if (!confirm('确认清理此条删除记录？缩略图将一并删除。')) return;
-  try {
-    await api('POST', '/api/admin/deletion-log/clear', { path });
-    loadDeletionLog();
-  } catch (err) {
-    alert('清理失败: ' + err.message);
-  }
+$('btn-gc-filter').addEventListener('click',()=>{_gcPage=0;loadGcLogs(true);});
+$('btn-gc-reset').addEventListener('click',()=>{$('gc-date-from').value='';$('gc-date-to').value='';_gcPage=0;loadGcLogs(true);});
+$('btn-gc-auto').addEventListener('click',_gcToggleAuto);
+$('gc-interval').addEventListener('change',()=>{_gcStopAuto();_gcStartAuto();});
+$('btn-gc-clear-log').addEventListener('click',async()=>{
+  if(!confirm('确认清空所有 GC 日志？'))return;
+  try{await api('POST','/api/admin/gc/logs/clear');loadGcLogs(true);}catch(e){alert('清空失败: '+e.message);}
+});
+document.querySelector('[data-toggle="gc-body"]').addEventListener('click',()=>{
+  setTimeout(()=>{if(!document.getElementById('gc-body').classList.contains('hidden'))loadGcLogs(true);},50);
 });
 
-// 删除记录批量选择
-let _delLogSelected = new Set();
-function _updateDelLogSelection() {
-  _delLogSelected.clear();
-  document.querySelectorAll('.del-log-check:checked').forEach(c => _delLogSelected.add(c.dataset.path));
-  $('del-log-sel-count').textContent = _delLogSelected.size;
-  const bar = $('del-log-batch-bar');
-  if (_delLogSelected.size > 0) {
-    bar.classList.remove('hidden');
-  } else {
-    bar.classList.add('hidden');
-  }
+// ==================== 删除记录 ====================
+let _delPage = 0, _delTotal = 0;
+const _DEL_PAGE_SIZE = 24;
+let _delTimer = null, _delAutoEnabled = false;
+
+function _delQS() {
+  const q = []; q.push('limit='+_DEL_PAGE_SIZE+'&offset='+(_delPage*_DEL_PAGE_SIZE));
+  const s=$('del-log-search').value.trim(); if(s) q.push('search='+encodeURIComponent(s));
+  const f=$('del-log-date-from').value,t=$('del-log-date-to').value;
+  if(f) q.push('date_from='+(new Date(f+'T00:00:00').getTime()/1000));
+  if(t) q.push('date_to='+(new Date(t+'T23:59:59').getTime()/1000));
+  return q.join('&');
 }
-$('btn-del-log-select-all').addEventListener('click', () => {
-  const checks = document.querySelectorAll('.del-log-check');
-  const allChecked = Array.from(checks).every(c => c.checked);
-  checks.forEach(c => { c.checked = !allChecked; });
-  _updateDelLogSelection();
+function _delToggleAuto() {
+  _delAutoEnabled=!_delAutoEnabled; const b=$('btn-auto-del-log');
+  if(_delAutoEnabled){b.textContent='自动刷新';b.className='text-sm px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600';_delStartAuto();}
+  else{b.textContent='自动刷新: 关';b.className='text-sm px-3 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300';_delStopAuto();}
+}
+function _delStopAuto(){if(_delTimer){clearInterval(_delTimer);_delTimer=null;}}
+function _delStartAuto(){_delStopAuto();if(!_delAutoEnabled||_delPage!==0)return;_delTimer=setInterval(()=>loadDeletionLog(false),(parseInt($('del-log-interval').value)||10)*1000);}
+function _delRenderPages() {
+  const tp=Math.ceil(_delTotal/_DEL_PAGE_SIZE)||1,el=$('del-log-pages');
+  if(tp<=1){el.textContent='';return;}
+  let h='';const p=_delPage;
+  if(p>0)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-dl="${p-1}">上一页</a>`;
+  const s=Math.max(0,p-2),e=Math.min(tp-1,p+2);
+  if(s>0)h+='<span class="mx-1 text-gray-400">...</span>';
+  for(let i=s;i<=e;i++)h+=i===p?`<span class="mx-1 font-bold text-gray-800">${i+1}</span>`:`<a href="#" class="text-blue-600 hover:underline mx-1" data-dl="${i}">${i+1}</a>`;
+  if(e<tp-1)h+='<span class="mx-1 text-gray-400">...</span>';
+  if(p<tp-1)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-dl="${p+1}">下一页</a>`;
+  el.innerHTML=h;
+  el.querySelectorAll('a[data-dl]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_delPage=parseInt(a.dataset.dl);loadDeletionLog(true);}));
+}
+async function loadDeletionLog(reset) {
+  if(reset)$('deletion-log-grid').textContent='加载中...';
+  try {
+    const d=await api('GET','/api/admin/deletion-log?'+_delQS());
+    const items=d.items||[];_delTotal=d.total||0;$('deletion-log-count').textContent=_delTotal;
+    if(!items.length){$('deletion-log-grid').innerHTML='<div class="text-gray-400 text-xs col-span-full">暂无删除记录</div>';$('del-log-status').textContent='';$('del-log-pages').textContent='';return;}
+    $('deletion-log-grid').innerHTML=items.map(it=>{
+      const t=it.deleted_at?new Date(it.deleted_at*1000).toLocaleString('zh-CN'):(it.time?new Date(it.time*1000).toLocaleString('zh-CN'):'?');
+      const thumb=it.thumb_url?`<img src="${escHtml(it.thumb_url)}" loading="lazy" class="lb-thumb w-full aspect-square object-cover rounded bg-gray-100 cursor-pointer" data-path="${escHtml(it.path)}" data-del-thumb="${escHtml(it.thumb_url)}" />`:'<div class="w-full aspect-square rounded bg-gray-200 flex items-center justify-center text-gray-400 text-xs">无缩略图</div>';
+      const creator=it.creator_login?`生图: ${escHtml(it.creator_login)}${it.creator_ip?' ('+escHtml(it.creator_ip)+')':''}`:(it.creator_ip?`生图 IP: ${escHtml(it.creator_ip)}`:'');
+      return `<div class="border rounded p-1 bg-red-50 relative" data-del-path="${escHtml(it.path)}"><input type="checkbox" class="del-log-check absolute top-0.5 left-0.5 w-3 h-3 cursor-pointer z-10" data-path="${escHtml(it.path)}" />${thumb}<div class="text-[9px] mt-1 text-gray-500">👤 删除: ${escHtml(it.deleted_by_login||it.login||'?')}</div>${creator?`<div class="text-[9px] text-gray-500">🎨 ${creator}</div>`:''}<div class="text-[9px] text-gray-400">${t}</div><div class="text-[9px] text-gray-400 truncate">📁 ${escHtml(it.path.split('/').pop()||it.path)}</div><button class="btn-clear-deletion-record mt-1 w-full text-[10px] bg-white border border-red-300 text-red-500 rounded px-1 py-0.5 hover:bg-red-100" data-path="${escHtml(it.path)}">清理记录</button></div>`;
+    }).join('');
+    const start=_delPage*_DEL_PAGE_SIZE+1,end=Math.min(start+items.length-1,_delTotal);
+    $('del-log-status').textContent=`显示 ${start}-${end} / ${_delTotal} 条`;_delRenderPages();_delStartAuto();
+  }catch(e){$('deletion-log-grid').textContent='加载失败: '+e.message;}
+}
+$('btn-refresh-deletion-log').addEventListener('click',()=>{_delPage=0;loadDeletionLog(true);});
+$('btn-edit-del-log').addEventListener('click',()=>{
+  const g=$('deletion-log-grid'),ed=g.classList.toggle('del-log-preview'),b=$('btn-edit-del-log'),cb=$('btn-clear-deletion-log'),bb=$('del-log-batch-bar');
+  if(ed){b.textContent='编辑';b.className='text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300';cb.classList.add('hidden');bb.classList.add('hidden');_delLogSelected.clear();document.querySelectorAll('.del-log-check').forEach(c=>c.checked=false);}
+  else{b.textContent='退出编辑';b.className='text-sm px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600';cb.classList.remove('hidden');_updateDelLogSelection();}
 });
-$('btn-del-log-del-selected').addEventListener('click', async () => {
-  if (!_delLogSelected.size) return;
-  if (!confirm(`确定清理选中的 ${_delLogSelected.size} 条删除记录？`)) return;
-  const input = prompt(`请输入"确认删除删除记录"以继续清理 ${_delLogSelected.size} 条记录：`);
-  if (input !== '确认删除删除记录') { alert('输入不匹配，已取消'); return; }
-  const paths = Array.from(_delLogSelected);
-  let done = 0;
-  for (const p of paths) {
-    try {
-      await api('POST', '/api/admin/deletion-log/clear', { path: p });
-      done++;
-    } catch (err) {
-      alert(`清理 ${p} 失败: ${err.message}`);
-      break;
-    }
-  }
-  _delLogSelected.clear();
-  _updateDelLogSelection();
-  loadDeletionLog();
+$('btn-auto-del-log').addEventListener('click',_delToggleAuto);
+$('del-log-interval').addEventListener('change',()=>{_delStopAuto();_delStartAuto();});
+$('btn-del-log-filter').addEventListener('click',()=>{_delPage=0;loadDeletionLog(true);});
+$('btn-del-log-reset').addEventListener('click',()=>{$('del-log-search').value='';$('del-log-date-from').value='';$('del-log-date-to').value='';_delPage=0;loadDeletionLog(true);});
+$('btn-clear-deletion-log').addEventListener('click',async()=>{
+  const dp=_delQS(); const msg=dp?'确认清空当前日期范围内的删除记录？':'确认清空全部删除记录？';
+  if(!confirm(msg))return; const i=prompt('请输入"确认删除删除记录"以继续：');
+  if(i!=='确认删除删除记录'){alert('输入不匹配，已取消');return;}
+  try{
+    const body={}; const f=$('del-log-date-from').value,t=$('del-log-date-to').value;
+    if(f)body.date_from=new Date(f+'T00:00:00').getTime()/1000;
+    if(t)body.date_to=new Date(t+'T23:59:59').getTime()/1000;
+    const d=await api('POST','/api/admin/deletion-log/clear',body); alert(d.message||'已清空'); loadDeletionLog(true);
+  }catch(e){alert('清空失败: '+e.message);}
+});
+$('deletion-log-grid').addEventListener('click',async(e)=>{
+  const cb=e.target.closest('.del-log-check'); if(cb){_updateDelLogSelection();return;}
+  const btn=e.target.closest('.btn-clear-deletion-record'); if(!btn)return;
+  const path=btn.dataset.path; if(!confirm('确认清理此条删除记录？缩略图将一并删除。'))return;
+  try{await api('POST','/api/admin/deletion-log/clear',{path});loadDeletionLog(true);}catch(err){alert('清理失败: '+err.message);}
+});
+let _delLogSelected=new Set();
+function _updateDelLogSelection(){_delLogSelected.clear();document.querySelectorAll('.del-log-check:checked').forEach(c=>_delLogSelected.add(c.dataset.path));$('del-log-sel-count').textContent=_delLogSelected.size;$('del-log-batch-bar').classList.toggle('hidden',_delLogSelected.size===0);}
+$('btn-del-log-select-all').addEventListener('click',()=>{const c=document.querySelectorAll('.del-log-check'),a=Array.from(c).every(x=>x.checked);c.forEach(x=>{x.checked=!a;});_updateDelLogSelection();});
+$('btn-del-log-del-selected').addEventListener('click',async()=>{
+  if(!_delLogSelected.size)return; if(!confirm(`确定清理选中的 ${_delLogSelected.size} 条删除记录？`))return;
+  const i=prompt(`请输入"确认删除删除记录"以继续清理 ${_delLogSelected.size} 条记录：`); if(i!=='确认删除删除记录'){alert('输入不匹配，已取消');return;}
+  const paths=Array.from(_delLogSelected); let done=0;
+  for(const p of paths){try{await api('POST','/api/admin/deletion-log/clear',{path:p});done++;}catch(err){alert(`清理 ${p} 失败: ${err.message}`);break;}}
+  _delLogSelected.clear();_updateDelLogSelection();loadDeletionLog(true);
 });
 
 </script>

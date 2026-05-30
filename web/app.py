@@ -137,7 +137,7 @@ COMFYUI_WS = f"ws://{COMFYUI_HOST}:{COMFYUI_PORT}"
 
 CLIENT_ID = uuid.uuid4().hex
 
-STATE_FILE = Path(__file__).parent / "state.json"  # TODO: migrate to db
+
 OUTPUT_DIR = Path(OUTPUT_DIR_STR)
 STATIC_DIR = Path(__file__).parent / "static"
 THUMB_DIR = Path(__file__).parent / "thumbnails"
@@ -145,7 +145,6 @@ THUMB_CACHE_DIR = Path(__file__).parent.parent / "thumb_cache"  # 缩略图磁�
 THUMB_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 LORA_LINKS_DIR = Path(__file__).parent / "lora_links"
 WORKFLOW_META_FILE = Path(__file__).parent / "workflow_meta.json"
-CREATOR_MAP_FILE = Path(__file__).parent / "creator_ips.txt"
 QUEUE_STATE_FILE = Path(__file__).parent / "queue_state.json"
 _creator_map_lock = asyncio.Lock()
 
@@ -412,7 +411,7 @@ FEATURED_FILE = Path(__file__).parent / "featured.txt"
 LIMITS_FILE = Path(__file__).parent / "limits.json"
 ANNOUNCEMENT_FILE = Path(__file__).parent / "announcement.json"
 LLM_CONFIG_FILE = Path(__file__).parent / "llm_config.json"
-REPORTS_FILE = Path(__file__).parent / "reports.json"
+
 STYLES_FILE = Path(__file__).parent / "styles.json"
 STYLE_THUMB_DIR = Path(__file__).parent / "style_thumbnails"
 RESOLUTIONS_FILE = Path(__file__).parent / "resolutions.json"
@@ -421,7 +420,7 @@ CUSTOM_HEAD_FILE = Path(__file__).parent / "custom_head.json"
 _banned_lock = asyncio.Lock()
 _featured_lock = asyncio.Lock()
 _limits_lock = asyncio.Lock()
-_reports_lock = asyncio.Lock()
+
 _styles_lock = asyncio.Lock()
 _announcement_lock = asyncio.Lock()
 _llm_config_lock = asyncio.Lock()
@@ -956,15 +955,11 @@ def _load_reports() -> List[Dict[str, Any]]:
 
 
 async def _save_reports(reports: list) -> bool:
-    async with _reports_lock:
-        try:
-            tmp = REPORTS_FILE.with_suffix(".json.tmp")
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(reports, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, REPORTS_FILE)
-            return True
-        except Exception:
-            return False
+    try:
+        await asyncio.to_thread(db.save_reports, reports)
+        return True
+    except Exception:
+        return False
 
 
 async def _auto_dismiss_reports_for_image(image_path: str):
@@ -1591,20 +1586,9 @@ async def _run_gc():
                 print(f"[GC] 补删失败: {rel_path} — {e}")
             if ok:
                 del_set.add(rel_path.replace("\\", "/"))
-                # 清理 creator_ips.txt 映射
-                try:
-                    async with _creator_map_lock:
-                        if CREATOR_MAP_FILE.is_file():
-                            kept = []
-                            for ln in CREATOR_MAP_FILE.read_text(encoding="utf-8").splitlines():
-                                if ln and "\t" in ln and ln.split("\t", 1)[0] != rel_path:
-                                    kept.append(ln)
-                            tmp = CREATOR_MAP_FILE.with_suffix(".txt.tmp")
-                            with open(tmp, "w", encoding="utf-8") as f:
-                                f.write("\n".join(kept) + ("\n" if kept else ""))
-                            os.replace(tmp, CREATOR_MAP_FILE)
-                except Exception:
-                    pass
+                # 清理 creator 映射
+                async with _creator_map_lock:
+                    db.remove_creator_ip(rel_path)
             else:
                 still_failed.setdefault(github_id, []).append(rel_path)
     # 写回 deleted_images：仅保留仍失败的条目
@@ -1680,6 +1664,8 @@ async def _run_gc():
     except Exception:
         cleaned["expired_sessions"] = 0
 
+    async with _kv_state_lock:
+        db.state_set("last_gc_time", _time.time())
     return cleaned
 
 
@@ -1697,8 +1683,8 @@ async def _backup_data_files():
             "styles.json", "resolutions.json", "llm_config.json",
             "announcement.json", "maintenance.json", "workflow_meta.json",
             "user_images.json", "deleted_images.json", "gen_log.json",
-            "queue_state.json", "reports.json", "state.json", "custom_head.json",
-            "banned_ips.txt", "creator_ips.txt", "featured.txt",
+            "queue_state.json", "custom_head.json",
+            "banned_ips.txt", "featured.txt",
         ]
         copied = 0
         for fname in data_files:
@@ -1939,11 +1925,32 @@ async def _start_gc():
     _safe_task(_ensure_thumb_cache(), "ensure_thumb_cache")
     _gc_task = _safe_task(_gc_loop(), "gc_loop")
     _safe_task(_backup_loop(), "backup_loop")
+    # 记录重启次数
+    async with _kv_state_lock:
+        cnt = db.state_get("restart_count", 0)
+        db.state_set("restart_count", cnt + 1)
+        print(f"[startup] 重启次数: {cnt + 1}")
 
 
 @app.on_event("shutdown")
 async def _shutdown():
-    global _http_client, _gc_task
+    global _http_client, _gc_task, _pause_queue, _shutting_down
+    _shutting_down = True
+    _pause_queue = True
+    # 广播重启通知给所有状态订阅者
+    await _broadcast({"type": "shutdown", "message": "服务即将重启，当前任务完成后自动恢复"})
+    _save_queue_state()
+    # 等待当前运行中的任务完成（最多 120 秒）
+    if _current_run_task and not _current_run_task.done():
+        try:
+            await asyncio.wait_for(_current_run_task, timeout=120)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            try:
+                _current_run_task.cancel()
+                await _current_run_task
+            except Exception:
+                pass
+    _save_queue_state()
     if _gc_task:
         _gc_task.cancel()
     if _http_client and not _http_client.is_closed:
@@ -2209,19 +2216,14 @@ def _serve_image_maybe_webp(
         return FileResponse(str(path), media_type=media)
 
 
-# ---------------- state ----------------
+# ---------------- KV state ----------------
 
-def load_state() -> Dict[str, Any]:
-    if not STATE_FILE.exists():
-        return {}
-    try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+def load_state(key: str, default: Any = None) -> Any:
+    return db.state_get(key, default)
 
 
-def save_state(state: Dict[str, Any]) -> None:
-    db.state_set("state", state)
+def save_state(key: str, value: Any) -> None:
+    db.state_set(key, value)
 
 
 # ---------------- ComfyUI helpers ----------------
@@ -2909,9 +2911,90 @@ _WELCOME_HTML = """<!DOCTYPE html>
   .agree-label { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13px; color: #4b5563; margin-bottom: 4px; cursor: pointer; }
   .agree-label input { width: 16px; height: 16px; accent-color: #f472b6; cursor: pointer; }
   .agree-label a { color: #f472b6; text-decoration: underline; }
+  #agree-label { display: none; }
   #turnstile-welcome-container { margin-bottom: 10px; min-height: 65px; display: flex; justify-content: center; }
   .footer { margin-top: 20px; font-size: 11px; color: #c4b5c0; }
   .footer a { color: #9ca3af; text-decoration: underline; }
+  /* privacy modal */
+  #privacy-modal {
+    display: none; position: fixed; top: 0; left: 0;
+    width: 100%; height: 100%;
+    background: rgba(0,0,0,0.5);
+    z-index: 9999;
+    align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  #privacy-modal-inner {
+    background: #fff; border-radius: 16px;
+    max-width: 720px; width: 100%;
+    max-height: 90vh;
+    display: flex; flex-direction: column;
+    box-shadow: 0 25px 80px rgba(0,0,0,0.35);
+  }
+  #privacy-modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid #f3f4f6;
+    flex-shrink: 0;
+  }
+  #privacy-modal-header h2 {
+    font-size: 16px; font-weight: 700; color: #1f2937; margin: 0;
+  }
+  #modal-x-btn {
+    background: none; border: none; font-size: 28px;
+    cursor: pointer; color: #9ca3af;
+    padding: 0 4px; line-height: 1;
+  }
+  #modal-x-btn:hover { color: #6b7280; }
+  #modal-scroll {
+    overflow-y: auto; padding: 20px; flex: 1;
+    font-size: 14px; color: #374151; line-height: 1.8;
+  }
+  #modal-scroll h1 { font-size: 17px; font-weight: 700; text-align: center; margin-bottom: 4px; color: #1f2937; }
+  #modal-scroll h2 {
+    font-size: 15px; font-weight: 600; margin-top: 20px;
+    margin-bottom: 8px; padding-bottom: 4px;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  #modal-scroll h3 {
+    font-size: 14px; font-weight: 600; margin-top: 16px; margin-bottom: 6px;
+  }
+  #modal-scroll p { margin-bottom: 8px; font-size: 13px; color: #374151; }
+  #modal-scroll ul { margin: 4px 0 12px 20px; font-size: 13px; color: #374151; }
+  #modal-scroll li { margin-bottom: 4px; }
+  #modal-scroll .highlight {
+    background: #fef2f2; border-left: 3px solid #f87171;
+    padding: 12px 16px; border-radius: 8px; margin: 12px 0;
+    font-size: 13px;
+  }
+  #modal-scroll .contact-box {
+    background: #f3f4f6; border-radius: 10px;
+    padding: 12px 16px; margin: 12px 0; font-size: 13px;
+  }
+  #modal-scroll .contact-box strong { display: inline-block; min-width: 80px; }
+  #modal-scroll .update-date { text-align: center; font-size: 12px; color: #9ca3af; margin-bottom: 24px; }
+  #modal-scroll .footer-note { text-align: center; font-size: 12px; color: #9ca3af; margin-top: 24px; padding-top: 12px; border-top: 1px solid #f3f4f6; }
+  #modal-scroll .footer-note a { color: #9ca3af; }
+  #privacy-modal-footer {
+    padding: 12px 20px;
+    border-top: 1px solid #f3f4f6;
+    display: flex; align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  #privacy-modal-footer label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 13px; color: #4b5563; cursor: pointer;
+  }
+  #privacy-modal-footer input[type="checkbox"] { width: 16px; height: 16px; accent-color: #f472b6; }
+  #modal-close-btn {
+    background: #f472b6; color: #fff; border: none;
+    border-radius: 8px; padding: 7px 18px;
+    font-size: 13px; cursor: pointer; font-weight: 600;
+  }
+  #modal-close-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  #modal-scroll::-webkit-scrollbar { width: 6px; }
+  #modal-scroll::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
 </style>
 </head>
 <body>
@@ -2919,9 +3002,10 @@ _WELCOME_HTML = """<!DOCTYPE html>
   <h1>🌸 二次元绘梦</h1>
   <p class="subtitle">使用前请阅读以下协议</p>
   <p class="cookie-notice">继续使用本网站即表示你同意以下协议及隐私政策中所述的 Cookie 使用方式。</p>
-  <label class="agree-label">
-    <input type="checkbox" id="agree-check" onchange="_onCheckboxChange()" />
-    我已阅读并同意 <a href="/privacy" target="_blank">用户协议与隐私政策</a>
+  <p class="agree-label" id="agree-hint">您还需要完整阅读<a href="javascript:void(0)" onclick="_openModal()">《用户协议与隐私政策》</a>后方可勾选该复选框</p>
+  <label class="agree-label" id="agree-label">
+    <input type="checkbox" id="agree-check" disabled onchange="_onCheckboxChange()" />
+    我已阅读并同意<a href="javascript:void(0)" onclick="_openModal()">《用户协议与隐私政策》</a>
   </label>
   <div id="turnstile-welcome-container"></div>
   <div class="btn-row">
@@ -2933,13 +3017,150 @@ _WELCOME_HTML = """<!DOCTYPE html>
   </div>
 </div>
 
+<!-- privacy modal -->
+<div id="privacy-modal">
+  <div id="privacy-modal-inner">
+    <div id="privacy-modal-header">
+      <h2>用户协议与隐私政策</h2>
+      <button id="modal-x-btn" onclick="_closeModal(false)">&times;</button>
+    </div>
+    <div id="modal-scroll" onscroll="_onModalScroll()">
+
+<h1>用户协议与隐私政策</h1>
+<p class="update-date">最后更新：2026 年 5 月 28 日</p>
+
+<h2>一、运营者信息</h2>
+<p>本网站（以下简称"本站"）由个人运营。</p>
+<div class="contact-box">
+  <p><strong>联系邮箱：</strong>__CONTACT_EMAIL__</p>
+  <p><strong>服务平台：</strong>Cloudflare（CDN 及人机验证）</p>
+  <p><strong>服务器所在地：</strong>境外</p>
+</div>
+
+<h2>二、服务声明</h2>
+<p>本站无意针对中国大陆用户提供服务，但由于互联网的开放性，中国大陆用户可能通过合法渠道访问本站。你理解并同意，本站运营者未主动向中国大陆市场提供服务。</p>
+
+<h2>三、免责声明</h2>
+<p>本站是一个个人公益项目，按「现状」及「可用」基础提供。在法律允许的最大范围内，本站明确声明不承担任何明示或暗示的担保责任，包括但不限于适销性、特定用途适用性及不侵权的担保。本站不保证服务的连续性、及时性、安全性及准确性，你使用本站服务所产生的全部风险由你自行承担。</p>
+<p>你明确理解并同意，本站运营者不对因使用或无法使用本站服务所导致的任何直接、间接、偶然、特殊及后续的损害承担责任，包括但不限于利润损失、数据丢失、业务中断、声誉损害及其他商业损失。</p>
+<p>本站所有生成内容由人工智能自动生成，不代表本站运营者的观点、立场或意见。生成内容的准确性、完整性、合法性及实用性本站不作任何保证。你应对你生成、发布及传播的内容承担全部责任。</p>
+
+<h2>四、数据收集与隐私说明</h2>
+<p>为向你提供服务，本站收集和使用以下数据：</p>
+
+<h3>4.1 账号信息</h3>
+<ul>
+  <li><strong>GitHub OAuth 登录：</strong>获取你的 GitHub 用户名、用户 ID 及公开邮箱信息，仅用于账户识别与违规追溯</li>
+  <li><strong>邮箱登录/注册：</strong>收集你的邮箱地址及密码（密码经 PBKDF2-SHA256 哈希加密存储，本站无法获取明文密码）</li>
+</ul>
+
+<h3>4.2 使用数据</h3>
+<ul>
+  <li><strong>IP 地址：</strong>你的所有操作（登录、注册、生图等）的 IP 地址均被记录，用于违规追溯、限流及安全防护</li>
+  <li><strong>生图内容：</strong>你提交的提示词（prompt）及生成的图片将被记录，仅用于审核及违规追溯</li>
+</ul>
+
+<h3>4.3 Cookie 使用说明</h3>
+<p>本站使用以下 Cookie：</p>
+<ul>
+  <li><strong>session</strong> — 用户登录会话令牌，用于识别你的登录身份。有效期 30 天。功能性必要 Cookie</li>
+  <li><strong>oauth_state</strong> — GitHub OAuth 登录时的 CSRF 安全防护。有效期 10 分钟。功能性必要 Cookie</li>
+  <li><strong>genNoticeAcked</strong> — 记录你已确认生图公告，避免每次弹窗。有效期 1 年</li>
+</ul>
+<p>此外，本站使用浏览器本地存储（localStorage）保存你的黑夜/白天模式偏好，仅在你本地生效，不会上传至服务器。</p>
+
+<h3>4.4 第三方服务</h3>
+<ul>
+  <li><strong>GitHub OAuth：</strong>你使用 GitHub 登录时，你的数据将按 <a href="https://docs.github.com/privacy" target="_blank" rel="noopener">GitHub 隐私政策</a> 处理</li>
+  <li><strong>Cloudflare Turnstile：</strong>本站使用 Cloudflare Turnstile 进行人机验证。Cloudflare 可能收集你的 IP 地址及设备信息用于防滥用检测，详见 <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">Cloudflare 隐私政策</a></li>
+  <li><strong>Tailwind CSS CDN：</strong>本站前端使用 Tailwind CSS CDN 提供样式支持，CDN 服务商可能获取你的 IP 地址及浏览器信息</li>
+</ul>
+
+<h3>4.5 数据保留与删除</h3>
+<ul>
+  <li><strong>生图日志：</strong>最多保留 20,000 条，超出后自动覆盖最旧的记录</li>
+  <li><strong>用户作品：</strong>你可以在「我的作品」中删除自己生成的图片，对应记录同步清除</li>
+  <li><strong>账号删除：</strong>如需删除账号及相关数据，请通过联系邮箱向我们提出请求</li>
+</ul>
+
+<h3>4.6 图片可见性</h3>
+<p>本站所有生成内容<strong>强制仅生图者本人可见</strong>。运营者为履行审核义务保留后台查看权限，但不会主动公开任何用户作品。仅在你授权的情况下，作品可能被列为精选展示。</p>
+
+<h2>五、访问密钥</h2>
+<p>本站采用开放注册 + 密钥授权制。注册后需使用由站长分配的访问密钥方可使用生图服务。密钥由站长视情况自行决定是否发放，站长保留不予发放的最终权利。密钥仅限个人使用，请勿转借或公开分享。本站不接受任何形式的赞助或捐款。</p>
+
+<h2>六、禁止行为</h2>
+<p>你同意在使用本站服务时遵守以下规定：</p>
+<ul>
+  <li>禁止生成任何违反中华人民共和国法律法规的内容，包括但不限于危害国家安全、煽动民族仇恨、破坏国家统一、宣扬恐怖主义、传播淫秽色情、赌博、暴力、凶杀、恐怖或者教唆犯罪的内容</li>
+  <li>禁止生成任何侵犯他人合法权益的内容，包括但不限于侵犯他人名誉权、肖像权、知识产权、隐私权及商业秘密</li>
+  <li>禁止生成未成年人色情、儿童性化及一切涉及未成年人的不当内容</li>
+  <li>禁止反向工程、破解、攻击或以任何方式破坏本站的后端系统及队列机制</li>
+  <li>禁止批量注册、自动化脚本及一切形式的滥用行为</li>
+  <li>禁止利用本站生成、伪造或传播虚假信息及误导性内容</li>
+</ul>
+
+<div class="highlight">
+  <strong>⚠ 违规处理：</strong>本站有权审查你提交的提示词及生成的内容。若发现违规，我们保留限制或永久封禁账号的权利，恕不另行通知。你理解并同意：你滥用本服务所产生的一切法律后果及责任由你自行承担，本站运营者不承担因你滥用服务而产生的任何法律责任。
+</div>
+
+<h2>七、未成年人条款</h2>
+<p>本站不向未成年人（未满 18 周岁）提供服务。若你未满 18 周岁，请立即停止使用本站。若你隐瞒真实年龄、伪造身份信息或以其他方式欺骗使用本站，你将被视为完全民事行为能力人，自愿承担因使用本站所产生的全部法律责任及后果，本站运营者不承担任何责任。</p>
+
+<h2>八、其他条款</h2>
+<p><strong>协议修改：</strong>本站保留随时修改本协议的权利，修改后的协议自发布之日起生效。你继续使用本站服务即视为接受修改后的协议。</p>
+<p><strong>法律适用：</strong>本协议适用服务器所在地法律并按其解释。因本协议引起的或与本协议有关的争议，双方应友好协商解决。</p>
+<p><strong>可分割性：</strong>如本协议的任何条款被认定为无效或不可执行，其余条款仍应保持完全效力。</p>
+<p><strong>联系方式：</strong>如你对本协议有任何疑问，可通过 <strong>__CONTACT_EMAIL__</strong> 与我们取得联系。</p>
+
+<div class="footer-note">Powered by <a href="https://github.com/afoim/natureDrawImage">natureDrawImage</a> (AGPLv3) | Modified by vrc-man since 2026-05 | <a href="https://github.com/vrc-man/natureDrawImage">源码</a></div>
+
+    </div>
+    <div id="privacy-modal-footer">
+      <label>
+        <input type="checkbox" id="read-check" disabled onchange="_onReadCheck()" />
+        我已阅读
+      </label>
+      <button id="modal-close-btn" onclick="_closeModal(true)" disabled>关闭</button>
+    </div>
+  </div>
+</div>
+
 <script>
+var _hasRead = false;
 var _turnstilePassed = false;
 var _turnstileRendered = false;
+function _openModal() {
+  document.getElementById('privacy-modal').style.display = 'flex';
+  document.getElementById('modal-scroll').scrollTop = 0;
+  document.getElementById('read-check').checked = false;
+  document.getElementById('read-check').disabled = true;
+  document.getElementById('modal-close-btn').disabled = true;
+}
 function _updateButtons() {
   var ok = document.getElementById('agree-check').checked && _turnstilePassed;
   document.getElementById('btn-github').disabled = !ok;
   document.getElementById('btn-email').disabled = !ok;
+}
+function _onModalScroll() {
+  var el = document.getElementById('modal-scroll');
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 2) {
+    document.getElementById('read-check').disabled = false;
+  }
+}
+function _onReadCheck() {
+  var checked = document.getElementById('read-check').checked;
+  document.getElementById('modal-close-btn').disabled = !checked;
+}
+function _closeModal(hasRead) {
+  _hasRead = hasRead;
+  document.getElementById('privacy-modal').style.display = 'none';
+  if (_hasRead) {
+    document.getElementById('agree-hint').style.display = 'none';
+    document.getElementById('agree-label').style.display = 'flex';
+    document.getElementById('agree-check').disabled = false;
+  }
+  _updateButtons();
 }
 function _onTurnstilePass() {
   _turnstilePassed = true;
@@ -2964,7 +3185,8 @@ function _onCheckboxChange() {
 @app.get("/")
 async def index(request: Request):
     if not getattr(request.state, "user", None):
-        resp = Response(content=_WELCOME_HTML, media_type="text/html")
+        _html = _WELCOME_HTML.replace("__CONTACT_EMAIL__", CONTACT_EMAIL or "admin@example.com")
+        resp = Response(content=_html, media_type="text/html")
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
     return _serve_html(STATIC_DIR / "index.html", nonce=getattr(request.state, "csp_nonce", ""))
@@ -4524,6 +4746,7 @@ _ws_per_ip_lock = asyncio.Lock()  # 保护以下两个计数器
 _ws_sub_lock = asyncio.Lock()  # 保护 _status_subscribers / _ws_user_map / _ws_ip_map
 _headless_lock = asyncio.Lock()  # 保护 _headless_completed
 _event_lock = asyncio.Lock()  # 保护 _event_log / _active_status
+_kv_state_lock = asyncio.Lock()  # 保护 KV state 读-改-写
 _ws_run_per_ip: Dict[str, int] = {}     # IP → /ws/run 连接数
 _ws_status_per_ip: Dict[str, int] = {}  # IP → /ws/status 连接数
 _WS_RUN_MAX_PER_IP = 3
@@ -4537,6 +4760,7 @@ _event_log: List[Dict[str, Any]] = []
 _cancel_flag: Optional[asyncio.Event] = None
 # 优雅重启：暂停新任务入队
 _pause_queue = False
+_shutting_down = False
 # 当前任务信息（供管理员查看）
 _current_task_info: Dict[str, Any] = {}
 
@@ -4583,24 +4807,34 @@ async def _recover_queue_on_startup() -> None:
         for qi in list(_task_queue):
             prompt_id = (qi.get("params") or {}).get("_prompt_id", "")
             if qi["status"] == "running":
-                # running 任务：查 ComfyUI 是否已完成
+                # running 任务：查 ComfyUI 是否已完成（重试 3 次，间隔 2s）
                 recovered = False
                 if prompt_id:
-                    try:
-                        async with httpx.AsyncClient(timeout=10) as client:
-                            r = await client.get(f"{COMFYUI_API}/api/history/{prompt_id}")
-                            if r.status_code == 200 and r.json().get(prompt_id):
-                                qi["status"] = "done"
-                                recovered = True
-                    except Exception:
-                        pass
+                    for attempt in range(3):
+                        try:
+                            async with httpx.AsyncClient(timeout=10) as client:
+                                r = await client.get(f"{COMFYUI_API}/api/history/{prompt_id}")
+                                if r.status_code == 200 and r.json().get(prompt_id):
+                                    qi["status"] = "done"
+                                    recovered = True
+                                    break
+                        except Exception:
+                            pass
+                        if attempt < 2:
+                            await asyncio.sleep(2)
                 if not recovered:
-                    qi["status"] = "cancelled"
-                    qi["error"] = "服务崩溃，运行中任务已中断"
+                    retry = qi.get("_recovery_retry", 0) + 1
+                    if retry >= 3:
+                        qi["status"] = "failed"
+                        qi["error"] = "服务器重启后 ComfyUI 任务未完成，已重试 3 次仍无法恢复"
+                    else:
+                        qi["status"] = "waiting"
+                        qi["_recovery_retry"] = retry
+                        qi["ws"] = None
             elif qi["status"] == "waiting":
                 # waiting 任务：恢复为 waiting，清除无效 ws 引用
                 qi["ws"] = None
-        # 保留 waiting + 最近 5 分钟的 done/cancelled
+        # 保留 waiting + 最近 5 分钟的 done/cancelled/failed
         now = _time_module.time()
         _task_queue[:] = [qi for qi in _task_queue if qi["status"] == "waiting" or (now - qi.get("created_at", 0)) < 300]
     _save_queue_state()
@@ -4985,6 +5219,9 @@ async def _process_queue() -> None:
     """处理队列中的下一个任务。"""
     global _cancel_flag, _current_task_info, _task_queue, _current_run_task, _task_generation_seq
 
+    if _pause_queue or _shutting_down:
+        return
+
     if _run_lock.locked():
         return
 
@@ -5004,6 +5241,18 @@ async def _process_queue() -> None:
             _task_queue[:] = [qi for qi in _task_queue if qi["status"] == "waiting"]
             _save_queue_state()
             await _broadcast_queue()
+            return
+
+        # 跳过恢复重试次数超限的项
+        if next_item.get("_recovery_retry", 0) >= 3:
+            next_item["status"] = "failed"
+            next_item["error"] = "恢复重试超限"
+            next_item["ws"] = None
+            _task_queue[:] = [qi for qi in _task_queue if qi["id"] != next_item["id"]]
+            _save_queue_state()
+            await _broadcast_queue()
+            if any(qi["status"] == "waiting" for qi in _task_queue):
+                _safe_task(_process_queue(), "process_queue")
             return
 
     # 获取锁并执行
@@ -5084,7 +5333,12 @@ async def _process_queue() -> None:
             _current_task_info = {}
             _current_run_task = None
             async with _queue_lock:
-                _task_queue[:] = [qi for qi in _task_queue if qi["id"] != next_item["id"]]
+                if _shutting_down:
+                    # 优雅重启中：不删除队列项，重置为 waiting 以便恢复
+                    next_item["status"] = "waiting"
+                    next_item["ws"] = None
+                else:
+                    _task_queue[:] = [qi for qi in _task_queue if qi["id"] != next_item["id"]]
                 _save_queue_state()
                 await _broadcast_queue()
             await _push_status(reset=True)
@@ -5712,6 +5966,12 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
 
     await _save_gen_log(github_id, "", sd_prompt, path, len(images), "success", client_ip, negative_prompt=neg_text, file_paths=image_paths)
     await _increment_key_usage(github_id)
+    try:
+        async with _kv_state_lock:
+            total = db.state_get("total_images_generated", 0)
+            db.state_set("total_images_generated", total + len(images))
+    except Exception:
+        pass
     cooldown_sec = float(_limits.get("gen_cooldown_sec", 30))
     # 管理员豁免冷却
     user_role = ""
@@ -6228,12 +6488,18 @@ async def api_delete_my_image(request: Request, payload: DeleteImagePayload):
 # ---------------- 用户管理 (admin only) ----------------
 
 @app.get("/api/admin/users")
-async def api_admin_users(request: Request):
-    """列出所有注册用户。"""
+async def api_admin_users(request: Request, search: str = "", limit: int = 20, offset: int = 0):
+    """分页查询注册用户，支持搜索（login/email/github_id）。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     users = _load_users()
-    return {"users": sorted(users.values(), key=lambda u: u.get("created_at", 0))}
+    items = sorted(users.values(), key=lambda u: u.get("created_at", 0))
+    if search.strip():
+        s = search.strip().lower()
+        items = [u for u in items if s in u.get("login","").lower() or s in u.get("email","").lower() or s in u.get("github_id","").lower()]
+    total = len(items)
+    items = items[offset:offset + max(1, min(limit, 200))]
+    return {"users": items, "total": total}
 
 
 async def _disconnect_banned_user(github_id: str):
@@ -6452,7 +6718,7 @@ async def api_admin_unban(request: Request, payload: Dict[str, Any]):
 
 @app.get("/api/admin/recent")
 async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0):
-    """列出 OUTPUT_DIR 下所有图片，按 mtime 倒序分页；IP 来自 creator_ips.txt（无则空串）。"""
+    """列出 OUTPUT_DIR 下所有图片，按 mtime 倒序分页；IP 来自 SQLite creator_ips（无则空串）。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     if not OUTPUT_DIR.exists():
@@ -6518,7 +6784,7 @@ async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0):
 
 @app.post("/api/admin/delete")
 async def api_admin_delete(request: Request, payload: Dict[str, Any]):
-    """删除 OUTPUT_DIR 下的一张图，并从 creator_ips.txt 移除对应映射。"""
+    """删除 OUTPUT_DIR 下的一张图，并从 creator 映射移除对应条目。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     rel = (payload or {}).get("path", "").strip()
@@ -6541,21 +6807,7 @@ async def api_admin_delete(request: Request, payload: Dict[str, Any]):
         except Exception:
             pass
     async with _creator_map_lock:
-        try:
-            if CREATOR_MAP_FILE.is_file():
-                kept = []
-                for ln in CREATOR_MAP_FILE.read_text(encoding="utf-8").splitlines():
-                    if not ln or "\t" not in ln:
-                        continue
-                    if ln.split("\t", 1)[0] == key:
-                        continue
-                    kept.append(ln)
-                tmp = CREATOR_MAP_FILE.with_suffix(".txt.tmp")
-                with open(tmp, "w", encoding="utf-8") as f:
-                    f.write("\n".join(kept) + ("\n" if kept else ""))
-                os.replace(tmp, CREATOR_MAP_FILE)
-        except Exception:
-            pass
+        db.remove_creator_ip(key)
     # 删图时同步从精选清掉
     feats = _read_featured()
     if rel in feats:
@@ -6576,16 +6828,7 @@ async def api_admin_images_by_ip(request: Request, ip: str = ""):
     ip = ip.strip()
     if not ip:
         raise HTTPException(400, "ip required")
-    ip_map: Dict[str, str] = {}
-    if CREATOR_MAP_FILE.is_file():
-        try:
-            for ln in CREATOR_MAP_FILE.read_text(encoding="utf-8").splitlines():
-                if not ln or "\t" not in ln:
-                    continue
-                k, _, v = ln.partition("\t")
-                ip_map[k] = v
-        except Exception:
-            pass
+    ip_map = db.load_creator_map()
     base = OUTPUT_DIR.resolve()
     results: list = []
     for rel, rel_ip in ip_map.items():
@@ -6635,24 +6878,11 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
                     db.add_deleted_image("__admin__", d)
             except Exception:
                 pass
-    # 批量清理 creator_ips.txt 映射
+    # 批量清理 creator 映射
     if del_set:
         async with _creator_map_lock:
-            try:
-                if CREATOR_MAP_FILE.is_file():
-                    kept = []
-                    for ln in CREATOR_MAP_FILE.read_text(encoding="utf-8").splitlines():
-                        if not ln or "\t" not in ln:
-                            continue
-                        if ln.split("\t", 1)[0] in del_set:
-                            continue
-                        kept.append(ln)
-                    tmp = CREATOR_MAP_FILE.with_suffix(".txt.tmp")
-                    with open(tmp, "w", encoding="utf-8") as f:
-                        f.write("\n".join(kept) + ("\n" if kept else ""))
-                    os.replace(tmp, CREATOR_MAP_FILE)
-            except Exception:
-                pass
+            for p in del_set:
+                db.remove_creator_ip(p)
         # 同步清理精选
         feats = _read_featured()
         changed = False
@@ -6784,23 +7014,10 @@ async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any])
     # 2. 清理 user_images.json（移除被删图片的归属记录）
     async with _user_images_lock:
         db.remove_user_images_by_paths(del_set)
-    # 3. 清理 creator_ips.txt
+    # 3. 清理 creator 映射
     async with _creator_map_lock:
-        try:
-            if CREATOR_MAP_FILE.is_file():
-                kept = []
-                for ln in CREATOR_MAP_FILE.read_text(encoding="utf-8").splitlines():
-                    if not ln or "\t" not in ln:
-                        continue
-                    if ln.split("\t", 1)[0] in del_set:
-                        continue
-                    kept.append(ln)
-                tmp = CREATOR_MAP_FILE.with_suffix(".txt.tmp")
-                with open(tmp, "w", encoding="utf-8") as f:
-                    f.write("\n".join(kept) + ("\n" if kept else ""))
-                os.replace(tmp, CREATOR_MAP_FILE)
-        except Exception:
-            pass
+        for p in del_set:
+            db.remove_creator_ip(p)
     # 4. 清理精选
     feats = _read_featured()
     changed = False
@@ -6931,8 +7148,9 @@ async def api_admin_gc_run(request: Request):
         body = await request.json() or {}
     except Exception:
         body = {}
-    do_backup = body.get("backup", True) in (True, "true", 1)  # 手动默认备份
-    _last_gc_result = {"status": "running", "cleaned": {}, "time": _time_module.time()}
+    do_backup = body.get("backup", True) in (True, "true", 1)
+    _start_ts = _time_module.time()
+    _last_gc_result = {"status": "running", "cleaned": {}, "time": _start_ts}
     async def _gc_with_result():
         global _last_gc_result
         backup_dir = None
@@ -6942,9 +7160,13 @@ async def api_admin_gc_run(request: Request):
             result = await _run_gc()
             if backup_dir:
                 result["backup_dir"] = str(backup_dir)
+            duration = _time_module.time() - _start_ts
             _last_gc_result = {"status": "done", "cleaned": result, "time": _time_module.time()}
+            db.add_gc_log(_time_module.time(), duration, result, str(backup_dir) if backup_dir else "")
         except Exception as e:
+            duration = _time_module.time() - _start_ts
             _last_gc_result = {"status": "error", "error": str(e), "time": _time_module.time()}
+            db.add_gc_log(_time_module.time(), duration, {"error": str(e)}, "")
     _safe_task(_gc_with_result(), "manual_gc")
     msg = "GC 已触发，后台执行中"
     if do_backup:
@@ -6962,6 +7184,42 @@ async def api_admin_gc_status(request: Request):
         raise HTTPException(403)
     return _last_gc_result or {"status": "idle", "cleaned": {}}
 
+
+@app.get("/api/admin/gc/logs")
+async def api_admin_gc_logs(request: Request, limit: int = 20, offset: int = 0, min_time: float = 0, max_time: float = 0):
+    """GC 日志分页。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    items = db.load_gc_logs(limit, offset, min_time, max_time)
+    total = db.count_gc_logs(min_time, max_time)
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+
+@app.post("/api/admin/gc/logs/clear")
+async def api_admin_gc_logs_clear(request: Request):
+    """清空 GC 日志。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    db.clear_gc_logs()
+    return {"ok": True}
+
+
+@app.get("/api/admin/gc/stats")
+async def api_admin_gc_stats(request: Request):
+    """GC 概览统计。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    restart_cnt = db.state_get("restart_count", 0)
+    total_images = db.state_get("total_images_generated", 0)
+    last_gc = db.state_get("last_gc_time", 0)
+    online = len(_status_subscribers)
+    return {
+        "restart_count": restart_cnt,
+        "total_images": total_images,
+        "last_gc_time": last_gc,
+        "online_users": online,
+        "queue_size": len(_task_queue),
+    }
 
 
 # ---------------- 公告端点 ----------------
@@ -7528,21 +7786,7 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
             except Exception:
                 pass
         async with _creator_map_lock:
-            try:
-                if CREATOR_MAP_FILE.is_file():
-                    kept = []
-                    for ln in CREATOR_MAP_FILE.read_text(encoding="utf-8").splitlines():
-                        if not ln or "\t" not in ln:
-                            continue
-                        if ln.split("\t", 1)[0] == key:
-                            continue
-                        kept.append(ln)
-                    tmp = CREATOR_MAP_FILE.with_suffix(".txt.tmp")
-                    with open(tmp, "w", encoding="utf-8") as f:
-                        f.write("\n".join(kept) + ("\n" if kept else ""))
-                    os.replace(tmp, CREATOR_MAP_FILE)
-            except Exception:
-                pass
+            db.remove_creator_ip(key)
         feats = _read_featured()
         if image_path in feats:
             feats = [x for x in feats if x != image_path]
@@ -7583,8 +7827,8 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
 # ---------------- 访问密钥管理 (admin only) ----------------
 
 @app.get("/api/admin/access-keys")
-async def api_admin_access_keys(request: Request):
-    """列出所有访问密钥及使用状态。"""
+async def api_admin_access_keys(request: Request, limit: int = 50, offset: int = 0):
+    """分页列出访问密钥及使用状态。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     import time as _time
@@ -7592,7 +7836,6 @@ async def api_admin_access_keys(request: Request):
     async with _access_keys_lock:
         data = _load_access_keys()
         keys = data.get("keys", {})
-        # 清理已禁用（超过 2 秒缓冲）或已过期（超过 60 秒）的密钥
         stale_keys = [k for k, v in keys.items() if
                       (v.get("disabled_at", 0) and now > v["disabled_at"] + 2) or
                       (v.get("expires_at", 0) and now > v["expires_at"] + 60)]
@@ -7610,7 +7853,7 @@ async def api_admin_access_keys(request: Request):
             login = u.get("login", used_by)
         expires_at = entry.get("expires_at", 0)
         disabled_at = entry.get("disabled_at", 0)
-        disabling = disabled_at and now <= disabled_at + 2  # 2 秒缓冲中
+        disabling = disabled_at and now <= disabled_at + 2
         items.append({
             "key_preview": key[:8] + "..." + key[-4:],
             "used_by": used_by,
@@ -7624,7 +7867,11 @@ async def api_admin_access_keys(request: Request):
             "used_count": entry.get("used_count", 0),
         })
     items.sort(key=lambda x: x["created_at"], reverse=True)
-    return {"items": items}
+    total = len(items)
+    offset = max(0, offset)
+    limit = max(1, min(limit, 200))
+    items = items[offset:offset + limit]
+    return {"items": items, "total": total}
 
 
 @app.post("/api/admin/access-keys/generate")
@@ -7779,13 +8026,13 @@ async def api_admin_access_keys_reveal(request: Request, payload: Dict[str, Any]
 
 @app.get("/api/admin/gen-logs")
 async def api_admin_gen_logs(request: Request, limit: int = 20, offset: int = 0,
-                              date_from: float = 0, date_to: float = 0):
-    """分页查询生图日志（仅管理员），支持日期筛选。"""
+                              login: str = "", date_from: float = 0, date_to: float = 0):
+    """分页查询生图日志（仅管理员），支持用户名搜索和日期筛选。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    rows, total = db.query_gen_logs(date_from, date_to, limit, offset)
+    rows, total = db.query_gen_logs(login.strip(), date_from, date_to, limit, offset)
     items = [{
         "id": r.get("log_id", ""),
         "github_id": r.get("github_id", ""),
@@ -7816,12 +8063,14 @@ async def api_admin_gen_logs_clear(request: Request, date_from: float = 0, date_
 # ==================== 删除记录（回收站） ====================
 
 @app.get("/api/admin/deletion-log")
-async def api_admin_deletion_log(request: Request, date_from: float = 0, date_to: float = 0):
-    """列出删除记录（仅管理员），支持日期筛选。"""
+async def api_admin_deletion_log(request: Request, search: str = "",
+                                  date_from: float = 0, date_to: float = 0,
+                                  limit: int = 60, offset: int = 0):
+    """分页查询删除记录（仅管理员），支持用户名搜索和日期筛选。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     from urllib.parse import quote
-    log = db.query_deletion_log(date_from, date_to)
+    log, total = db.query_deletion_log(search.strip(), date_from, date_to, limit, offset)
     for e in log:
         e["sort_ts"] = e.get("deleted_at", 0)
         e["file_url"] = f"/api/output/file?path={quote(e.get('path', ''), safe='')}"
@@ -7829,7 +8078,7 @@ async def api_admin_deletion_log(request: Request, date_from: float = 0, date_to
             e["thumb_url"] = f"/api/admin/deletion-thumb/{e['thumb_file']}"
         else:
             e["thumb_url"] = ""
-    return {"items": log, "total": len(log)}
+    return {"items": log, "total": total}
 
 
 @app.get("/api/admin/deletion-thumb/{filename}")

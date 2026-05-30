@@ -340,10 +340,13 @@ def clean_gen_logs_by_file_paths(deleted_paths: set) -> int:
     return removed
 
 
-def query_gen_logs(date_from: float = 0, date_to: float = 0,
+def query_gen_logs(login: str = "", date_from: float = 0, date_to: float = 0,
                    limit: int = 20, offset: int = 0) -> Tuple[List[Dict], int]:
     conditions = []
     params = []
+    if login:
+        conditions.append("login LIKE ?")
+        params.append(f"%{login}%")
     if date_from:
         conditions.append("created_at >= ?")
         params.append(date_from)
@@ -434,9 +437,14 @@ def clear_all_deletion_logs() -> int:
     return r.rowcount
 
 
-def query_deletion_log(date_from: float = 0, date_to: float = 0) -> List[Dict]:
+def query_deletion_log(search: str = "", date_from: float = 0, date_to: float = 0,
+                       limit: int = 60, offset: int = 0) -> Tuple[List[Dict], int]:
     conditions = []
     params = []
+    if search:
+        conditions.append("(deleted_by_login LIKE ? OR creator_login LIKE ? OR path LIKE ?)")
+        s = f"%{search}%"
+        params.extend([s, s, s])
     if date_from:
         conditions.append("deleted_at >= ?")
         params.append(date_from)
@@ -444,9 +452,11 @@ def query_deletion_log(date_from: float = 0, date_to: float = 0) -> List[Dict]:
         conditions.append("deleted_at <= ?")
         params.append(date_to)
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+    total = _db().execute(f"SELECT COUNT(*) as c FROM deletion_logs{where}", params).fetchone()["c"]
     rows = _db().execute(
-        f"SELECT * FROM deletion_logs{where} ORDER BY deleted_at DESC", params).fetchall()
-    return [dict(r) for r in rows]
+        f"SELECT * FROM deletion_logs{where} ORDER BY deleted_at DESC LIMIT ? OFFSET ?",
+        params + [max(1, min(limit, 200)), max(0, offset)]).fetchall()
+    return [dict(r) for r in rows], total
 
 
 # ═══════════════════════════════════════════
@@ -662,6 +672,64 @@ def state_set(key: str, value: Any) -> None:
     v = json.dumps(value) if not isinstance(value, str) else value
     _db().execute("INSERT OR REPLACE INTO kv_state VALUES (?,?)", (key, v))
     _db().commit()
+
+
+# ═══════════════════════════════════════════
+# GC 日志
+# ═══════════════════════════════════════════
+
+def add_gc_log(timestamp: float, duration: float, cleaned: dict, backup_dir: str = "") -> None:
+    _db().execute(
+        "INSERT INTO gc_logs (timestamp, duration, cleaned, backup_dir) VALUES (?,?,?,?)",
+        (timestamp, duration, json.dumps(cleaned), backup_dir))
+    _db().commit()
+
+
+def load_gc_logs(limit: int = 20, offset: int = 0, min_time: float = 0, max_time: float = 0) -> list:
+    where = []
+    params = []
+    if min_time > 0:
+        where.append("timestamp >= ?")
+        params.append(min_time)
+    if max_time > 0:
+        where.append("timestamp <= ?")
+        params.append(max_time)
+    sql = "SELECT * FROM gc_logs"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+    params.extend([limit, offset])
+    rows = _db().execute(sql, params).fetchall()
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["cleaned"] = json.loads(d["cleaned"])
+        except Exception:
+            d["cleaned"] = {}
+        result.append(d)
+    return result
+
+
+def clear_gc_logs() -> None:
+    _db().execute("DELETE FROM gc_logs")
+    _db().commit()
+
+
+def count_gc_logs(min_time: float = 0, max_time: float = 0) -> int:
+    where = []
+    params = []
+    if min_time > 0:
+        where.append("timestamp >= ?")
+        params.append(min_time)
+    if max_time > 0:
+        where.append("timestamp <= ?")
+        params.append(max_time)
+    sql = "SELECT COUNT(*) as cnt FROM gc_logs"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    r = _db().execute(sql, params).fetchone()
+    return r["cnt"] if r else 0
 
 
 # ═══════════════════════════════════════════
