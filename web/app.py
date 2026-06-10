@@ -3671,43 +3671,36 @@ async def api_auth_claim_key(request: Request):
     if not key:
         return _JR({"error": "请输入密钥"}, status_code=400)
     # 验证密钥
-    async with _access_keys_lock:
-        data = _load_access_keys()
-        keys = data.get("keys", {})
-        entry = keys.get(key)
-        # 统一错误消息，防止密钥状态预言机攻击
-        if not entry:
+    entry = db.get_access_key(key)
+    if not entry:
+        return _JR({"error": "密钥无效或不可用"}, status_code=403)
+    if entry.get("disabled_at", 0):
+        return _JR({"error": "密钥无效或不可用"}, status_code=403)
+    expires_at = entry.get("expires_at", 0)
+    now = _time_module.time()
+    if expires_at and now > expires_at + 60:
+        return _JR({"error": "密钥无效或不可用"}, status_code=403)
+    max_uses_v = entry.get("max_uses", 0)
+    if max_uses_v > 0 and entry.get("used_count", 0) >= max_uses_v:
+        return _JR({"error": "密钥无效或不可用"}, status_code=403)
+    if entry.get("used_by", ""):
+        if str(entry["used_by"]) != github_id:
             return _JR({"error": "密钥无效或不可用"}, status_code=403)
-        if entry.get("disabled_at", 0):
-            return _JR({"error": "密钥无效或不可用"}, status_code=403)
-        expires_at = entry.get("expires_at", 0)
-        now = _time_module.time()
-        if expires_at and now > expires_at + 60:
-            return _JR({"error": "密钥无效或不可用"}, status_code=403)
-        max_uses_v = entry.get("max_uses", 0)
-        if max_uses_v > 0 and entry.get("used_count", 0) >= max_uses_v:
-            return _JR({"error": "密钥无效或不可用"}, status_code=403)
-        if entry.get("used_by", ""):
-            # 同用户重复认领 → 只更新会话，不修改密钥绑定
-            if str(entry["used_by"]) != github_id:
-                return _JR({"error": "密钥无效或不可用"}, status_code=403)
-            # 同用户，放行到后面更新 session
-        else:
-            # 检查用户是否已持有其他有效密钥（一个用户只能持有一个）
-            for k2, v2 in keys.items():
-                if str(v2.get("used_by", "")) == github_id:
-                    if not v2.get("disabled_at", 0):
-                        expires2 = v2.get("expires_at", 0)
-                        max2 = v2.get("max_uses", 0)
-                        used2 = v2.get("used_count", 0)
-                        if not (expires2 and now > expires2 + 60) and not (max2 > 0 and used2 >= max2):
-                            return _JR({"error": "你已绑定其他有效密钥，请使用原密钥或等待到期"}, status_code=403)
-                    # 旧密钥已失效（禁用/过期/耗尽），清除绑定
-                    v2["used_by"] = ""
-                    break
-            # 绑定新密钥
-            entry["used_by"] = github_id
-            _save_access_keys(data)
+    else:
+        # 检查用户是否已持有其他有效密钥
+        all_keys = db.load_access_keys().get("keys", {})
+        for k2, v2 in all_keys.items():
+            if str(v2.get("used_by", "")) == github_id:
+                if not v2.get("disabled_at", 0):
+                    expires2 = v2.get("expires_at", 0)
+                    max2 = v2.get("max_uses", 0)
+                    used2 = v2.get("used_count", 0)
+                    if not (expires2 and now > expires2 + 60) and not (max2 > 0 and used2 >= max2):
+                        return _JR({"error": "你已绑定其他有效密钥，请使用原密钥或等待到期"}, status_code=403)
+                db.unclaim_access_key(github_id)
+                break
+        if not db.claim_access_key(key, github_id):
+            return _JR({"error": "密钥绑定失败"}, status_code=500)
     # 更新会话：标记已验证并记录使用的密钥
     token = request.cookies.get("session", "")
     if token:
@@ -8010,16 +8003,8 @@ async def api_admin_access_keys(request: Request, limit: int = 50, offset: int =
         raise HTTPException(403)
     import time as _time
     now = _time.time()
-    async with _access_keys_lock:
-        data = _load_access_keys()
-        keys = data.get("keys", {})
-        stale_keys = [k for k, v in keys.items() if
-                      (v.get("disabled_at", 0) and now > v["disabled_at"] + 2) or
-                      (v.get("expires_at", 0) and now > v["expires_at"] + 60)]
-        if stale_keys:
-            for k in stale_keys:
-                del keys[k]
-            _save_access_keys(data)
+    data = db.load_access_keys()
+    keys = data.get("keys", {})
     items = []
     users = _load_users()
     for key, entry in keys.items():
@@ -8075,21 +8060,16 @@ async def api_admin_access_keys_generate(request: Request, payload: Dict[str, An
         if expires_at <= now:
             expires_at = now + 3600
     else:
-        expires_at = 0  # 纯次数模式无时间限制
-    async with _access_keys_lock:
-        data = _load_access_keys()
-        keys = data.setdefault("keys", {})
-        new_keys = []
-        for _ in range(count):
-            k = secrets.token_urlsafe(32)
-            keys[k] = {
-                "used_by": "", "created_at": now,
-                "expires_at": expires_at,
-                "max_uses": max_uses if key_type in ("count", "both") else 0,
-                "used_count": 0,
-            }
-            new_keys.append(k)
-        _save_access_keys(data)
+        expires_at = 0
+    new_keys = []
+    for _ in range(count):
+        k = secrets.token_urlsafe(32)
+        db.add_access_key(
+            key=k, used_by="", created_at=now,
+            disabled_at=0, expires_at=expires_at,
+            max_uses=max_uses if key_type in ("count", "both") else 0,
+            used_count=0)
+        new_keys.append(k)
     return {"ok": True, "keys": new_keys}
 
 
@@ -8104,33 +8084,26 @@ async def api_admin_access_keys_delete(request: Request, payload: Dict[str, Any]
         raise HTTPException(400, "key required")
     import time as _time
     now = _time.time()
-    async with _access_keys_lock:
-        data = _load_access_keys()
-        keys = data.get("keys", {})
-        # 清理 disabled_at 超过 2 秒的密钥（正式删除）
-        stale = [k for k, v in keys.items() if v.get("disabled_at", 0) and now > v["disabled_at"] + 2]
-        for k in stale:
-            del keys[k]
-        # 支持完整 key 或 key_preview 匹配
-        target_key = None
-        if raw in keys:
-            target_key = raw
-        else:
-            # key_preview 格式: "first8...last4"
-            parts = raw.split("...")
-            if len(parts) == 2 and parts[0] and parts[1]:
-                prefix, suffix = parts[0], parts[1]
-                for k in keys:
-                    if k.startswith(prefix) and k.endswith(suffix):
-                        target_key = k
-                        break
-        if target_key is None:
-            raise HTTPException(404, "操作失败")
-        entry = keys[target_key]
-        if entry.get("disabled_at", 0):
-            raise HTTPException(400, "操作失败")
-        entry["disabled_at"] = now
-        _save_access_keys(data)
+    # 清理 disabled_at 超过 2 秒的密钥
+    from db.schema import get_db as _get_db
+    _get_db().execute("DELETE FROM access_keys WHERE disabled_at > 0 AND disabled_at+2 < ?", (now,))
+    _get_db().commit()
+    # 查找目标 key
+    target_key = raw if db.get_access_key(raw) else None
+    if not target_key and "..." in raw:
+        parts = raw.split("...")
+        if len(parts) == 2 and parts[0] and parts[1]:
+            prefix, suffix = parts[0], parts[1]
+            for k, v in _load_access_keys().get("keys", {}).items():
+                if k.startswith(prefix) and k.endswith(suffix):
+                    target_key = k
+                    break
+    if target_key is None:
+        raise HTTPException(404, "操作失败")
+    entry = db.get_access_key(target_key)
+    if entry.get("disabled_at", 0):
+        raise HTTPException(400, "操作失败")
+    db.disable_access_key(target_key, now)
     return {"ok": True}
 
 
@@ -8142,9 +8115,7 @@ async def api_admin_access_keys_cleanup(request: Request):
     import time as _time
     now = _time.time()
     stale = db.cleanup_expired_access_keys(now)
-    # disabled_at 过缓冲期的需额外处理
-    extra = db.cleanup_disabled_access_keys(now)
-    return {"ok": True, "cleaned": len(stale) + len(extra)}
+    return {"ok": True, "cleaned": len(stale)}
 
 
 @app.post("/api/admin/access-keys/enable")
@@ -8155,26 +8126,21 @@ async def api_admin_access_keys_enable(request: Request, payload: Dict[str, Any]
     raw = str((payload or {}).get("key") or (payload or {}).get("key_preview") or "").strip()
     if not raw:
         raise HTTPException(400, "key required")
-    async with _access_keys_lock:
-        data = _load_access_keys()
-        keys = data.get("keys", {})
-        target_key = None
-        if raw in keys:
-            target_key = raw
-        else:
-            parts = raw.split("...")
-            if len(parts) == 2 and parts[0] and parts[1]:
-                prefix, suffix = parts[0], parts[1]
-                for k in keys:
-                    if k.startswith(prefix) and k.endswith(suffix):
-                        target_key = k
-                        break
-        if target_key is None:
-            raise HTTPException(404, "密钥不存在")
-        if not keys[target_key].get("disabled_at", 0):
-            raise HTTPException(400, "该密钥未被禁用")
-        keys[target_key].pop("disabled_at", None)
-        _save_access_keys(data)
+    target_key = raw if db.get_access_key(raw) else None
+    if not target_key and "..." in raw:
+        parts = raw.split("...")
+        if len(parts) == 2 and parts[0] and parts[1]:
+            prefix, suffix = parts[0], parts[1]
+            for k, v in db.load_access_keys().get("keys", {}).items():
+                if k.startswith(prefix) and k.endswith(suffix):
+                    target_key = k
+                    break
+    if target_key is None:
+        raise HTTPException(404, "密钥不存在")
+    entry = db.get_access_key(target_key)
+    if not entry.get("disabled_at", 0):
+        raise HTTPException(400, "该密钥未被禁用")
+    db.enable_access_key(target_key)
     return {"ok": True}
 
 @app.post("/api/admin/access-keys/reveal")
@@ -8191,23 +8157,21 @@ async def api_admin_access_keys_reveal(request: Request, payload: Dict[str, Any]
     # 拒绝单因子匹配（仅前缀或仅后缀）
     if "..." not in raw:
         raise HTTPException(400, "key_preview 格式无效（需包含 ...）")
-    async with _access_keys_lock:
-        data = _load_access_keys()
-        keys = data.get("keys", {})
-        target_key = None
-        parts = raw.split("...")
-        if len(parts) == 2 and parts[0] and parts[1]:
-            prefix, suffix = parts[0], parts[1]
-            # 前缀和后缀至少各 4 字符，防止暴力匹配
-            if len(prefix) < 4 or len(suffix) < 4:
-                raise HTTPException(400, "key_preview 前缀/后缀长度不足")
-            for k in keys:
-                if k.startswith(prefix) and k.endswith(suffix):
-                    target_key = k
-                    break
-        if target_key is None:
-            print(f"[AUDIT] 密钥查看失败 admin={admin_login} preview={raw} ip={_client_ip_from_request(request)}")
-            raise HTTPException(404, "密钥不存在")
+    data = db.load_access_keys()
+    keys = data.get("keys", {})
+    target_key = None
+    parts = raw.split("...")
+    if len(parts) == 2 and parts[0] and parts[1]:
+        prefix, suffix = parts[0], parts[1]
+        if len(prefix) < 4 or len(suffix) < 4:
+            raise HTTPException(400, "key_preview 前缀/后缀长度不足")
+        for k in keys:
+            if k.startswith(prefix) and k.endswith(suffix):
+                target_key = k
+                break
+    if target_key is None:
+        print(f"[AUDIT] 密钥查看失败 admin={admin_login} preview={raw} ip={_client_ip_from_request(request)}")
+        raise HTTPException(404, "密钥不存在")
     print(f"[AUDIT] 密钥已查看 admin={admin_login} key_preview={raw} ip={_client_ip_from_request(request)}")
     return {"ok": True, "key": target_key}
 

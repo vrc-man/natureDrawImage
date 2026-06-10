@@ -185,6 +185,50 @@ def cleanup_expired_access_keys(now: float) -> List[str]:
     return stale
 
 
+def add_access_key(key: str, used_by: str, created_at: float,
+                   disabled_at: int, expires_at: float,
+                   max_uses: int, used_count: int) -> None:
+    _db().execute(
+        "INSERT OR REPLACE INTO access_keys VALUES (?,?,?,?,?,?,?)",
+        (key, used_by, created_at, disabled_at, expires_at, max_uses, used_count))
+    _db().commit()
+
+
+def delete_access_key(key: str) -> None:
+    _db().execute("DELETE FROM access_keys WHERE key=?", (key,))
+    _db().commit()
+
+
+def disable_access_key(key: str, now: float) -> None:
+    _db().execute("UPDATE access_keys SET disabled_at=? WHERE key=?", (now, key))
+    _db().commit()
+
+
+def enable_access_key(key: str) -> None:
+    _db().execute("UPDATE access_keys SET disabled_at=NULL WHERE key=?", (key,))
+    _db().commit()
+
+
+def unclaim_access_key(github_id: str) -> None:
+    _db().execute(
+        "UPDATE access_keys SET used_by='' WHERE used_by=? AND disabled_at=0",
+        (github_id,))
+    _db().commit()
+
+
+def claim_access_key(key: str, github_id: str) -> bool:
+    cur = _db().execute(
+        "UPDATE access_keys SET used_by=? WHERE key=? AND (used_by='' OR used_by=?)",
+        (github_id, key, github_id))
+    _db().commit()
+    return cur.rowcount > 0
+
+
+def get_access_key(key: str) -> Optional[Dict]:
+    r = _db().execute("SELECT * FROM access_keys WHERE key=?", (key,)).fetchone()
+    return dict(r) if r else None
+
+
 # ═══════════════════════════════════════════
 # 用户图片
 # ═══════════════════════════════════════════
