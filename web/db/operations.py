@@ -607,30 +607,41 @@ def load_reports() -> List[Dict]:
 
 def save_report(report: Dict) -> None:
     _db().execute(
-        "INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?,?,?,?)",
+        "INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?,?,?,?,?)",
         (report.get("id", ""), report.get("image_path", ""),
          report.get("reporter_gid", ""), report.get("reporter_login", ""),
          report.get("reason", ""), report.get("status", "pending"),
-         report.get("timestamp", 0), report.get("resolved_action", "")))
+         report.get("timestamp", 0), report.get("resolved_action", ""),
+         report.get("reporter_ip", "")))
     _db().commit()
 
 
-def save_reports(reports: List[Dict]) -> None:
-    _db().execute("BEGIN IMMEDIATE")
-    try:
-        _db().execute("DELETE FROM reports")
-        for r in reports:
-            _db().execute(
-                "INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?,?,?,?,?)",
-                (r.get("id", ""), r.get("image_path", ""),
-                 r.get("reporter_gid", ""), r.get("reporter_login", ""),
-                 r.get("reason", ""), r.get("status", "pending"),
-                 r.get("timestamp", 0), r.get("resolved_action", ""),
-                 r.get("reporter_ip", "")))
-        _db().commit()
-    except Exception:
-        _db().execute("ROLLBACK")
-        raise
+def resolve_report(report_id: str, action: str) -> None:
+    _db().execute(
+        "UPDATE reports SET status='resolved', resolved_action=? WHERE id=? AND status='pending'",
+        (action, report_id))
+    _db().commit()
+
+
+def dismiss_reports_for_image(image_path: str) -> int:
+    cur = _db().execute(
+        "UPDATE reports SET status='resolved', resolved_action='dismiss' WHERE status='pending' AND image_path=?",
+        (image_path,))
+    _db().commit()
+    return cur.rowcount
+
+
+def dismiss_reports_by_reporter_ip(reporter_ip: str, exclude_id: str = "") -> int:
+    if exclude_id:
+        cur = _db().execute(
+            "UPDATE reports SET status='resolved', resolved_action='dismiss' WHERE status='pending' AND reporter_ip=? AND id!=?",
+            (reporter_ip, exclude_id))
+    else:
+        cur = _db().execute(
+            "UPDATE reports SET status='resolved', resolved_action='dismiss' WHERE status='pending' AND reporter_ip=?",
+            (reporter_ip,))
+    _db().commit()
+    return cur.rowcount
 
 
 # ═══════════════════════════════════════════

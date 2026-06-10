@@ -966,15 +966,7 @@ async def _save_reports(reports: list) -> bool:
 
 async def _auto_dismiss_reports_for_image(image_path: str):
     """图片被删除后，自动忽略该图所有剩余待处理举报。"""
-    reports = _load_reports()
-    changed = False
-    for r in reports:
-        if r.get("status") == "pending" and r.get("image_path") == image_path:
-            r["status"] = "resolved"
-            r["resolved_action"] = "dismiss"
-            changed = True
-    if changed:
-        await _save_reports(reports)
+    await asyncio.to_thread(db.dismiss_reports_for_image, image_path)
 
 
 def _is_trusted_proxy(client_host: str) -> bool:
@@ -1501,12 +1493,8 @@ async def _run_gc():
     cleaned: Dict[str, int] = {}
 
     # 1. 清理已处理/无效举报（status != "pending"）
-    reports = _load_reports()
-    before = len(reports)
-    reports = [r for r in reports if r.get("status") == "pending"]
-    removed_reports = before - len(reports)
-    if removed_reports > 0:
-        await _save_reports(reports)
+    removed_reports = get_db().execute("DELETE FROM reports WHERE status != 'pending'").rowcount
+    get_db().commit()
     cleaned["resolved_reports"] = removed_reports
 
     # 2. 清理内存中过期的限流条目
@@ -1666,16 +1654,16 @@ async def _run_gc():
 
     # 6. 清理过期会话
     try:
-        async with _sessions_lock:
-            sessions = _load_sessions()
-            before_sess = len(sessions)
-            sessions = {k: v for k, v in sessions.items() if v.get("expires_at", 0) > now}
-            removed_sess = before_sess - len(sessions)
-            if removed_sess > 0:
-                await _save_sessions(sessions)
-            cleaned["expired_sessions"] = removed_sess
+        removed_sess = db.cleanup_expired_sessions(now)
+        cleaned["expired_sessions"] = removed_sess
     except Exception:
         cleaned["expired_sessions"] = 0
+
+    # 7. 清理过期/耗尽访问密钥
+    try:
+        cleaned["expired_access_keys"] = len(db.cleanup_expired_access_keys(now))
+    except Exception:
+        cleaned["expired_access_keys"] = 0
 
     async with _kv_state_lock:
         db.state_set("last_gc_time", _time.time())
@@ -6247,18 +6235,18 @@ async def api_report(payload: Dict[str, Any], request: Request):
         ts_list = [t for t in ts_list if now - t < window]
         if len(ts_list) >= max_in_window:
             raise HTTPException(429, f"举报过于频繁，请 {int(window // 60)} 分钟后再试")
-    reports = _load_reports()
-    pending_count = 0
     pending_max = int(_limits.get("report_pending_max", 10))
-    for r in reports:
-        if r.get("reporter_ip") == reporter_ip and r.get("status") == "pending":
-            pending_count += 1
-            if r.get("image_path") == image_path:
-                raise HTTPException(409, "您已举报过此图片")
+    pending_count = get_db().execute(
+        "SELECT COUNT(*) as c FROM reports WHERE reporter_ip=? AND status='pending'",
+        (reporter_ip,)).fetchone()["c"]
     if pending_count >= pending_max:
         raise HTTPException(429, "您的待处理举报数已达上限，请等待管理员处理")
+    if get_db().execute(
+        "SELECT 1 FROM reports WHERE image_path=? AND reporter_ip=? AND status='pending'",
+        (image_path, reporter_ip)).fetchone():
+        raise HTTPException(409, "您已举报过此图片")
     user = getattr(request.state, "user", None) or {}
-    new_report = {
+    db.save_report({
         "id": uuid.uuid4().hex,
         "image_path": image_path,
         "reporter_ip": reporter_ip,
@@ -6268,10 +6256,7 @@ async def api_report(payload: Dict[str, Any], request: Request):
         "timestamp": now,
         "status": "pending",
         "resolved_action": None,
-    }
-    reports.append(new_report)
-    if not await _save_reports(reports):
-        raise HTTPException(500, "保存举报失败")
+    })
     async with _report_rate_lock:
         ts_list.append(now)
         _REPORT_RATE[reporter_ip] = ts_list
@@ -6592,15 +6577,7 @@ async def api_delete_my_image(request: Request, payload: DeleteImagePayload):
         feats = [x for x in feats if x != rel_path]
         await _write_featured(feats)
     # 自动 dismiss 待处理举报
-    reports = _load_reports()
-    report_changed = False
-    for r in reports:
-        if r.get("status") == "pending" and r.get("image_path") == rel_path:
-            r["status"] = "resolved"
-            r["resolved_action"] = "dismiss"
-            report_changed = True
-    if report_changed:
-        await _save_reports(reports)
+    db.dismiss_reports_for_image(rel_path)
     # 记录删除日志（缩略图移入存档目录），传生图者避免查不到
     await _record_deletion(rel_path, github_id, user.get("login", github_id),
                           creator_gid=creator_gid, creator_login=creator_login)
@@ -7051,15 +7028,8 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
         if changed:
             await _write_featured(feats)
         # 自动忽略已删图片的所有待处理举报
-        reports = _load_reports()
-        report_changed = False
-        for r in reports:
-            if r.get("status") == "pending" and r.get("image_path") in del_set:
-                r["status"] = "resolved"
-                r["resolved_action"] = "dismiss"
-                report_changed = True
-        if report_changed:
-            await _save_reports(reports)
+        for p in del_set:
+            db.dismiss_reports_for_image(p)
         # 同步清理 user_images
         db.remove_user_images_by_paths(del_set)
     return {"ok": True, "deleted": len(deleted), "failed": len(failed)}
@@ -7186,15 +7156,8 @@ async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any])
     if changed:
         await _write_featured(feats)
     # 5. 自动 dismiss 待处理举报
-    reports = _load_reports()
-    report_changed = False
-    for r in reports:
-        if r.get("status") == "pending" and r.get("image_path") in del_set:
-            r["status"] = "resolved"
-            r["resolved_action"] = "dismiss"
-            report_changed = True
-    if report_changed:
-        await _save_reports(reports)
+    for p in del_set:
+        db.dismiss_reports_for_image(p)
     return {"ok": True, "marked": len(valid)}
 
 
@@ -7949,7 +7912,6 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
         except Exception:
             pass
         key = image_path.replace("\\", "/")
-        # 标记到 deleted_images
         async with _deleted_images_lock:
             try:
                 db.add_deleted_image("__admin__", key)
@@ -7961,12 +7923,8 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
         if image_path in feats:
             feats = [x for x in feats if x != image_path]
             await _write_featured(feats)
-        # 同步清理 user_images.json（避免「我的作品」中出现悬空条目）
         db.remove_user_image_by_path(key)
-        for r in reports:
-            if r.get("status") == "pending" and r.get("image_path") == image_path and r.get("id") != report_id:
-                r["status"] = "resolved"
-                r["resolved_action"] = "dismiss"
+        db.dismiss_reports_for_image(image_path)
     elif action == "ban_creator":
         creator_ip = _creator_map_get(image_path)
         if creator_ip:
@@ -7983,14 +7941,8 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
             if reporter_ip not in ips:
                 ips.append(reporter_ip)
             await _write_banned_ips(ips)
-            for r in reports:
-                if r.get("status") == "pending" and r.get("reporter_ip") == reporter_ip and r.get("id") != report_id:
-                    r["status"] = "resolved"
-                    r["resolved_action"] = "dismiss"
-    target["status"] = "resolved"
-    target["resolved_action"] = action
-    if not await _save_reports(reports):
-        raise HTTPException(500, "保存举报记录失败")
+            db.dismiss_reports_by_reporter_ip(reporter_ip, report_id)
+    db.resolve_report(report_id, action)
     return {"ok": True, "action": action}
 
 
