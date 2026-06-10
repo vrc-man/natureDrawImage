@@ -1945,7 +1945,7 @@ $('user-label').addEventListener('click', function(e) {
     const label = e.currentTarget;
     label.style.position = 'relative';
     label.appendChild(div);
-    div.querySelector('#btn-logout').onclick = async () => { await fetch('/auth/logout', {method:'POST'}); location.href = '/'; };
+    div.querySelector('#btn-logout').onclick = async () => { await fetch('/auth/logout', {method:'POST', body: '{}', headers: {'Content-Type': 'application/json'}}); location.href = '/'; };
     const btnTotp = div.querySelector('#btn-totp');
     if (btnTotp) btnTotp.onclick = () => { div.remove(); showTotpModal(); };
     const toggleNotify = div.querySelector('#toggle-done-notify');

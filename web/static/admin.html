@@ -2993,6 +2993,7 @@ async function loadAccessKeys() {
         let actions = '<button class="ak-copy-key text-[10px] px-2 py-0.5 bg-blue-500 text-white rounded hover:bg-blue-600 mr-1" data-key="' + escHtml(keyPreview) + '">复制密钥</button>';
         if (it.disabling || it.disabled_at) {
           actions += '<button class="ak-enable text-[10px] px-2 py-0.5 bg-emerald-500 text-white rounded hover:bg-emerald-600" data-key="' + escHtml(keyPreview) + '">重新启用</button>';
+          actions += '<button class="ak-remove text-[10px] px-2 py-0.5 bg-gray-700 text-white rounded hover:bg-gray-800" data-key="' + escHtml(keyPreview) + '">彻底删除</button>';
         } else {
           actions += '<button class="ak-delete text-[10px] px-2 py-0.5 bg-red-500 text-white rounded hover:bg-red-600" data-key="' + escHtml(keyPreview) + '">禁用</button>';
         }
@@ -3043,6 +3044,19 @@ async function loadAccessKeys() {
           setTimeout(() => { $('access-keys-status').textContent = ''; }, 2000);
           loadAccessKeys();
         } catch (e) { alert('操作失败: ' + e.message); }
+      });
+    });
+    // 彻底删除密钥
+    $('access-keys-list').querySelectorAll('.ak-remove').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('确定永久删除此密钥？此操作不可恢复！')) return;
+        if (prompt('请输入"确认删除"以继续：') !== '确认删除') return;
+        try {
+          await api('POST', '/api/admin/access-keys/remove', { key_preview: btn.dataset.key });
+          $('access-keys-status').textContent = '✓ 已永久删除';
+          setTimeout(() => { $('access-keys-status').textContent = ''; }, 2000);
+          loadAccessKeys();
+        } catch (e) { alert('删除失败: ' + e.message); }
       });
     });
   } catch (e) {

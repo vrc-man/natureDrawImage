@@ -7,6 +7,17 @@ Modified 2026-05 by vrc-man | Based on afoim/natureDrawImage (AGPLv3)
 https://github.com/vrc-man/natureDrawImage
 """
 
+import builtins as _builtins
+import datetime as _datetime
+
+_original_print = _builtins.print
+
+def _ts_print(*args, **kwargs):
+    """给所有 print() 自动添加时间戳。"""
+    _original_print(f"[{_datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]", *args, **kwargs)
+
+_builtins.print = _ts_print
+
 import os
 from pathlib import Path
 
@@ -1313,6 +1324,8 @@ async def _auth_middleware(request: Request, call_next):
         or path.startswith("/ws/")
         or path == "/robots.txt"
         or path == "/favicon.ico"
+        or path == "/privacy"
+        or path == "/api/privacy-content"
     )
 
     # CSRF 保护：对状态变更请求校验 Origin/Referer（需在公开路径 early return 之前）
@@ -1492,10 +1505,22 @@ async def _run_gc():
     now = _time.time()
     cleaned: Dict[str, int] = {}
 
-    # 1. 清理已处理/无效举报（status != "pending"）
+    # 1. 清理已处理举报 + 图片已不存在的幽灵举报
     removed_reports = get_db().execute("DELETE FROM reports WHERE status != 'pending'").rowcount
+    stale_pending = get_db().execute("SELECT id, image_path FROM reports WHERE status='pending'").fetchall()
+    orphan_ids = []
+    for r in stale_pending:
+        try:
+            p = _resolve_output_path(r["image_path"])
+            if not p.is_file():
+                orphan_ids.append(r["id"])
+        except Exception:
+            orphan_ids.append(r["id"])
+    if orphan_ids:
+        ph = ",".join("?" * len(orphan_ids))
+        get_db().execute(f"DELETE FROM reports WHERE id IN ({ph})", orphan_ids)
     get_db().commit()
-    cleaned["resolved_reports"] = removed_reports
+    cleaned["resolved_reports"] = removed_reports + len(orphan_ids)
 
     # 2. 清理内存中过期的限流条目
     window_report = float(_limits.get("report_window_sec", 300))
@@ -1659,12 +1684,6 @@ async def _run_gc():
     except Exception:
         cleaned["expired_sessions"] = 0
 
-    # 7. 清理过期/耗尽访问密钥
-    try:
-        cleaned["expired_access_keys"] = len(db.cleanup_expired_access_keys(now))
-    except Exception:
-        cleaned["expired_access_keys"] = 0
-
     async with _kv_state_lock:
         db.state_set("last_gc_time", _time.time())
     return cleaned
@@ -1778,33 +1797,15 @@ def _safe_task(coro, name="task"):
 async def _cleanup_expired_access_keys():
     """清理过期的访问密钥，并同步清理 sessions 中的残留引用。"""
     try:
-        async with _access_keys_lock:
-            data = _load_access_keys()
-            keys = data.get("keys", {})
-            now = _time_module.time()
-            stale = [k for k, v in keys.items() if
-                (v.get("expires_at", 0) and now > v["expires_at"] + 60) or
-                (v.get("max_uses", 0) > 0 and v.get("used_count", 0) >= v.get("max_uses", 0))]
+        now = _time_module.time()
+        stale = db.cleanup_expired_access_keys(now)
+        if stale:
+            print(f"[gc] 清理了 {len(stale)} 个过期访问密钥")
+            db.clear_session_claimed_keys_for_keys(stale)
             if stale:
-                for k in stale:
-                    del keys[k]
-                _save_access_keys(data)
-                print(f"[startup] 清理了 {len(stale)} 个过期访问密钥")
-                # 同步清理 sessions 中引用已删除密钥的 claimed_key
-                async with _sessions_lock:
-                    sessions = _load_sessions()
-                    changed = False
-                    for t, s in sessions.items():
-                        ck = s.get("claimed_key", "")
-                        if ck and ck in stale:
-                            s["claimed_key"] = ""
-                            s["access_granted"] = False
-                            changed = True
-                    if changed:
-                        await _save_sessions(sessions)
-                        print("[startup] 同步清理了过期密钥的 session 引用")
+                print(f"[gc] 同步清理了过期密钥的 session 引用")
     except Exception as e:
-        print(f"[startup] 清理过期密钥失败: {e}")
+        print(f"[gc] 清理过期密钥失败: {e}")
 
 
 
@@ -1984,7 +1985,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # 进程内缓存：(abs_path, mtime, size) -> webp bytes
 _WEBP_CACHE: "Dict[Tuple[str, float, str], bytes]" = {}
-_WEBP_CACHE_MAX = 64  # LRU 上限，防止内存爆掉
+_WEBP_CACHE_MAX = 360  # LRU 上限，防止内存爆掉
 
 
 # ==================== 删除记录 & 缩略图存档 ====================
@@ -2079,12 +2080,7 @@ async def _record_deletion(rel_path: str, github_id: str, login: str,
         "creator_github_id": creator_github_id,
         "creator_login": creator_login,
     }
-    purged = db.add_deletion_log_entry(entry)
-    for f in purged:
-        try:
-            (DELETION_THUMBS_DIR / f).unlink(missing_ok=True)
-        except Exception:
-            pass
+    db.add_deletion_log_entry(entry)
 
 def _thumb_cache_path(output_rel: str) -> Path:
     """OUTPUT_DIR 相对路径 -> thumb_cache 下的 .webp 路径"""
@@ -2214,7 +2210,8 @@ def _serve_image_maybe_webp(
     # 已是 webp / gif / 不接受 webp，直传
     ext = path.suffix.lower()
     if ext in (".webp", ".gif") or not _accepts_webp(request):
-        return FileResponse(str(path), media_type=media)
+        return FileResponse(str(path), media_type=media,
+            headers={"Cache-Control": "public, max-age=86400"})
     try:
         st = path.stat()
         etag = hashlib.md5(f"{path}\0{st.st_mtime}\0{st.st_size}\0{quality}\0{max_side or 0}".encode()).hexdigest()
@@ -2246,14 +2243,14 @@ def _serve_image_maybe_webp(
             _WEBP_CACHE[key] = cached
         headers = {
             "Content-Length": str(len(cached)),
-            "Vary": "Accept",
-            "Cache-Control": "public, max-age=300",
+            "Cache-Control": "public, max-age=86400",
             "ETag": f'"{etag}"',
             "Last-Modified": formatdate(st.st_mtime, usegmt=True),
         }
         return Response(content=cached, media_type="image/webp", headers=headers)
     except Exception:
-        return FileResponse(str(path), media_type=media)
+        return FileResponse(str(path), media_type=media,
+            headers={"Cache-Control": "public, max-age=86400"})
 
 
 # ---------------- KV state ----------------
@@ -3098,7 +3095,8 @@ _WELCOME_HTML = """<!DOCTYPE html>
     <button id="btn-email" class="login-btn email-btn" disabled onclick="location.href='/auth/email-login'">📧 邮箱登录/注册</button>
   </div>
   <div class="footer">
-    Powered by <a href="https://github.com/afoim/natureDrawImage">natureDrawImage</a> (AGPLv3) | Modified by vrc-man since 2026-05 | <a href="https://github.com/vrc-man/natureDrawImage">源码</a>
+    Powered by <a href="https://github.com/afoim/natureDrawImage">natureDrawImage</a> (AGPLv3) | Modified by vrc-man since 2026-05 | <a href="https://github.com/vrc-man/natureDrawImage">源码</a><br>
+    本站由 <a href="https://www.cloudflare.com/">Cloudflare</a> 提供服务支持
   </div>
 </div>
 
@@ -3110,100 +3108,7 @@ _WELCOME_HTML = """<!DOCTYPE html>
       <button id="modal-x-btn" onclick="_closeModal(false)">&times;</button>
     </div>
     <div id="modal-scroll" onscroll="_onModalScroll()">
-
-<h1>用户协议与隐私政策</h1>
-<p class="update-date">最后更新：2026 年 5 月 28 日</p>
-
-<h2>一、运营者信息</h2>
-<p>本网站（以下简称"本站"）由个人运营。</p>
-<div class="contact-box">
-  <p><strong>联系邮箱：</strong>__CONTACT_EMAIL__</p>
-  <p><strong>服务平台：</strong>Cloudflare（CDN 及人机验证）</p>
-  <p><strong>服务器所在地：</strong>境外</p>
-</div>
-
-<h2>二、服务声明</h2>
-<p>本站无意针对中国大陆用户提供服务，但由于互联网的开放性，中国大陆用户可能通过合法渠道访问本站。你理解并同意，本站运营者未主动向中国大陆市场提供服务。</p>
-
-<h2>三、免责声明</h2>
-<p>本站是一个个人公益项目，按「现状」及「可用」基础提供。在法律允许的最大范围内，本站明确声明不承担任何明示或暗示的担保责任，包括但不限于适销性、特定用途适用性及不侵权的担保。本站不保证服务的连续性、及时性、安全性及准确性，你使用本站服务所产生的全部风险由你自行承担。</p>
-<p>你明确理解并同意，本站运营者不对因使用或无法使用本站服务所导致的任何直接、间接、偶然、特殊及后续的损害承担责任，包括但不限于利润损失、数据丢失、业务中断、声誉损害及其他商业损失。</p>
-<p>本站所有生成内容由人工智能自动生成，不代表本站运营者的观点、立场或意见。生成内容的准确性、完整性、合法性及实用性本站不作任何保证。你应对你生成、发布及传播的内容承担全部责任。</p>
-
-<h2>四、数据收集与隐私说明</h2>
-<p>为向你提供服务，本站收集和使用以下数据：</p>
-
-<h3>4.1 账号信息</h3>
-<ul>
-  <li><strong>GitHub OAuth 登录：</strong>获取你的 GitHub 用户名、用户 ID 及公开邮箱信息，仅用于账户识别与违规追溯</li>
-  <li><strong>邮箱登录/注册：</strong>收集你的邮箱地址及密码（密码经 PBKDF2-SHA256 哈希加密存储，本站无法获取明文密码）</li>
-</ul>
-
-<h3>4.2 使用数据</h3>
-<ul>
-  <li><strong>IP 地址：</strong>你的所有操作（登录、注册、生图等）的 IP 地址均被记录，用于违规追溯、限流及安全防护</li>
-  <li><strong>生图内容：</strong>你提交的提示词（prompt）及生成的图片将被记录，仅用于审核及违规追溯</li>
-</ul>
-
-<h3>4.3 Cookie 使用说明</h3>
-<p>本站使用以下 Cookie：</p>
-<ul>
-  <li><strong>session</strong> — 用户登录会话令牌，用于识别你的登录身份。有效期 30 天。功能性必要 Cookie</li>
-  <li><strong>oauth_state</strong> — GitHub OAuth 登录时的 CSRF 安全防护。有效期 10 分钟。功能性必要 Cookie</li>
-  <li><strong>genNoticeAcked</strong> — 记录你已确认生图公告，避免每次弹窗。有效期 1 年</li>
-</ul>
-<p>此外，本站使用浏览器本地存储（localStorage）保存你的黑夜/白天模式偏好，仅在你本地生效，不会上传至服务器。</p>
-
-<h3>4.4 第三方服务</h3>
-<ul>
-  <li><strong>GitHub OAuth：</strong>你使用 GitHub 登录时，你的数据将按 <a href="https://docs.github.com/privacy" target="_blank" rel="noopener">GitHub 隐私政策</a> 处理</li>
-  <li><strong>Cloudflare Turnstile：</strong>本站使用 Cloudflare Turnstile 进行人机验证。Cloudflare 可能收集你的 IP 地址及设备信息用于防滥用检测，详见 <a href="https://www.cloudflare.com/privacypolicy/" target="_blank" rel="noopener">Cloudflare 隐私政策</a></li>
-  <li><strong>Tailwind CSS CDN：</strong>本站前端使用 Tailwind CSS CDN 提供样式支持，CDN 服务商可能获取你的 IP 地址及浏览器信息</li>
-</ul>
-
-<h3>4.5 数据保留与删除</h3>
-<ul>
-  <li><strong>生图日志：</strong>最多保留 20,000 条，超出后自动覆盖最旧的记录</li>
-  <li><strong>用户作品：</strong>你可以在「我的作品」中删除自己生成的图片，对应记录同步清除</li>
-  <li><strong>账号删除：</strong>如需删除账号及相关数据，请通过联系邮箱向我们提出请求</li>
-</ul>
-
-<h3>4.6 图片可见性</h3>
-<p>本站所有生成内容<strong>强制仅生图者本人可见</strong>。运营者为履行审核义务保留后台查看权限，但不会主动公开任何用户作品。仅在你授权的情况下，作品可能被列为精选展示。</p>
-
-<h2>五、访问密钥</h2>
-<p>本站采用开放注册 + 密钥授权制。注册后需使用由站长分配的访问密钥方可使用生图服务。密钥由站长视情况自行决定是否发放，站长保留不予发放的最终权利。密钥仅限个人使用，请勿转借或公开分享。本站不接受任何形式的赞助或捐款。</p>
-
-<h2>六、禁止行为</h2>
-<p>你同意在使用本站服务时遵守以下规定：</p>
-<ul>
-  <li>禁止生成任何违反中华人民共和国法律法规的内容，包括但不限于危害国家安全、煽动民族仇恨、破坏国家统一、宣扬恐怖主义、传播淫秽色情、赌博、暴力、凶杀、恐怖或者教唆犯罪的内容</li>
-  <li>禁止生成任何侵犯他人合法权益的内容，包括但不限于侵犯他人名誉权、肖像权、知识产权、隐私权及商业秘密</li>
-  <li>禁止生成未成年人色情、儿童性化及一切涉及未成年人的不当内容</li>
-  <li>禁止反向工程、破解、攻击或以任何方式破坏本站的后端系统及队列机制</li>
-  <li>禁止批量注册、自动化脚本及一切形式的滥用行为</li>
-  <li>禁止利用本站生成、伪造或传播虚假信息及误导性内容</li>
-</ul>
-
-<div class="highlight">
-  <strong>⚠ 违规处理：</strong>本站有权审查你提交的提示词及生成的内容。若发现违规，我们保留限制或永久封禁账号的权利，恕不另行通知。你理解并同意：你滥用本服务所产生的一切法律后果及责任由你自行承担，本站运营者不承担因你滥用服务而产生的任何法律责任。
-</div>
-
-<div class="highlight" style="margin-top:12px;">
-  <strong>📋 内容使用说明：</strong>你同意本站阅读、审查、存档、分析你生成的内容，用于审核、统计及模型改进。本站<strong>不会公开分享</strong>你的作品。如涉及违法违规内容，本站依法配合相关部门进行调查。你删除作品后前台展示即刻清除，但后台<strong>仍可能留存必要副本</strong>，用于审核及配合法律法规的要求。
-</div>
-
-<h2>七、未成年人条款</h2>
-<p>本站不向未成年人（未满 18 周岁）提供服务。若你未满 18 周岁，请立即停止使用本站。若你隐瞒真实年龄、伪造身份信息或以其他方式欺骗使用本站，你将被视为完全民事行为能力人，自愿承担因使用本站所产生的全部法律责任及后果，本站运营者不承担任何责任。</p>
-
-<h2>八、其他条款</h2>
-<p><strong>协议修改：</strong>本站保留随时修改本协议的权利，修改后的协议自发布之日起生效。你继续使用本站服务即视为接受修改后的协议。</p>
-<p><strong>法律适用：</strong>本协议适用服务器所在地法律并按其解释。因本协议引起的或与本协议有关的争议，双方应友好协商解决。</p>
-<p><strong>可分割性：</strong>如本协议的任何条款被认定为无效或不可执行，其余条款仍应保持完全效力。</p>
-<p><strong>联系方式：</strong>如你对本协议有任何疑问，可通过 <strong>__CONTACT_EMAIL__</strong> 与我们取得联系。</p>
-
-<div class="footer-note">Powered by <a href="https://github.com/afoim/natureDrawImage">natureDrawImage</a> (AGPLv3) | Modified by vrc-man since 2026-05 | <a href="https://github.com/vrc-man/natureDrawImage">源码</a></div>
-
+      <p style="text-align:center;padding:40px;color:#9ca3af">加载中...</p>
     </div>
     <div id="privacy-modal-footer">
       <label>
@@ -3217,14 +3122,34 @@ _WELCOME_HTML = """<!DOCTYPE html>
 
 <script>
 var _hasRead = localStorage.getItem('agreementRead') === 'true';
+var _hasChecked = localStorage.getItem('agreementChecked') === 'true';
 var _turnstilePassed = false;
 var _turnstileRendered = false;
+if (_hasRead) {
+  document.getElementById('agree-hint').style.display = 'none';
+  document.getElementById('agree-label').style.display = 'flex';
+  document.getElementById('agree-check').disabled = false;
+  if (_hasChecked) {
+    document.getElementById('agree-check').checked = true;
+    _onCheckboxChange();
+  }
+}
 function _openModal() {
   document.getElementById('privacy-modal').style.display = 'flex';
-  document.getElementById('modal-scroll').scrollTop = 0;
+  var scrollEl = document.getElementById('modal-scroll');
+  scrollEl.scrollTop = 0;
   document.getElementById('read-check').checked = false;
   document.getElementById('read-check').disabled = true;
   document.getElementById('modal-close-btn').disabled = true;
+  if (!scrollEl.dataset.loaded) {
+    scrollEl.innerHTML = '<p style="text-align:center;padding:40px;color:#9ca3af">加载中...</p>';
+    fetch('/api/privacy-content').then(function(r){return r.text()}).then(function(html){
+      scrollEl.innerHTML = html;
+      scrollEl.dataset.loaded = '1';
+    }).catch(function(){
+      scrollEl.innerHTML = '<p style="text-align:center;padding:40px;color:#ef4444">加载失败，请刷新重试</p>';
+    });
+  }
 }
 function _updateButtons() {
   var ok = document.getElementById('agree-check').checked && _turnstilePassed;
@@ -3245,6 +3170,7 @@ function _closeModal(hasRead) {
   _hasRead = hasRead;
   document.getElementById('privacy-modal').style.display = 'none';
   if (_hasRead) {
+    localStorage.setItem('agreementRead', 'true');
     document.getElementById('agree-hint').style.display = 'none';
     document.getElementById('agree-label').style.display = 'flex';
     document.getElementById('agree-check').disabled = false;
@@ -3257,6 +3183,7 @@ function _onTurnstilePass() {
 }
 function _onCheckboxChange() {
   var checked = document.getElementById('agree-check').checked;
+  localStorage.setItem('agreementChecked', checked ? 'true' : 'false');
   if (checked && !_turnstileRendered) {
     _turnstileRendered = true;
     var c = document.getElementById('turnstile-welcome-container');
@@ -3279,6 +3206,27 @@ async def index(request: Request):
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
     return _serve_html(STATIC_DIR / "index.html", nonce=getattr(request.state, "csp_nonce", ""))
+
+
+@app.get("/api/privacy-content")
+async def api_privacy_content():
+    """返回隐私条款正文 HTML（供欢迎页弹窗引用）。"""
+    content = (STATIC_DIR / "privacy.html").read_text(encoding="utf-8")
+    content = content.replace("__CONTACT_EMAIL__", CONTACT_EMAIL or "admin@example.com")
+    start = content.find("<body>")
+    end = content.find("</body>")
+    if start != -1 and end != -1:
+        body = content[start + 6:end]
+    else:
+        body = content
+    body = body.strip()
+    # 去掉外层的 <div class="container"> 包裹
+    container_tag = '<div class="container">'
+    if body.startswith(container_tag):
+        body = body[len(container_tag):]
+        import re
+        body = re.sub(r'\s*</div>\s*$', '', body)
+    return Response(content=body.strip(), media_type="text/html")
 
 
 @app.get("/privacy")
@@ -3606,7 +3554,7 @@ async def auth_logout(request: Request):
             sessions.pop(token, None)
             await _save_sessions(sessions)
     resp = JSONResponse({"ok": True})
-    resp.delete_cookie("session", path="/", httponly=True, samesite="lax", secure=SITE_URL.startswith("https"))
+    resp.set_cookie("session", "", max_age=0, path="/", httponly=True, samesite="lax", secure=SITE_URL.startswith("https"))
     return resp
 
 
@@ -3958,7 +3906,10 @@ async def api_output_featured(request: Request):
 
 @app.get("/api/output/creator")
 async def api_output_creator(request: Request, path: str = ""):
-    """查询图片的生图者信息（用于管理员灯箱显示）。"""
+    """查询图片的生图者信息（仅管理员）。"""
+    user = _get_user_from_session(request)
+    if not user or user.get("role") != "admin":
+        raise HTTPException(403)
     if not path:
         raise HTTPException(400, "path required")
     rel = path.strip().replace("\\", "/")
@@ -3983,6 +3934,15 @@ async def api_output_file(request: Request, path: str, full: int = 0):
             featured = set(_read_featured())
             if path.replace("\\", "/") not in featured:
                 raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
+    # 任何人（包括管理员）不能访问已标记删除的图片
+    deleted_paths: set = set()
+    for paths in _load_deleted_images().values():
+        for dp in paths:
+            deleted_paths.add(dp.replace("\\", "/"))
+    if path.replace("\\", "/") in deleted_paths:
+        raise HTTPException(404, "not found")
+    if not _validate_rel_path(path):
+        raise HTTPException(400, "无效路径")
     p = _resolve_output_path(path)
     if not p.is_file():
         raise HTTPException(404, "not found")
@@ -4013,14 +3973,13 @@ async def api_output_thumb(request: Request, path: str):
                 raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
     if not _validate_rel_path(path):
         raise HTTPException(400, "无效路径")
-    # 检查图片是否已被标记删除（管理员可查看）
-    if user.get("role") != "admin":
-        deleted_paths: set = set()
-        for paths in _load_deleted_images().values():
-            for p in paths:
-                deleted_paths.add(p.replace("\\", "/"))
-        if path.replace("\\", "/") in deleted_paths:
-            raise HTTPException(404, "not found")
+    # 任何人（包括管理员）不能访问已标记删除的缩略图
+    deleted_paths: set = set()
+    for paths in _load_deleted_images().values():
+        for p in paths:
+            deleted_paths.add(p.replace("\\", "/"))
+    if path.replace("\\", "/") in deleted_paths:
+        raise HTTPException(404, "not found")
     tp = _thumb_cache_path(path)
     if not tp.is_file():
         src = _resolve_output_path(path)
@@ -4376,14 +4335,21 @@ async def api_image(request: Request, filename: str, subfolder: str = "", type: 
         raise HTTPException(400, "路径过长")
     # 所有权验证：普通用户只能看自己的图，管理员不受限
     user = _get_user_from_session(request)
+    rel = (subfolder + "/" + filename) if subfolder else filename
+    rel = rel.replace("\\", "/")
     if user and user.get("role") != "admin":
-        rel = (subfolder + "/" + filename) if subfolder else filename
-        rel = rel.replace("\\", "/")
         github_id = str(user.get("github_id", ""))
         data = _load_user_images()
         user_paths = {it.get("path", "") for it in data.get(github_id, [])}
         if rel not in user_paths:
             raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
+    # 任何人（包括管理员）不能访问已标记删除的图片
+    deleted_paths: set = set()
+    for paths in _load_deleted_images().values():
+        for dp in paths:
+            deleted_paths.add(dp.replace("\\", "/"))
+    if rel in deleted_paths:
+        raise HTTPException(404, "not found")
     try:
         content, ct = await download_image(filename, subfolder, type)
     except Exception as e:
@@ -4393,10 +4359,12 @@ async def api_image(request: Request, filename: str, subfolder: str = "", type: 
     if _accepts_webp(request) and ct.startswith("image/") and ct not in ("image/webp", "image/gif"):
         try:
             webp = _encode_webp(content, quality=82, max_side=1600)
-            return Response(content=webp, media_type="image/webp", headers={"Vary": "Accept"})
+            return Response(content=webp, media_type="image/webp",
+                headers={"Cache-Control": "public, max-age=86400", "Vary": "Accept"})
         except Exception:
             pass
-    return Response(content=content, media_type=ct)
+    return Response(content=content, media_type=ct,
+        headers={"Cache-Control": "public, max-age=86400"})
 
 
 # GPU 状态轻量缓存：500ms 内同一进程复用一次结果，避免被前端 1Hz 轮询打爆
@@ -6215,6 +6183,9 @@ async def api_report(payload: Dict[str, Any], request: Request):
     reporter_ip = _client_ip_from_request(request)
     if is_ip_banned(reporter_ip):
         raise HTTPException(403, "你已被封禁")
+    user = _get_user_from_session(request)
+    if not user:
+        raise HTTPException(401, "请先登录")
     image_path = str((payload or {}).get("image_path", "")).strip()
     reason = str((payload or {}).get("reason", "")).strip()[:500]
     if not image_path:
@@ -6469,7 +6440,7 @@ async def api_my_images(request: Request, limit: int = 30, offset: int = 0):
             sf, fn = "", p
         result.append({
             "path": p,
-            "url": f"/api/image?filename={quote(fn, safe='')}&subfolder={quote(sf, safe='')}&type=output",
+            "url": f"/api/output/file?path={quote(p, safe='')}",
             "thumb": f"/api/output/thumb?path={quote(p, safe='')}",
             "prompt": it.get("prompt", "")[:100],
             "time": it.get("time", 0),
@@ -7007,18 +6978,12 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
     # 标记到 deleted_images
     del_set = set(r.replace("\\", "/") for r in deleted)
     if deleted:
-        async with _deleted_images_lock:
-            try:
-                for d in del_set:
-                    db.add_deleted_image("__admin__", d)
-            except Exception:
-                pass
-    # 批量清理 creator 映射
+        for d in del_set:
+            db.add_deleted_image("__admin__", d)
+    # 批量清理关联数据
     if del_set:
-        async with _creator_map_lock:
-            for p in del_set:
-                db.remove_creator_ip(p)
-        # 同步清理精选
+        for p in del_set:
+            db.remove_creator_ip(p)
         feats = _read_featured()
         changed = False
         for rel in deleted:
@@ -7027,10 +6992,7 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
                 changed = True
         if changed:
             await _write_featured(feats)
-        # 自动忽略已删图片的所有待处理举报
-        for p in del_set:
-            db.dismiss_reports_for_image(p)
-        # 同步清理 user_images
+        db.dismiss_reports_for_image_paths(del_set)
         db.remove_user_images_by_paths(del_set)
     return {"ok": True, "deleted": len(deleted), "failed": len(failed)}
 
@@ -7133,19 +7095,13 @@ async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any])
         except Exception:
             pass
     # 1. 添加到 deleted_images
-    async with _deleted_images_lock:
-        try:
-            for p in valid:
-                db.add_deleted_image("__admin__", p)
-        except Exception:
-            pass
-    # 2. 清理 user_images.json（移除被删图片的归属记录）
-    async with _user_images_lock:
-        db.remove_user_images_by_paths(del_set)
+    for p in valid:
+        db.add_deleted_image("__admin__", p)
+    # 2. 清理 user_images
+    db.remove_user_images_by_paths(del_set)
     # 3. 清理 creator 映射
-    async with _creator_map_lock:
-        for p in del_set:
-            db.remove_creator_ip(p)
+    for p in del_set:
+        db.remove_creator_ip(p)
     # 4. 清理精选
     feats = _read_featured()
     changed = False
@@ -7156,8 +7112,7 @@ async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any])
     if changed:
         await _write_featured(feats)
     # 5. 自动 dismiss 待处理举报
-    for p in del_set:
-        db.dismiss_reports_for_image(p)
+    db.dismiss_reports_for_image_paths(del_set)
     return {"ok": True, "marked": len(valid)}
 
 
@@ -8094,6 +8049,30 @@ async def api_admin_access_keys_enable(request: Request, payload: Dict[str, Any]
         raise HTTPException(400, "该密钥未被禁用")
     db.enable_access_key(target_key)
     return {"ok": True}
+
+
+@app.post("/api/admin/access-keys/remove")
+async def api_admin_access_keys_remove(request: Request, payload: Dict[str, Any]):
+    """彻底删除访问密钥（物理删除，不可恢复）。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    raw = str((payload or {}).get("key") or (payload or {}).get("key_preview") or "").strip()
+    if not raw:
+        raise HTTPException(400, "key required")
+    target_key = raw if db.get_access_key(raw) else None
+    if not target_key and "..." in raw:
+        parts = raw.split("...")
+        if len(parts) == 2 and parts[0] and parts[1]:
+            prefix, suffix = parts[0], parts[1]
+            for k, v in db.load_access_keys().get("keys", {}).items():
+                if k.startswith(prefix) and k.endswith(suffix):
+                    target_key = k
+                    break
+    if target_key is None:
+        raise HTTPException(404, "密钥不存在")
+    db.delete_access_key(target_key)
+    return {"ok": True}
+
 
 @app.post("/api/admin/access-keys/reveal")
 async def api_admin_access_keys_reveal(request: Request, payload: Dict[str, Any]):

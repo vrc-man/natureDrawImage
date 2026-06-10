@@ -631,6 +631,18 @@ def dismiss_reports_for_image(image_path: str) -> int:
     return cur.rowcount
 
 
+def dismiss_reports_for_image_paths(image_paths: set) -> int:
+    """批量忽略多张图的所有待处理举报（事务保护）。"""
+    if not image_paths:
+        return 0
+    placeholders = ",".join("?" * len(image_paths))
+    cur = _db().execute(
+        f"UPDATE reports SET status='resolved', resolved_action='dismiss' WHERE status='pending' AND image_path IN ({placeholders})",
+        list(image_paths))
+    _db().commit()
+    return cur.rowcount
+
+
 def dismiss_reports_by_reporter_ip(reporter_ip: str, exclude_id: str = "") -> int:
     if exclude_id:
         cur = _db().execute(
