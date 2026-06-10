@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<title>邮箱登录/注册 · 二次元绘梦</title>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" defer></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: linear-gradient(135deg, #fef2f4 0%, #fdf2f8 25%, #faf5ff 50%, #fff1f2 75%, #fef2f4 100%);
+    background-size: 400% 400%; animation: bgShift 30s ease infinite;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 20px;
+  }
+  @keyframes bgShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+  }
+  .card {
+    background: linear-gradient(180deg, rgba(255,245,247,0.98) 0%, rgba(255,255,255,0.96) 50%, rgba(255,241,242,0.95) 100%);
+    border: 1px solid rgba(244,114,182,0.12);
+    border-radius: 24px;
+    box-shadow: 0 4px 30px rgba(244,114,182,0.15), 0 0 80px rgba(244,114,182,0.06);
+    max-width: 420px; width: 100%; padding: 32px 24px;
+  }
+  h2 { text-align: center; font-size: 20px; font-weight: 700; color: #1f2937; margin-bottom: 20px; }
+  .tab-row { display: flex; gap: 0; margin-bottom: 20px; border-radius: 14px; background: #fce7f3; padding: 3px; }
+  .tab-row button {
+    flex: 1; border: 0; background: transparent; padding: 8px 0; font-size: 14px; font-weight: 500;
+    color: #9ca3af; cursor: pointer; border-radius: 12px; transition: all .2s;
+  }
+  .tab-row button.active { background: #fff; color: #f472b6; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  .form-panel { display: none; }
+  .form-panel.active { display: block; }
+  input[type="email"], input[type="password"], input[type="text"] {
+    width: 100%; padding: 10px 14px; border: 1px solid #fce7f3; border-radius: 14px;
+    font-size: 14px; margin-bottom: 10px; outline: none; transition: border .2s; background: #fff;
+  }
+  input:focus { border-color: #f472b6; box-shadow: 0 0 0 3px rgba(244,114,182,0.1); }
+  .btn {
+    width: 100%; padding: 11px; border: 0; border-radius: 14px; font-size: 15px; font-weight: 600;
+    cursor: pointer; transition: all .2s; color: #fff;
+  }
+  .btn-login { background: linear-gradient(135deg, #f472b6, #fb7185); box-shadow: 0 4px 20px rgba(244,114,182,0.3); }
+  .btn-login:hover { transform: translateY(-1px); }
+  .btn-register { background: linear-gradient(135deg, #34d399, #16a34a); box-shadow: 0 4px 20px rgba(52,211,153,0.2); }
+  .btn-register:hover { transform: translateY(-1px); }
+  .status { font-size: 12px; text-align: center; display: block; margin-top: 6px; min-height: 18px; }
+  .status.error { color: #ef4444; }
+  .status.success { color: #16a34a; }
+  .back-link { display: block; text-align: center; margin-top: 16px; font-size: 13px; color: #9ca3af; text-decoration: none; }
+  .back-link:hover { color: #f472b6; }
+  #turnstile-container { margin-bottom: 10px; min-height: 65px; }
+.pw-wrap { position: relative; }
+.pw-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); cursor: pointer; font-size: 16px; user-select: none; color: #9ca3af; background: none; border: none; }
+.pw-toggle:hover { color: #f472b6; }
+.modal-overlay { position: fixed; inset: 0; z-index: 999; background: rgba(0,0,0,0.3); backdrop-filter: blur(4px); display: none; align-items: center; justify-content: center; padding: 20px; }
+.modal-overlay.show { display: flex; }
+.modal-box { background: #fff; border-radius: 24px; max-width: 400px; width: 100%; padding: 32px 24px; text-align: center; box-shadow: 0 20px 60px rgba(0,0,0,0.15); }
+.modal-box .icon { font-size: 48px; margin-bottom: 12px; }
+.modal-box h3 { font-size: 18px; font-weight: 700; color: #1f2937; margin-bottom: 8px; }
+.modal-box p { font-size: 14px; color: #6b7280; margin-bottom: 20px; line-height: 1.6; }
+.modal-box .btn { width: 100%; padding: 11px; border: 0; border-radius: 14px; font-size: 15px; font-weight: 600; cursor: pointer; transition: all .2s; color: #fff; background: linear-gradient(135deg, #f472b6, #fb7185); box-shadow: 0 4px 20px rgba(244,114,182,0.3); }
+.modal-box .btn:hover { transform: translateY(-1px); }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>📧 邮箱注册登陆</h2>
+  <div class="tab-row">
+    <button id="tab-login" class="active">登录</button>
+    <button id="tab-register">注册</button>
+  </div>
+
+  <!-- 登录表单 -->
+  <div id="panel-login" class="form-panel active">
+    <input id="el-email" type="email" placeholder="邮箱地址" autocomplete="email" />
+    <div class="pw-wrap">
+    <input id="el-pwd" type="password" placeholder="密码" autocomplete="current-password" style="padding-right:36px" />
+    <button type="button" class="pw-toggle" onclick="var i=document.getElementById('el-pwd');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'">👁</button>
+    </div>
+    <input id="el-totp" type="text" placeholder="两步验证码（未开启请留空）" autocomplete="off" inputmode="numeric" maxlength="6" />
+    <button id="btn-login" class="btn btn-login">登录</button>
+    <span id="login-status" class="status"></span>
+    <p style="text-align:center;margin-top:6px"><a href="#" id="link-forgot" style="font-size:12px;color:#9ca3af;text-decoration:none">忘记密码？</a></p>
+  </div>
+
+  <!-- 忘记密码面板 -->
+  <div id="panel-forgot" class="form-panel">
+    <p style="text-align:center;color:#6b7280;font-size:13px;margin-bottom:12px">输入注册邮箱，我们将发送重置链接</p>
+    <input id="fg-email" type="email" placeholder="邮箱地址" autocomplete="email" />
+    <div id="turnstile-forgot-container" style="margin-bottom:10px;min-height:65px"></div>
+    <button id="btn-forgot" class="btn btn-login">发送重置链接</button>
+    <span id="forgot-status" class="status"></span>
+    <p style="text-align:center;margin-top:8px"><a href="#" id="link-back-to-login" style="font-size:12px;color:#9ca3af;text-decoration:none">← 返回登录</a></p>
+  </div>
+
+  <!-- 注册表单 -->
+  <div id="panel-register" class="form-panel">
+    <input id="er-email" type="email" placeholder="邮箱地址" autocomplete="email" />
+    <div class="pw-wrap">
+    <input id="er-pwd" type="password" placeholder="密码（至少6位）" autocomplete="new-password" style="padding-right:36px" />
+    <button type="button" class="pw-toggle" onclick="var i=document.getElementById('er-pwd');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'">👁</button>
+    </div>
+    <div class="pw-wrap">
+    <input id="er-pwd2" type="password" placeholder="确认密码" autocomplete="new-password" style="padding-right:36px" />
+    <button type="button" class="pw-toggle" onclick="var i=document.getElementById('er-pwd2');i.type=i.type==='password'?'text':'password';this.textContent=i.type==='password'?'👁':'🙈'">👁</button>
+    </div>
+    <input id="er-code" type="text" placeholder="邀请码（可选，有码无需邮箱验证）" autocomplete="off" />
+    <div id="turnstile-container"></div>
+    <button id="btn-register" class="btn btn-register">注册</button>
+    <p style="text-align:center;margin-top:6px;font-size:11px;color:#9ca3af">📨 验证邮件通常在 1 分钟内送达，高峰期可能延迟 2-3 分钟，请耐心等待</p>
+    <span id="register-status" class="status"></span>
+  </div>
+
+  <a href="/" class="back-link">← 返回首页</a>
+</div>
+
+<!-- 注册成功弹窗 -->
+<div id="reg-success-modal" class="modal-overlay">
+  <div class="modal-box">
+    <div class="icon">📧</div>
+    <h3>注册成功！</h3>
+    <p id="reg-success-msg">请查收验证邮件并点击链接激活账号后登录。</p>
+    <button class="btn" onclick="closeRegSuccess()">前往登录</button>
+  </div>
+</div>
+
+<script>
+// Tab switching
+var tabLogin = document.getElementById('tab-login');
+var tabRegister = document.getElementById('tab-register');
+var panelLogin = document.getElementById('panel-login');
+var panelRegister = document.getElementById('panel-register');
+var turnstileWidget = null;
+
+function switchTab(tab) {
+  if (tab === 'login') {
+    tabLogin.classList.add('active'); tabRegister.classList.remove('active');
+    panelLogin.classList.add('active'); panelRegister.classList.remove('active');
+  } else {
+    tabRegister.classList.add('active'); tabLogin.classList.remove('active');
+    panelRegister.classList.add('active'); panelLogin.classList.remove('active');
+    // Render Turnstile when switching to register
+    var c = document.getElementById('turnstile-container');
+    if (c && typeof turnstile !== 'undefined') {
+      setTimeout(function() {
+        c.innerHTML = '';
+        try {
+          turnstileWidget = turnstile.render('#turnstile-container', {
+            sitekey: '0x4AAAAAADWvaKWEsnuGl7oU',
+            theme: 'light'
+          });
+        } catch(e) { c.innerHTML = '<p style=font-size:12px;color:#ef4444>验证组件加载失败，请刷新重试</p>'; }
+      }, 100);
+    } else {
+      c.innerHTML = '<p style=font-size:12px;color:#9ca3af>验证组件加载中…如一直不显示请刷新页面</p>';
+    }
+  }
+}
+
+tabLogin.addEventListener('click', function() { switchTab('login'); });
+tabRegister.addEventListener('click', function() { switchTab('register'); });
+
+// Forgot password flow
+document.getElementById('link-forgot').addEventListener('click', function(e) {
+  e.preventDefault();
+  document.getElementById('panel-login').classList.remove('active');
+  document.getElementById('panel-forgot').classList.add('active');
+  tabLogin.classList.remove('active');
+  tabRegister.classList.remove('active');
+  // 延迟渲染 Turnstile（等 DOM 可见后）
+  setTimeout(function() {
+    var fc = document.getElementById('turnstile-forgot-container');
+    if (fc && typeof turnstile !== 'undefined' && !fc.hasChildNodes()) {
+      try { turnstile.render('#turnstile-forgot-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU', theme: 'light' }); } catch(e) {}
+    }
+  }, 200);
+});
+
+document.getElementById('link-back-to-login').addEventListener('click', function(e) {
+  e.preventDefault();
+  document.getElementById('panel-forgot').classList.remove('active');
+  document.getElementById('panel-login').classList.add('active');
+  tabLogin.classList.add('active');
+});
+
+document.getElementById('btn-forgot').addEventListener('click', async function() {
+  var btn = this;
+  if (btn.disabled) return; btn.disabled = true;
+  var s = document.getElementById('forgot-status');
+  s.textContent = ''; s.className = 'status';
+  var email = document.getElementById('fg-email').value.trim();
+  if (!email || email.indexOf('@') < 0) {
+    s.textContent = '请输入有效邮箱'; s.className = 'status error'; return;
+  }
+  s.textContent = '发送中...'; s.className = 'status';
+  try {
+    var r = await fetch('/api/auth/forgot-password', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        email: email,
+        turnstile_token: (typeof turnstile !== 'undefined' ? turnstile.getResponse('#turnstile-forgot-container') || '' : '')
+      })
+    });
+    var d = await r.json();
+    s.textContent = d.message;
+    s.className = 'status success';
+    btn.disabled = false;
+  } catch(e) { s.textContent = '发送失败，请重试'; s.className = 'status error'; btn.disabled = false; }
+});
+
+// Login
+document.getElementById('btn-login').addEventListener('click', async function() {
+  var btn = this;
+  if (btn.disabled) return; btn.disabled = true;
+  var s = document.getElementById('login-status');
+  s.textContent = ''; s.className = 'status';
+  try {
+    var r = await fetch('/api/auth/login-email', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: document.getElementById('el-email').value.trim(),
+        password: document.getElementById('el-pwd').value,
+        totp_code: document.getElementById('el-totp').value.trim()
+      })
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || '登录失败');
+    location.href = '/';
+  } catch(e) { s.textContent = e.message; s.className = 'status error'; btn.disabled = false; }
+});
+
+// Register
+document.getElementById('btn-register').addEventListener('click', async function() {
+  var btn = this;
+  if (btn.disabled) return; btn.disabled = true;
+  var pwd = document.getElementById('er-pwd').value;
+  var s = document.getElementById('register-status');
+  s.textContent = ''; s.className = 'status';
+  if (pwd.length < 6) { s.textContent = '密码至少6位'; s.className = 'status error'; btn.disabled = false; return; }
+    var pwd2 = document.getElementById('er-pwd2').value;
+    if (pwd !== pwd2) { s.textContent = '两次密码不一致'; s.className = 'status error'; btn.disabled = false; return; }
+  try {
+    var token = '';
+    if (turnstileWidget && typeof turnstile !== 'undefined') {
+      token = turnstile.getResponse(turnstileWidget);
+    }
+    if (!token && turnstileWidget && document.getElementById('turnstile-container').querySelector('iframe')) {
+      s.textContent = '请先完成人机验证';
+      s.className = 'status error';
+      return;
+    }
+    var r = await fetch('/api/auth/register-email', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: document.getElementById('er-email').value.trim(),
+        password: document.getElementById('er-pwd').value,
+        invite_code: document.getElementById('er-code').value.trim(),
+        turnstile_token: token
+      })
+    });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.detail || '注册失败');
+    // 显示注册成功弹窗
+    document.getElementById('reg-success-msg').textContent = d.message || '注册成功！请查收验证邮件并点击链接激活账号后登录。';
+    document.getElementById('reg-success-modal').classList.add('show');
+  } catch(e) { s.textContent = e.message; s.className = 'status error'; btn.disabled = false; }
+});
+function closeRegSuccess() {
+  document.getElementById('reg-success-modal').classList.remove('show');
+  switchTab('login');
+}
+</script>
+</body>
+</html>

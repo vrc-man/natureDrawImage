@@ -1,0 +1,77 @@
+# ── 项目本地规则（不提交） ──
+CLAUDE.md
+
+# ── 环境 & 编辑器 ──
+.env
+claude.bat
+start-bianxie.bat
+.venv
+natureDrawImage-env
+.claude/settings.local.json
+.vscode/settings.json
+__pycache__
+
+# ── 开发 ──
+dev
+sync_to_proxy.py
+
+# ── 运行时数据 ──
+web/__pycache__
+web/state.json
+web/creator_ips.txt
+web/banned_ips.txt
+web/featured.txt
+web/reports.json
+web/limits.json
+web/styles.json
+web/resolutions.json
+web/llm_config.json
+web/announcement.json
+web/maintenance.json
+web/custom_head.json
+web/workflow_meta.json
+web/admin_identity.json
+web/users.json
+web/sessions.json
+web/access_keys.json
+web/gen_log.json
+web/queue_state.json
+web/user_images.json
+web/deleted_images.json
+
+# ── 运行时图片 & 资源 ──
+web/deletion_log.json
+web/deletion_thumbs
+web/thumbnails
+web/style_thumbnails
+web/lora_links
+web/backups
+web/uploads
+web/static/uploads
+thumb_cache
+backups
+gcbackups
+
+# ── 临时文件 ──
+*.tmp
+
+# ── Playwright ──
+.playwright-mcp
+*.db
+*.db-shm
+*.db-wal
+node_modules/
+web/rate_limits.json
+
+# ── 个人工具 ──
+tools/
+
+# ── opencode 本地配置 ──
+.opencode/
+
+# ── 压缩包/归档 ──
+*.7z
+*.zip
+
+# ── 未使用的 CDN 资源 ──
+web/static/tailwind.min.css

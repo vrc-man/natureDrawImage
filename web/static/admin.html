@@ -1,0 +1,3469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<meta name="generator" content="Modified 2026-05 by vrc-man | Based on afoim/natureDrawImage (AGPLv3) | https://github.com/vrc-man/natureDrawImage" />
+<title>管理员 · 二次元绘梦</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  #lb-root { position: fixed; inset: 0; z-index: 60; background: #000; display: none; flex-direction: column; }
+  #lb-root.open { display: flex; }
+  #lb-img-wrap { flex: 1; display: flex; align-items: center; justify-content: center; overflow: hidden; padding: 8px; min-height: 0; }
+  #lb-img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; user-select: auto; -webkit-user-select: auto; -webkit-touch-callout: default; }
+  #lb-bar { color: #fff; padding: 8px 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: rgba(0,0,0,.5); }
+  .lb-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(0,0,0,.4); color: #fff; border: 0; width: 44px; height: 64px; font-size: 28px; cursor: pointer; }
+  .lb-nav:hover { background: rgba(0,0,0,.7); }
+  #lb-prev { left: 8px; }
+  #lb-next { right: 8px; }
+  #lb-close { position: absolute; top: 8px; right: 12px; background: transparent; color: #fff; border: 0; font-size: 28px; cursor: pointer; z-index: 1; }
+  #lb-title { color: #ddd; font-size: 12px; margin-right: auto; word-break: break-all; }
+
+/* 删除记录：预览模式下隐藏编辑控件 */
+.del-log-preview .del-log-check,
+.del-log-preview .btn-clear-deletion-record { display: none; }
+/* 生图日志：预览模式下隐藏编辑控件 */
+.gl-log-preview .gl-log-check,
+.gl-log-preview .gl-log-del { display: none; }
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+<!-- 灯箱 -->
+<div id="lb-root" role="dialog" aria-modal="true">
+  <button id="lb-close" title="关闭 (Esc)">×</button>
+  <button id="lb-prev" class="lb-nav" title="上一张 (←)">‹</button>
+  <button id="lb-next" class="lb-nav" title="下一张 (→)">›</button>
+  <div id="lb-img-wrap"><img id="lb-img" alt="" /></div>
+  <div id="lb-bar">
+    <span id="lb-title"></span>
+    <span id="lb-time" class="text-xs text-gray-300"></span>
+    <span id="lb-creator" class="text-xs text-amber-300"></span>
+    <span id="lb-gh-user" class="text-xs text-emerald-300 hidden"></span>
+    <button id="lb-ban-user" class="hidden text-xs px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700">🚫 封禁用户</button>
+    <a id="lb-download" href="#" target="_blank" rel="noopener" download
+       class="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">⬇ 下载原图</a>
+  </div>
+</div>
+
+<div class="max-w-6xl mx-auto p-4">
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-2xl font-bold">🛡️ 管理员控制台</h1>
+    <a href="/" class="text-sm text-blue-600 hover:underline">← 返回首页</a>
+  </div>
+
+  <!-- 队列管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="queue-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="queue-body">&#x25B8;</span>
+        &#x1F3C3; 队列管理
+        <span id="queue-badge" class="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">空闲</span>
+      </h2>
+      <button id="btn-refresh-queue" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="queue-body" class="hidden">
+      <div id="online-count" class="text-sm text-gray-500 mb-1"></div>
+      <div id="online-list" class="text-xs text-gray-400 mb-2"></div>
+      <div id="queue-content" class="text-sm text-gray-500">加载中...</div>
+      <div class="mt-3 flex gap-2">
+        <button id="btn-cancel-task" class="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm hidden">&#x23F9; 取消当前任务</button>
+        <button id="btn-force-unlock" class="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 text-sm hidden">&#x1F513; 强制解锁</button>
+        <span id="queue-status" class="text-xs text-gray-500 self-center"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 公告管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="ann-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="ann-body">▸</span>
+        📢 公告管理
+        <span id="ann-state-badge" class="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">未开启</span>
+      </h2>
+      <button id="btn-refresh-ann" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="ann-body" class="hidden">
+      <div class="flex items-center gap-4 text-sm mb-3">
+        <label class="flex items-center gap-1"><input type="radio" name="ann-enabled" value="off" checked /> 关闭</label>
+        <label class="flex items-center gap-1"><input type="radio" name="ann-enabled" value="on" /> 开启</label>
+      </div>
+      <div class="flex flex-col gap-2 text-sm">
+        <label class="flex flex-col gap-1">
+          <span>公告标题</span>
+          <input id="ann-title" type="text" maxlength="100" class="border rounded px-2 py-1" placeholder="可选，留空则不显示标题" />
+        </label>
+        <label class="flex flex-col gap-1">
+          <span>公告内容</span>
+          <textarea id="ann-content" rows="3" class="border rounded px-2 py-1 text-sm" placeholder="公告正文"></textarea>
+        </label>
+      </div>
+      <div class="mt-3 flex items-center gap-2">
+        <button id="btn-save-ann" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">保存</button>
+        <span id="ann-status" class="text-xs text-gray-500"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 画风管理 -->
+
+  <!-- 分辨率管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="res-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="res-body">▸</span>
+        📐 分辨率管理
+        <span id="res-count-badge" class="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">0</span>
+      </h2>
+      <button id="btn-refresh-res" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="res-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">管理允许的分辨率预设。前端只能从预设中选择，后端会拒绝不在预设列表中的分辨率。</p>
+      <div id="res-entries" class="flex flex-col gap-2 mb-3"></div>
+      <div class="flex items-center gap-2">
+        <button id="btn-add-res" class="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm">+ 添加预设</button>
+        <span id="res-status" class="text-xs text-gray-500"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 画风管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="styles-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="styles-body">▸</span>
+        🖌️ 画风管理
+        <span id="styles-count-badge" class="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">0</span>
+      </h2>
+      <button id="btn-refresh-styles" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="styles-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">配置可选画风。tags 为必填项（英文 Danbooru 标签），名称为可选别名（不填则前端直接显示 tags）。用户选择画风后，tags 会被追加到最终 prompt 最前面。</p>
+      <div id="styles-entries" class="flex flex-col gap-2 mb-3"></div>
+      <div class="flex items-center gap-2">
+        <button id="btn-add-style" class="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm">+ 添加画风</button>
+        <span id="styles-status" class="text-xs text-gray-500"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 工作流元数据管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="wfmeta-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="wfmeta-body">▸</span>
+        🔗 工作流缩略图 & Lora 链接
+        <span id="wfmeta-count-badge" class="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">0</span>
+      </h2>
+      <button id="btn-refresh-wfmeta" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="wfmeta-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">自动从 ComfyUI 工作流目录扫描。为每个工作流配置缩略图、Lora 链接和分类，修改后自动保存。</p>
+
+      <!-- 分类管理 -->
+      <div class="mb-3 border rounded p-3 bg-blue-50">
+        <div class="text-sm font-semibold mb-2">📁 分类管理</div>
+        <div class="flex flex-wrap gap-1 mb-2" id="wfmeta-cat-chips"></div>
+        <div class="flex gap-2">
+          <input id="wfmeta-cat-input" type="text" placeholder="输入分类名称" class="flex-1 border rounded px-2 py-1 text-xs" />
+          <button id="btn-add-cat" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">添加分类</button>
+        </div>
+        <div id="wfmeta-uncat" class="mt-2 hidden">
+          <div class="text-xs text-gray-600 mb-1">未分类的工作流（点击添加到该分类）：</div>
+          <div id="wfmeta-uncat-list" class="flex flex-wrap gap-1"></div>
+        </div>
+        <div id="wfmeta-incat" class="mt-2 hidden">
+          <div class="text-xs text-gray-600 mb-1">该分类下的工作流（点击移除）：</div>
+          <div id="wfmeta-incat-list" class="flex flex-wrap gap-1"></div>
+        </div>
+      </div>
+
+      <div id="wfmeta-entries" class="flex flex-col gap-2 mb-3"></div>
+      <div class="flex items-center gap-2">
+        <span id="wfmeta-status" class="text-xs text-gray-500"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- LLM 配置 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="llm-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="llm-body">▸</span>
+        🤖 LLM 配置
+        <span id="llm-state-badge" class="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">本地</span>
+      </h2>
+      <button id="btn-refresh-llm" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="llm-body" class="hidden">
+      <div class="flex items-center gap-4 text-sm mb-3 flex-wrap">
+        <label class="flex items-center gap-1"><input type="radio" name="llm-provider" value="local" checked /> LM Studio（本地）</label>
+        <label class="flex items-center gap-1"><input type="radio" name="llm-provider" value="google" /> Google AI Studio</label>
+        <label class="flex items-center gap-1"><input type="radio" name="llm-provider" value="custom" /> 自定义 API</label>
+      </div>
+      <!-- 本地 -->
+      <div id="llm-section-local" class="text-sm mb-3">
+        <label class="flex flex-col gap-1 max-w-md">
+          <span>本地端点</span>
+          <input id="llm-local-endpoint" type="text" class="border rounded px-2 py-1 font-mono text-xs" placeholder="http://127.0.0.1:1234" />
+          <span class="text-[10px] text-gray-500">LM Studio 本地服务地址。</span>
+        </label>
+      </div>
+      <!-- Google AI Studio -->
+      <div id="llm-section-google" class="hidden text-sm mb-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="flex flex-col gap-1">
+            <span>API Key</span>
+            <input id="llm-google-key" type="password" class="border rounded px-2 py-1 font-mono text-xs" placeholder="AIza..." autocomplete="off" />
+            <span id="llm-google-key-hint" class="text-[10px] text-gray-500">留空则不修改已保存的密钥。</span>
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>模型</span>
+            <input id="llm-google-model" type="text" class="border rounded px-2 py-1 font-mono text-xs" placeholder="gemma-4-31b-it" />
+            <span class="text-[10px] text-gray-500">Google AI Studio 模型 ID。</span>
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>思考 (Thinking)</span>
+            <select id="llm-google-thinking" class="border rounded px-2 py-1 text-xs">
+              <option value="off">关闭（不发送 thinkingConfig）</option>
+              <optgroup label="── Gemini 3 系列 (thinkingLevel) ──">
+                <option value="level_minimal">minimal（几乎不思考）</option>
+                <option value="level_low">low（低延迟）</option>
+                <option value="level_medium">medium（平衡）</option>
+                <option value="level_high">high（深度推理，默认）</option>
+              </optgroup>
+              <optgroup label="── Gemini 2.5 系列 (thinkingBudget) ──">
+                <option value="budget_auto">自动 (thinkingBudget=-1)</option>
+                <option value="budget_0">0（关闭思考，仅 Flash/Lite）</option>
+                <option value="budget_1024">1024 tokens</option>
+                <option value="budget_2048">2048 tokens</option>
+                <option value="budget_4096">4096 tokens</option>
+                <option value="budget_8192">8192 tokens</option>
+                <option value="budget_16384">16384 tokens</option>
+                <option value="budget_24576">24576 tokens</option>
+                <option value="budget_32768">32768 tokens</option>
+              </optgroup>
+            </select>
+            <span class="text-[10px] text-gray-500">Gemini 3 用 thinkingLevel，Gemini 2.5 用 thinkingBudget；不支持的模型请关闭。</span>
+          </label>
+        </div>
+      </div>
+      <!-- 自定义 API -->
+      <div id="llm-section-custom" class="hidden text-sm mb-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="flex flex-col gap-1">
+            <span>API 端点</span>
+            <input id="llm-custom-endpoint" type="text" class="border rounded px-2 py-1 font-mono text-xs" placeholder="https://api.openai.com" />
+            <span class="text-[10px] text-gray-500">兼容 OpenAI 格式的 Base URL。</span>
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>API 密钥</span>
+            <input id="llm-custom-key" type="password" class="border rounded px-2 py-1 font-mono text-xs" placeholder="sk-..." autocomplete="off" />
+            <span id="llm-custom-key-hint" class="text-[10px] text-gray-500">留空则不修改已保存的密钥。</span>
+          </label>
+          <label class="flex flex-col gap-1">
+            <span>模型名称</span>
+            <input id="llm-custom-model" type="text" class="border rounded px-2 py-1 font-mono text-xs" placeholder="gpt-4o" />
+            <span class="text-[10px] text-gray-500">API 的 model 参数。</span>
+          </label>
+        </div>
+      </div>
+      <div class="mt-3 flex items-center gap-3 flex-wrap text-sm">
+        <label class="flex items-center gap-1">
+          <input id="llm-stream" type="checkbox" checked />
+          <span>流式输出 (SSE)</span>
+        </label>
+        <span class="text-[10px] text-gray-500">关闭后使用普通请求，适用于不支持 SSE 的网络环境。</span>
+      </div>
+      <div class="mt-3 flex items-center gap-3 flex-wrap text-sm">
+        <label class="flex items-center gap-1">
+          <span>最大 Token:</span>
+          <input id="llm-max-tokens" type="number" min="1" max="32768" value="1024" class="border rounded px-2 py-1 text-xs w-24" />
+        </label>
+        <span class="text-[10px] text-gray-500">LLM 返回的正负向提示词总上限（1-32768）。</span>
+      </div>
+      <div class="mt-3 flex items-center gap-2 flex-wrap">
+        <button id="btn-save-llm" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">保存</button>
+        <button id="btn-test-llm" class="px-3 py-1 bg-emerald-500 text-white rounded hover:bg-emerald-600 text-sm">测试连接</button>
+        <button id="btn-models-llm" class="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600 text-sm">探测模型</button>
+        <span id="llm-status" class="text-xs text-gray-500"></span>
+      </div>
+      <div id="llm-models-list" class="hidden mt-2 max-h-40 overflow-y-auto border rounded p-2 text-xs bg-gray-50"></div>
+    </div>
+  </div>
+
+  <!-- 限流配置 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="limits-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="limits-body">▸</span>
+        ⚙️ 限流配置
+      </h2>
+      <button id="btn-refresh-limits" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="limits-body" class="hidden">
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+      <label class="flex flex-col gap-1">
+        <span>生图冷却（秒/IP）</span>
+        <input id="lim-gen-cd" type="number" min="0" step="1" class="border rounded px-2 py-1 font-mono" />
+        <span class="text-[10px] text-gray-500">同一 IP 两次生图最少间隔。0 = 不限制。管理员豁免。</span>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span>图片限流窗口（秒）</span>
+        <input id="lim-img-window" type="number" min="0" step="1" class="border rounded px-2 py-1 font-mono" />
+        <span class="text-[10px] text-gray-500">滑动窗口长度。0 = 关闭限流。</span>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span>窗口内最大请求数</span>
+        <input id="lim-img-max" type="number" min="0" step="1" class="border rounded px-2 py-1 font-mono" />
+        <span class="text-[10px] text-gray-500">/api/output/file、/api/image、/api/thumbnail 三端点合计。</span>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span>举报窗口（秒）</span>
+        <input id="lim-report-window" type="number" min="0" step="1" class="border rounded px-2 py-1 font-mono" />
+        <span class="text-[10px] text-gray-500">同一 IP 在此时间内的举报次数受限。</span>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span>窗口内最大举报数</span>
+        <input id="lim-report-max" type="number" min="1" step="1" class="border rounded px-2 py-1 font-mono" />
+        <span class="text-[10px] text-gray-500">窗口内允许的最大举报次数。</span>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span>待处理举报上限</span>
+        <input id="lim-report-pending" type="number" min="1" step="1" class="border rounded px-2 py-1 font-mono" />
+        <span class="text-[10px] text-gray-500">单 IP 最多积压多少条待处理举报。</span>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span>GPU轮询间隔（ms）</span>
+        <input id="lim-gpu-poll" type="number" min="1000" step="500" class="border rounded px-2 py-1 font-mono" />
+        <span class="text-[10px] text-gray-500">前端获取 GPU 状态的间隔（毫秒）。最小 1000。</span>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span>GPU缓存有效期（ms）</span>
+        <input id="lim-gpu-cache" type="number" min="500" step="500" class="border rounded px-2 py-1 font-mono" />
+        <span class="text-[10px] text-gray-500">后端 nvidia-smi 结果缓存时间（毫秒）。最小 500。</span>
+      </label>
+      <label class="flex flex-col gap-1">
+        <span>GC 间隔（小时）</span>
+        <input id="lim-gc-interval" type="number" min="0" step="1" class="border rounded px-2 py-1 font-mono" />
+        <span class="text-[10px] text-gray-500">定时清理已处理举报和过期数据的间隔。0 = 禁用自动 GC。</span>
+      </label>
+    </div>
+    <label class="flex flex-col gap-1 mt-3 text-sm">
+      <span>精选展示提示语</span>
+      <input id="lim-featured-tip" type="text" class="border rounded px-2 py-1 text-xs" placeholder="留空则不显示提示" />
+      <span class="text-[10px] text-gray-500">显示在精选展示区块顶部的提示文案。</span>
+    </label>
+    <div class="mt-3 flex items-center gap-2">
+      <button id="btn-save-limits" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">保存</button>
+      <button id="btn-run-gc" class="px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 text-sm">立即 GC</button>
+      <button id="btn-restart-server" class="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 text-sm">重启服务</button>
+      <button id="btn-graceful-restart" class="px-3 py-1 bg-amber-500 text-white rounded hover:bg-amber-600 text-sm">优雅重启</button>
+      <span id="lim-status" class="text-xs text-gray-500"></span>
+    </div>
+    </div>
+  </div>
+
+  <!-- 维护模式 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="maint-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="maint-body">▸</span>
+        🔧 维护模式
+        <span id="maint-state-badge" class="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">未开启</span>
+      </h2>
+      <button id="btn-refresh-maint" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="maint-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">启用后，全站（除管理面板和管理 API）返回 503。访客将看到维护页面，支持 Markdown 格式。</p>
+      <label class="flex items-center gap-2 text-sm mb-3">
+        <input id="maint-enabled" type="checkbox" />
+        <span>启用维护模式</span>
+      </label>
+      <label class="flex flex-col gap-1 text-sm">
+        <span>维护信息（支持 Markdown）</span>
+        <textarea id="maint-message" rows="4" class="border rounded px-2 py-1 text-sm font-mono" placeholder="预计维护时间、原因等。支持 Markdown 语法。"></textarea>
+      </label>
+      <div class="mt-3 flex items-center gap-2">
+        <button id="btn-save-maint" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">保存</button>
+        <span id="maint-status" class="text-xs text-gray-500"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 自定义 Head -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="chead-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="chead-body">▸</span>
+        📎 自定义 Head
+        <span id="chead-state-badge" class="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">未开启</span>
+      </h2>
+      <button id="btn-refresh-chead" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="chead-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">向首页 &lt;head&gt; 注入自定义 HTML/JS，可用于添加追踪代码（Google Analytics、Clarity 等）、自定义 meta 标签等。仅对首页生效。</p>
+      <label class="flex items-center gap-2 text-sm mb-3">
+        <input id="chead-enabled" type="checkbox" />
+        <span>启用</span>
+      </label>
+      <label class="flex flex-col gap-1 text-sm">
+        <span>自定义 HTML（将插入到 &lt;head&gt; 末尾）</span>
+        <textarea id="chead-html" rows="5" class="border rounded px-2 py-1 text-sm font-mono" placeholder='<script src="..."></script>&#10;<meta name="..." content="..." />'></textarea>
+      </label>
+      <div class="mt-3 flex items-center gap-2">
+        <button id="btn-save-chead" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm">保存</button>
+        <span id="chead-status" class="text-xs text-gray-500"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 用户管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="users-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="users-body">▸</span>
+        👤 注册用户管理
+      </h2>
+      <button id="btn-refresh-users" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="users-body" class="hidden">
+      <div id="user-list" class="text-sm">加载中...</div>
+    </div>
+  </div>
+
+  <!-- 邮箱认证管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="email-auth-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="email-auth-body">▸</span>
+        📧 邮箱认证管理
+      </h2>
+      <div class="flex gap-2">
+        <button id="btn-refresh-email-auth" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+        <button id="btn-email-auth-auto" class="text-sm px-3 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300">自动刷新: 关</button>
+        <input id="email-auth-interval" type="number" value="30" min="5" max="300" class="w-12 text-xs text-center border rounded py-1" title="刷新间隔(秒)" />
+      </div>
+    </div>
+    <div id="email-auth-body" class="hidden">
+      <div class="mb-4">
+        <h3 class="text-sm font-semibold mb-2">🏀 邀请码</h3>
+        <div class="flex items-center gap-2 flex-wrap mb-2">
+          <span class="text-xs text-gray-500">生成</span>
+          <input id="ic-gen-count" type="number" min="1" max="20" value="1" class="w-14 border rounded px-2 py-1 text-xs text-center" />
+          <span class="text-xs text-gray-500">个，可用</span>
+          <input id="ic-gen-uses" type="number" min="1" max="9999" value="1" class="w-14 border rounded px-2 py-1 text-xs text-center" />
+          <span class="text-xs text-gray-500">次</span>
+          <button id="btn-gen-invite-codes" class="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm">生成</button>
+          <span id="ic-gen-status" class="text-xs text-gray-500"></span>
+        </div>
+        <div id="invite-codes-list" class="text-sm max-h-48 overflow-y-auto">加载中...</div>
+      </div>
+      <div class="border-t pt-3 mb-3">
+        <h3 class="text-sm font-semibold mb-2">⏱ 注册限流 <button id="btn-save-email-config" class="ml-2 text-xs px-2 py-0.5 bg-blue-500 text-white rounded hover:bg-blue-600">保存</button> <span id="email-config-status" class="text-xs text-gray-400"></span></h3>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+          <label class="flex flex-col gap-1"><span class="text-gray-500">每小时每IP注册次数</span><input id="cfg-hourly-ip" type="number" min="0" max="999" class="border rounded px-2 py-1" /></label>
+          <label class="flex flex-col gap-1"><span class="text-gray-500">每日每IP注册次数</span><input id="cfg-daily-ip" type="number" min="0" max="9999" class="border rounded px-2 py-1" /></label>
+          <label class="flex flex-col gap-1"><span class="text-gray-500">每日每邮箱注册次数</span><input id="cfg-daily-email" type="number" min="0" max="999" class="border rounded px-2 py-1" /></label>
+        </div>
+      </div>
+      <div class="border-t pt-3">
+        <h3 class="text-sm font-semibold mb-2">👤 邮箱注册用户 <span id="email-users-count" class="text-gray-400 text-xs">(0)</span></h3>
+        <div class="flex flex-wrap gap-2 mb-2 items-center text-xs">
+          <input id="eu-search" type="text" placeholder="邮箱/用户名搜索" class="border rounded px-2 py-1 text-xs w-32" />
+          <button id="btn-eu-filter" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
+          <button id="btn-eu-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
+        </div>
+        <div id="email-users-list" class="text-sm max-h-64 overflow-y-auto">加载中...</div>
+        <div class="flex items-center gap-2 mt-1 mb-2 text-xs">
+          <span id="eu-status" class="text-gray-500"></span>
+          <span class="text-gray-400" id="eu-pages"></span>
+        </div>
+        <div style="border-top:1px solid #fce7f3;padding-top:12px;margin-top:12px">
+        <h3 style="font-size:14px;font-weight:600;margin-bottom:8px">⚙️ 速率限制 <button id="btn-save-rate-limits" style="margin-left:8px;font-size:12px;padding:2px 8px;background:#3b82f6;color:#fff;border:0;border-radius:6px;cursor:pointer">保存（重启生效）</button> <span id="rate-limits-status" style="font-size:12px;color:#6b7280"></span></h3>
+        <div id="rate-limits-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px">加载中...</div>
+      </div>
+      <div style="border-top:1px solid #fce7f3;padding-top:12px;margin-top:12px">
+        <h3 class="text-sm font-semibold mb-2">📧 发信日志</h3>
+        <div class="flex flex-wrap items-center gap-2 mb-2 text-xs">
+          <input id="elog-date-from" type="date" class="border rounded px-2 py-1" />
+          <span class="text-gray-400">~</span>
+          <input id="elog-date-to" type="date" class="border rounded px-2 py-1" />
+          <input id="elog-search" type="text" placeholder="收件人搜索" class="border rounded px-2 py-1 text-xs w-24" />
+          <button id="btn-filter-email-logs" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
+          <button id="btn-elog-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
+          <button id="btn-refresh-email-logs" class="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+          <button id="btn-del-selected-email-logs" class="px-2 py-1 bg-amber-500 text-white rounded hover:bg-amber-600">删除选中</button>
+          <button id="btn-clear-email-logs" class="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600">清空</button>
+        </div>
+        <div id="email-logs-list" class="text-xs max-h-64 overflow-y-auto">点击刷新查看</div>
+        <div class="flex items-center gap-2 mt-1 text-xs">
+          <span id="elog-status" class="text-gray-500"></span>
+          <span class="text-gray-400" id="elog-pages"></span>
+        </div>
+      </div>
+      <div id="abuse-ips-bar" class="hidden mt-2 pt-2 border-t text-xs"><span class="text-red-500">🚫 恶意IP：</span><span id="abuse-ips-list"></span> <button id="btn-clear-abuse" class="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-500 rounded hover:bg-red-200">清空全部</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 访问密钥管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="access-keys-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="access-keys-body">▸</span>
+        🔑 访问密钥管理
+        <span class="text-xs text-gray-500 font-normal">(<span id="access-keys-count">0</span>)</span>
+      </h2>
+      <button id="btn-refresh-access-keys" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+      <button id="btn-cleanup-access-keys" class="text-sm px-3 py-1 bg-orange-100 text-orange-700 rounded hover:bg-orange-200 ml-1">清理失效</button>
+    </div>
+    <div id="access-keys-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">管理用户访问密钥。生成后分发给用户，用户在登录后输入密钥解锁服务。密钥格式为 43 字符，每个密钥仅限一人使用。管理员删除/禁用密钥后 2 秒生效，密钥到期后有 60 秒缓冲。</p>
+      <!-- 生成区 -->
+      <div class="flex flex-col gap-2 mb-3">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="text-xs text-gray-500">生成</span>
+          <input id="ak-gen-count" type="number" min="1" max="50" value="1" class="w-14 border rounded px-2 py-1 text-xs" />
+          <span class="text-xs text-gray-500">个密钥，类型</span>
+          <select id="ak-gen-type" class="border rounded px-2 py-1 text-xs">
+            <option value="time">按时间</option>
+            <option value="count">按次数</option>
+            <option value="both">时间+次数</option>
+          </select>
+          <button id="btn-gen-access-keys" class="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm">生成</button>
+          <span id="access-keys-status" class="text-xs text-gray-500"></span>
+        </div>
+        <div id="ak-gen-time-row" class="flex items-center gap-2 flex-wrap">
+          <span class="text-xs text-gray-500">有效期</span>
+          <input id="ak-gen-days" type="number" min="0" max="365" value="7" class="w-12 border rounded px-1 py-1 text-xs text-center" />
+          <span class="text-xs text-gray-500">天</span>
+          <input id="ak-gen-hours" type="number" min="0" max="23" value="0" class="w-12 border rounded px-1 py-1 text-xs text-center" />
+          <span class="text-xs text-gray-500">时</span>
+          <input id="ak-gen-mins" type="number" min="0" max="59" value="0" class="w-12 border rounded px-1 py-1 text-xs text-center" />
+          <span class="text-xs text-gray-500">分</span>
+        </div>
+        <div id="ak-gen-count-row" class="hidden flex items-center gap-2 flex-wrap">
+          <span class="text-xs text-gray-500">可使用</span>
+          <input id="ak-gen-max-uses" type="number" min="1" max="9999" value="50" class="w-16 border rounded px-1 py-1 text-xs text-center" />
+          <span class="text-xs text-gray-500">次</span>
+        </div>
+      </div>
+      <!-- 密钥列表 -->
+      <div id="access-keys-list" class="text-sm">加载中...</div>
+    </div>
+  </div>
+
+  <!-- 生图日志 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="gen-logs-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="gen-logs-body">&#x25B8;</span>
+        📋 生图日志
+        <span class="text-xs text-gray-500 font-normal">(<span id="gen-logs-count">0</span>)</span>
+      </h2>
+      <div class="flex gap-2">
+        <button id="btn-refresh-gen-logs" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+        <button id="btn-edit-gen-logs" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">编辑</button>
+        <button id="btn-clear-gen-logs" class="text-sm px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600">清空日志</button>
+      </div>
+    </div>
+    <div id="gen-logs-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">记录每次生图的用户、prompt、工作流、状态等信息，最多保留 20000 条。</p>
+      <div class="flex flex-wrap gap-2 mb-2 items-center text-xs">
+        <input id="gen-logs-search" type="text" placeholder="用户名搜索" class="border rounded px-2 py-1 text-xs w-28" />
+        <label class="text-gray-500">日期:</label>
+        <input id="gen-logs-date-from" type="date" class="border rounded px-2 py-1 text-xs" />
+        <span class="text-gray-400">—</span>
+        <input id="gen-logs-date-to" type="date" class="border rounded px-2 py-1 text-xs" />
+        <button id="btn-gen-logs-filter" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
+        <button id="btn-gen-logs-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
+        <button id="btn-gen-logs-auto" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">自动刷新: 关</button>
+        <input id="gen-logs-interval" type="number" value="30" min="5" max="300" class="w-12 text-xs text-center border rounded py-1" title="刷新间隔(秒)" />
+      </div>
+      <div id="gen-logs-batch-bar" class="hidden flex gap-2 mb-2 items-center text-xs">
+        <button id="btn-gen-logs-select-all" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">全选</button>
+        <button id="btn-gen-logs-del-selected" class="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs">🗑 删除选中 (<span id="gen-logs-sel-count">0</span>)</button>
+      </div>
+      <div id="gen-logs-list" class="text-sm max-h-96 overflow-y-auto gl-log-preview">加载中...</div>
+      <div class="flex items-center gap-2 mt-2">
+        <span id="gen-logs-status" class="text-xs text-gray-500"></span>
+        <span class="text-xs text-gray-400" id="gen-logs-pages"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 删除记录 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="deletion-log-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="deletion-log-body">▸</span>
+        🗑️ 删除记录
+        <span class="text-xs text-gray-500 font-normal">(<span id="deletion-log-count">0</span>)</span>
+      </h2>
+      <div class="flex gap-2">
+        <button id="btn-refresh-deletion-log" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+        <button id="btn-edit-del-log" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">编辑</button>
+        <button id="btn-auto-del-log" class="text-sm px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">自动刷新: 关</button>
+        <input id="del-log-interval" type="number" value="10" min="2" max="300" class="w-12 text-xs text-center border rounded py-1" /> <span class="text-xs text-gray-500">秒</span>
+        <button id="btn-clear-deletion-log" class="text-sm px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 hidden">清空全部</button>
+      </div>
+    </div>
+    <div id="deletion-log-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">用户或管理员删除的图片存档，可查看缩略图确认后清理。最多保留 20000 条。</p>
+      <div class="flex flex-wrap gap-2 mb-2 items-center text-xs">
+        <input id="del-log-search" type="text" placeholder="用户名搜索" class="border rounded px-2 py-1 text-xs w-28" />
+        <label class="text-gray-500">日期:</label>
+        <input id="del-log-date-from" type="date" class="border rounded px-2 py-1 text-xs" />
+        <span class="text-gray-400">—</span>
+        <input id="del-log-date-to" type="date" class="border rounded px-2 py-1 text-xs" />
+        <button id="btn-del-log-filter" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
+        <button id="btn-del-log-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
+      </div>
+      <div id="del-log-batch-bar" class="hidden flex gap-2 mb-2 items-center text-xs">
+        <button id="btn-del-log-select-all" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">全选</button>
+        <button id="btn-del-log-del-selected" class="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs">🗑 删除选中 (<span id="del-log-sel-count">0</span>)</button>
+      </div>
+      <div id="deletion-log-grid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2 del-log-preview"></div>
+      <div class="flex items-center gap-2 mt-2">
+        <span id="del-log-status" class="text-xs text-gray-500"></span>
+        <span class="text-xs text-gray-400" id="del-log-pages"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 封禁列表 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="bans-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="bans-body">▸</span>
+        🛡️ IP 封禁管理
+      </h2>
+      <button id="btn-refresh-bans" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="bans-body" class="hidden">
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- 黑名单 -->
+      <div class="border rounded p-3 bg-red-50">
+        <h3 class="text-sm font-semibold text-red-700 mb-2">🚫 黑名单（被封 IP）</h3>
+        <input id="ban-search" type="text" placeholder="搜索 IP..." class="w-full border rounded px-2 py-1 text-xs font-mono mb-1" oninput="loadBans()" />
+        <div id="ban-list" class="text-sm max-h-60 overflow-y-auto">加载中...</div>
+        <div class="flex gap-2 mt-2">
+          <input id="ban-input" type="text" placeholder="输入 IP 封禁" class="flex-1 border rounded px-2 py-1 text-xs font-mono" />
+          <button id="btn-add-ban" class="px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs font-medium">封禁</button>
+        </div>
+      </div>
+      <!-- 白名单 -->
+      <div class="border rounded p-3 bg-green-50">
+        <h3 class="text-sm font-semibold text-green-700 mb-2">✅ 白名单（豁免 IP）</h3>
+        <input id="wl-search" type="text" placeholder="搜索 IP..." class="w-full border rounded px-2 py-1 text-xs font-mono mb-1" oninput="loadBans()" />
+        <div id="whitelist-list" class="text-sm max-h-60 overflow-y-auto">加载中...</div>
+        <div class="flex gap-2 mt-2">
+          <input id="wl-input" type="text" placeholder="输入 IP 添加白名单" class="flex-1 border rounded px-2 py-1 text-xs font-mono" />
+          <button id="btn-add-wl" class="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-xs font-medium">添加</button>
+        </div>
+      </div>
+    </div>
+    <div id="ip-images-panel" class="hidden mt-3 border-t pt-3">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="text-sm font-semibold">📷 <span id="ip-images-title"></span> 的生图记录 (<span id="ip-images-count">0</span>)</h3>
+        <div class="flex gap-2">
+          <button id="btn-ip-select-all" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">全选</button>
+          <button id="btn-ip-del-selected" class="text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 hidden">🗑 删除选中</button>
+          <button id="btn-ip-images-close" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">关闭</button>
+        </div>
+      </div>
+      <div id="ip-images-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2"></div>
+    </div>
+    </div>
+  </div>
+
+  <!-- 举报管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="reports-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="reports-body">▸</span>
+        🚩 举报管理
+        <span class="text-xs text-gray-500 font-normal">(<span id="reports-count">0</span> 待处理)</span>
+      </h2>
+      <button id="btn-refresh-reports" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="reports-body" class="hidden">
+      <div id="reports-list" class="text-sm">加载中...</div>
+    </div>
+  </div>
+
+  <!-- 精选 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="featured-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="featured-body">▸</span>
+        ⭐ 精选展示
+        <span class="text-xs text-gray-500 font-normal">(<span id="featured-count">0</span>) — 拖拽卡片可排序</span>
+      </h2>
+      <button id="btn-refresh-featured" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="featured-body" class="hidden">
+      <div id="featured-list" class="text-sm">加载中...</div>
+      <div class="mt-3 text-center">
+        <button id="btn-load-more-featured"
+          class="hidden text-sm px-4 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">加载更多精选</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 最近生图记录 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="recent-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="recent-body">▸</span>
+        📋 生图记录
+        <span class="text-xs text-gray-500 font-normal">(<span id="recent-shown">0</span>/<span id="recent-total">0</span>)</span>
+      </h2>
+      <div class="flex gap-2">
+        <button id="btn-refresh-recent" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+        <button id="btn-recent-auto" class="text-sm px-3 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300">自动刷新: 关</button>
+        <input id="recent-interval" type="number" value="30" min="5" max="300" class="w-12 text-xs text-center border rounded py-1" title="刷新间隔(秒)" />
+      </div>
+    </div>
+    <div id="recent-body" class="hidden">
+      <div id="recent-list" class="text-sm">加载中...</div>
+      <div class="flex items-center gap-2 mt-2">
+        <span id="recent-status" class="text-xs text-gray-500"></span>
+        <span class="text-xs text-gray-400" id="recent-pages"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 图片管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="images-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="images-body">▸</span>
+        🖼️ 图片管理
+        <span class="text-xs text-gray-500 font-normal">(<span id="images-shown">0</span>/<span id="images-total">0</span>)</span>
+      </h2>
+      <div class="flex gap-2">
+        <button id="btn-images-select-all" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">全选</button>
+        <button id="btn-images-del-selected" class="text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 hidden">🗑 删除选中</button>
+        <button id="btn-refresh-images" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+      </div>
+    </div>
+    <div id="images-body" class="hidden">
+      <div id="images-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2"></div>
+      <div id="images-empty" class="text-center text-gray-400 text-sm py-8 hidden">暂无图片</div>
+      <div class="mt-3 text-center">
+        <button id="btn-load-more-images"
+          class="hidden text-sm px-4 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">加载更多</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- GC 系统 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="gc-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="gc-body">&#x25B8;</span>
+        &#x1F9F9; GC 系统
+        <span class="text-xs text-gray-500 font-normal">(<span id="gc-stats-summary">-</span>)</span>
+      </h2>
+      <div class="flex gap-2">
+        <button id="btn-refresh-gc" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+      </div>
+    </div>
+    <div id="gc-body" class="hidden">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div class="bg-blue-50 rounded-lg p-3 text-center">
+          <div class="text-xs text-blue-500 font-medium">重启次数</div>
+          <div id="gc-restart-count" class="text-xl font-bold text-blue-700 mt-1">-</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-3 text-center">
+          <div class="text-xs text-green-500 font-medium">累计生图</div>
+          <div id="gc-total-images" class="text-xl font-bold text-green-700 mt-1">-</div>
+        </div>
+        <div class="bg-purple-50 rounded-lg p-3 text-center">
+          <div class="text-xs text-purple-500 font-medium">上次 GC</div>
+          <div id="gc-last-time" class="text-md font-bold text-purple-700 mt-1">-</div>
+        </div>
+        <div class="bg-orange-50 rounded-lg p-3 text-center">
+          <div class="text-xs text-orange-500 font-medium">在线</div>
+          <div id="gc-online" class="text-xl font-bold text-orange-700 mt-1">-</div>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-2 mb-3">
+        <button id="btn-gc-run" class="px-3 py-1.5 bg-red-500 text-white rounded hover:bg-red-600 text-sm font-medium">&#x26A0; 立即执行 GC</button>
+        <button id="btn-gc-run-no-backup" class="px-3 py-1.5 bg-orange-500 text-white rounded hover:bg-orange-600 text-sm font-medium">&#x26A0; GC（不备份）</button>
+        <button id="btn-gc-clear-log" class="px-3 py-1.5 bg-gray-500 text-white rounded hover:bg-gray-600 text-sm font-medium">清空日志</button>
+      </div>
+      <div id="gc-status" class="text-xs text-gray-500 mb-2"></div>
+      <div class="flex flex-wrap gap-2 mb-2 items-center text-xs">
+        <label class="text-gray-500">日期:</label>
+        <input id="gc-date-from" type="date" class="border rounded px-2 py-1 text-xs" />
+        <span class="text-gray-400">—</span>
+        <input id="gc-date-to" type="date" class="border rounded px-2 py-1 text-xs" />
+        <button id="btn-gc-filter" class="px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">筛选</button>
+        <button id="btn-gc-reset" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">重置</button>
+        <button id="btn-gc-auto" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs">自动刷新: 关</button>
+        <input id="gc-interval" type="number" value="30" min="5" max="300" class="w-12 text-xs text-center border rounded py-1" title="刷新间隔(秒)" />
+      </div>
+      <div id="gc-log-list" class="text-sm max-h-96 overflow-y-auto">加载中...</div>
+      <div class="flex items-center gap-2 mt-2">
+        <span id="gc-log-status" class="text-xs text-gray-500"></span>
+        <span class="text-xs text-gray-400" id="gc-log-pages"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const escHtml = (s) => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function _copyText(text, btn) {
+  const orig = btn.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓ 已复制';
+    btn.classList.add('bg-green-100', 'text-green-600');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('bg-green-100', 'text-green-600'); }, 1500);
+  }).catch(() => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      btn.textContent = '✓ 已复制';
+      btn.classList.add('bg-green-100', 'text-green-600');
+      setTimeout(() => { btn.textContent = orig; btn.classList.remove('bg-green-100', 'text-green-600'); }, 1500);
+    } catch (e2) {
+      btn.textContent = '✗ 失败';
+      btn.classList.add('bg-red-100', 'text-red-600');
+      setTimeout(() => { btn.textContent = orig; btn.classList.remove('bg-red-100', 'text-red-600'); }, 2000);
+    }
+  });
+}
+
+async function api(method, url, body) {
+  const opt = { method, headers: {} };
+  if (body) {
+    opt.headers['Content-Type'] = 'application/json';
+    opt.body = JSON.stringify(body);
+  }
+  const r = await fetch(url, opt);
+  const d = await r.json().catch(() => ({}));
+  if (r.status === 401) {
+    alert('登录已过期，请刷新页面重新登录');
+    location.href = '/';
+    throw new Error('unauthorized');
+  }
+  if (r.status === 403) {
+    alert(d.detail || d.error || '权限不足');
+    throw new Error('forbidden');
+  }
+  if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+  return d;
+}
+
+async function loadBans() {
+  $('ban-list').textContent = '加载中...';
+  $('whitelist-list').textContent = '加载中...';
+  try {
+    var bs = ($('ban-search').value || '').toLowerCase();
+    var ws = ($('wl-search').value || '').toLowerCase();
+    // 黑名单
+    const bd = await api('GET', '/api/admin/bans');
+    const ips = (bd.banned || []).filter(ip => !bs || ip.includes(bs));
+    if (!ips.length) { $('ban-list').innerHTML = '<div class="text-gray-400">暂无</div>'; } else {
+      $('ban-list').innerHTML = '<div class="flex flex-col gap-1">' +
+        ips.map((ip, i) => `<div class="inline-flex items-center gap-2 ${i === 0 ? 'bg-red-200' : 'bg-red-50'} rounded px-2 py-1 font-mono text-xs">
+          <span class="text-gray-400 text-[10px] w-6 text-right">${i + 1}</span>
+          <a href="#" data-ip="${escHtml(ip)}" class="btn-show-ip-imgs hover:underline cursor-pointer text-red-800">${escHtml(ip)}</a>
+          <button data-ip="${escHtml(ip)}" class="btn-unban hover:text-red-600 font-bold ml-auto text-red-500">✕</button>
+        </div>`).join('') + '</div>';
+      document.querySelectorAll('.btn-unban').forEach(b => b.addEventListener('click', () => unban(b.dataset.ip)));
+      document.querySelectorAll('.btn-show-ip-imgs').forEach(a => a.addEventListener('click', (e) => { e.preventDefault(); showIpImages(a.dataset.ip); }));
+    }
+    // 白名单
+    const wd = await api('GET', '/api/admin/ip-whitelist');
+    const wl = (wd.whitelist || []).filter(ip => !ws || ip.includes(ws));
+    if (!wl.length) { $('whitelist-list').innerHTML = '<div class="text-gray-400">暂无</div>'; } else {
+      $('whitelist-list').innerHTML = '<div class="flex flex-col gap-1">' +
+        wl.map(ip => `<div class="inline-flex items-center gap-2 bg-green-100 rounded px-2 py-1 font-mono text-xs">
+          <span class="text-green-800 flex-1">${escHtml(ip)}</span>
+          <button data-ip="${escHtml(ip)}" class="btn-remove-wl hover:text-red-600 font-bold text-red-500">✕</button>
+        </div>`).join('') + '</div>';
+      document.querySelectorAll('.btn-remove-wl').forEach(b => b.addEventListener('click', () => removeWhitelist(b.dataset.ip)));
+    }
+  } catch (e) { $('ban-list').textContent = '失败: ' + e.message; }
+}
+
+async function addWhitelist(ip) {
+  if (!ip) return;
+  if (!confirm(`确认添加 IP ${ip} 到白名单？`)) return;
+  const i = prompt('即将添加白名单，请输入"确认添加"以继续：');
+  if (i !== '确认添加') { alert('输入不匹配，已取消'); return; }
+  await api('POST', '/api/admin/ip-whitelist/add', { ip });
+  $('wl-input').value = '';
+  loadBans();
+}
+
+async function removeWhitelist(ip) {
+  if (!confirm(`确认从白名单移除 IP ${ip}？`)) return;
+  const i = prompt('即将移除白名单，请输入"确认移除"以继续：');
+  if (i !== '确认移除') { alert('输入不匹配，已取消'); return; }
+  await api('POST', '/api/admin/ip-whitelist/remove', { ip });
+  loadBans();
+}
+
+async function ban(ip) {
+  if (!ip) return;
+  if (!confirm(`确认封禁 IP ${ip}？`)) return;
+  const i = prompt('即将封禁 IP，请输入"确认封禁"以继续：');
+  if (i !== '确认封禁') { alert('输入不匹配，已取消'); return; }
+  await api('POST', '/api/admin/ban', { ip });
+  $('ban-input').value = '';
+  loadBans();
+  loadRecent();
+}
+
+async function unban(ip) {
+  if (!confirm(`确认解封 IP ${ip}？`)) return;
+  const i = prompt('即将解封 IP，请输入"确认解封"以继续：');
+  if (i !== '确认解封') { alert('输入不匹配，已取消'); return; }
+  await api('POST', '/api/admin/unban', { ip });
+  loadBans();
+  loadRecent();
+}
+
+function formatTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts * 1000);
+  if (isNaN(d.getTime())) return ts;
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// ==================== 用户管理 ====================
+async function loadUsers() {
+  $('user-list').textContent = '加载中...';
+  try {
+    const d = await api('GET', '/api/admin/users');
+    const users = d.users || [];
+    if (!users.length) { $('user-list').innerHTML = '<div class="text-gray-400">暂无注册用户</div>'; return; }
+    $('user-list').innerHTML = '<div class="flex flex-col gap-1 max-h-96 overflow-y-auto">' +
+      users.map(u => {
+        const banned = u.banned;
+        const rowCls = banned ? 'bg-red-100' : 'bg-gray-50';
+        const banLabel = banned ? '✓ 已封禁' : '封禁';
+        const banCls = banned ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600';
+        return `<div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 ${rowCls} rounded px-2 py-1 text-xs">
+          <div class="flex items-center gap-2">
+            <span class="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0 ${onlineGithubIds.has(u.github_id) ? 'bg-green-500' : 'bg-gray-300'}" data-gid="${escHtml(u.github_id)}" title="${onlineGithubIds.has(u.github_id) ? '在线' : '离线'}"></span>
+            <span class="font-mono text-gray-600 truncate" title="ID: ${escHtml(u.github_id)}">${escHtml(u.github_id)}</span>
+            <span class="font-medium">${escHtml(u.login || '?')}</span>
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            ${u.email ? `<span class="text-gray-400 text-[10px]">${escHtml(u.email)}</span>` : ''}
+            <span class="text-[10px] px-1 rounded ${u.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-gray-200 text-gray-500'}">${escHtml(u.role || 'user')}</span>
+            ${u.created_at ? `<span class="text-gray-400 text-[10px]">${formatTime(u.created_at)}</span>` : ''}
+            ${banned ? `<span class="text-red-500 text-[10px]">原因: ${escHtml(u.banned_reason || '未说明')}</span>` : ''}
+            ${u.role === 'admin' ? '<span class="text-[10px] text-purple-400">不可封禁</span>' : `<button data-gid="${escHtml(u.github_id)}" data-banned="${banned}" class="btn-toggle-user-ban text-[10px] px-2 py-0.5 text-white rounded ${banCls}">${banLabel}</button>`}
+          </div>
+        </div>`;
+      }).join('') + '</div>';
+    document.querySelectorAll('.btn-toggle-user-ban').forEach(b => {
+      b.addEventListener('click', () => toggleUserBan(b.dataset.gid, b.dataset.banned === 'true'));
+    });
+  } catch (e) { $('user-list').textContent = '失败: ' + e.message; }
+}
+
+async function toggleUserBan(githubId, currentlyBanned) {
+  if (currentlyBanned) {
+    if (!confirm('确定解封用户 ' + githubId + ' ？')) return;
+    const i = prompt('即将解封用户，请输入"确认解封"以继续：');
+    if (i !== '确认解封') { alert('输入不匹配，已取消'); return; }
+    await api('POST', '/api/admin/users/unban', { github_id: githubId });
+  } else {
+    if (!confirm('确定封禁用户 ' + githubId + ' ？')) return;
+    const i = prompt('即将封禁用户，请输入"确认封禁"以继续：');
+    if (i !== '确认封禁') { alert('输入不匹配，已取消'); return; }
+    const reason = prompt('封禁原因（可选）：');
+    await api('POST', '/api/admin/users/ban', { github_id: githubId, reason: reason || '' });
+  }
+  loadUsers();
+}
+
+// ==================== 邮箱认证管理 ====================
+// ── 邮箱注册用户分页 ──
+let _euPage = 0, _euTotal = 0;
+const _EU_PAGE_SIZE = 24;
+
+function _euQS() {
+  const q = []; q.push('limit='+_EU_PAGE_SIZE+'&offset='+(_euPage*_EU_PAGE_SIZE));
+  const s=$('eu-search').value.trim(); if(s) q.push('search='+encodeURIComponent(s));
+  return q.join('&');
+}
+function _euRenderPages() {
+  const tp=Math.ceil(_euTotal/_EU_PAGE_SIZE)||1,el=$('eu-pages');
+  if(tp<=1){el.textContent='';return;}
+  let h='';const p=_euPage;
+  if(p>0)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-eu="${p-1}">上一页</a>`;
+  const s=Math.max(0,p-2),e=Math.min(tp-1,p+2);
+  if(s>0)h+='<span class="mx-1 text-gray-400">...</span>';
+  for(let i=s;i<=e;i++)h+=i===p?`<span class="mx-1 font-bold text-gray-800">${i+1}</span>`:`<a href="#" class="text-blue-600 hover:underline mx-1" data-eu="${i}">${i+1}</a>`;
+  if(e<tp-1)h+='<span class="mx-1 text-gray-400">...</span>';
+  if(p<tp-1)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-eu="${p+1}">下一页</a>`;
+  el.innerHTML=h;
+  el.querySelectorAll('a[data-eu]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_euPage=parseInt(a.dataset.eu);loadEmailUsers();}));
+}
+async function loadEmailUsers() {
+  try {
+    const d = await api('GET', '/api/admin/email-users?' + _euQS());
+    const items = d.users || []; _euTotal = d.total || 0;
+    $('email-users-count').textContent = '(' + _euTotal + ')';
+    if (!items.length) {
+      $('email-users-list').innerHTML = '<div class="text-gray-400 text-xs">无邮箱用户</div>';
+      $('eu-status').textContent = ''; $('eu-pages').textContent = ''; return;
+    }
+    $('email-users-list').innerHTML = '<div class="flex flex-col gap-1">' + items.map(function(u) {
+      var banned = u.banned, rowCls = banned ? 'bg-red-100' : 'bg-gray-50', banLabel = banned ? 'Unban' : 'Ban', banCls = banned ? 'bg-green-500 hover:bg-green-600' : 'bg-red-500 hover:bg-red-600';
+      var email = (u.github_id||'').replace('email:','');
+      return '<div class="flex items-center gap-2 ' + rowCls + ' rounded px-2 py-1 text-xs">' +
+        '<span class="inline-block w-2 h-2 rounded-full flex-shrink-0 ' + (onlineGithubIds.has(u.github_id)?'bg-green-500':'bg-gray-300') + '" data-gid="' + escHtml(u.github_id) + '"></span>' +
+        '<span class="font-medium flex-1">' + escHtml(u.login||'?') + '</span>' +
+        '<span class="text-gray-400 text-[10px]">' + escHtml(email) + '</span>' +
+        '<span class="text-[10px] px-1 rounded ' + (u.role==='admin'?'bg-purple-100 text-purple-700':'bg-gray-200 text-gray-500') + '">' + escHtml(u.role||'user') + '</span>' +
+        '<span class="text-gray-400 text-[10px]">' + (u.created_at?formatTime(u.created_at):'') + '</span>' +
+        (u.totp_enabled?'<button data-gid="'+escHtml(u.github_id)+'" class="btn-reset-totp text-[10px] px-2 py-0.5 bg-purple-100 text-purple-500 rounded hover:bg-purple-200 ml-1">Reset 2FA</button>':'') +
+        (u.role==='admin'?'<span class="text-[10px] text-purple-400">不可封禁</span>':'<button data-gid="'+escHtml(u.github_id)+'" data-banned="'+banned+'" class="btn-toggle-email-ban text-[10px] px-2 py-0.5 text-white rounded '+banCls+'">'+banLabel+'</button>') +
+        (u.verified?'':'<button data-gid="'+escHtml(u.github_id)+'" class="btn-resend-verify text-[10px] px-2 py-0.5 bg-blue-100 text-blue-500 rounded hover:bg-blue-200 ml-1">Resend</button>') + '</div>';
+    }).join('') + '</div>';
+    document.querySelectorAll('.btn-reset-totp').forEach(function(b){b.addEventListener('click',function(){resetTotp(b.dataset.gid);});});
+    document.querySelectorAll('.btn-toggle-email-ban').forEach(function(b){b.addEventListener('click',function(){toggleEmailUserBan(b.dataset.gid,b.dataset.banned==='true');});});
+    document.querySelectorAll('.btn-resend-verify').forEach(function(b){b.addEventListener('click',function(){resendVerify(b.dataset.gid);});});
+    var start=_euPage*_EU_PAGE_SIZE+1,end=Math.min(start+items.length-1,_euTotal);
+    $('eu-status').textContent='显示 '+start+'-'+end+' / '+_euTotal+' 条';_euRenderPages();
+  } catch(e) { $('email-users-list').textContent='加载失败: '+e.message; }
+}
+
+// ── 发信日志分页 ──
+let _elPage = 0, _elTotal = 0;
+const _EL_PAGE_SIZE = 24;
+
+function _elQS() {
+  const q = []; q.push('limit='+_EL_PAGE_SIZE+'&offset='+(_elPage*_EL_PAGE_SIZE));
+  const f=$('elog-date-from').value,t=$('elog-date-to').value,s=$('elog-search').value.trim();
+  if(f) q.push('date_from='+(new Date(f+'T00:00:00').getTime()/1000));
+  if(t) q.push('date_to='+(new Date(t+'T23:59:59').getTime()/1000));
+  if(s) q.push('search='+encodeURIComponent(s));
+  return q.join('&');
+}
+function _elRenderPages() {
+  const tp=Math.ceil(_elTotal/_EL_PAGE_SIZE)||1,el=$('elog-pages');
+  if(tp<=1){el.textContent='';return;}
+  let h='';const p=_elPage;
+  if(p>0)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-el="${p-1}">上一页</a>`;
+  const s=Math.max(0,p-2),e=Math.min(tp-1,p+2);
+  if(s>0)h+='<span class="mx-1 text-gray-400">...</span>';
+  for(let i=s;i<=e;i++)h+=i===p?`<span class="mx-1 font-bold text-gray-800">${i+1}</span>`:`<a href="#" class="text-blue-600 hover:underline mx-1" data-el="${i}">${i+1}</a>`;
+  if(e<tp-1)h+='<span class="mx-1 text-gray-400">...</span>';
+  if(p<tp-1)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-el="${p+1}">下一页</a>`;
+  el.innerHTML=h;
+  el.querySelectorAll('a[data-el]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_elPage=parseInt(a.dataset.el);loadEmailLogs();}));
+}
+async function loadEmailLogs() {
+  try {
+    const d = await api('GET', '/api/admin/email-logs?' + _elQS());
+    const logs = d.logs || []; _elTotal = d.total || 0;
+    if (!logs.length) { $('email-logs-list').innerHTML = '<div class="text-gray-400 py-4 text-center">暂无记录</div>'; $('elog-status').textContent=''; $('elog-pages').textContent=''; return; }
+    var html = '<table class="w-full border-collapse"><thead><tr class="bg-gray-100 text-gray-600">' +
+      '<th class="p-1 w-6"><input type="checkbox" id="elog-select-all" /></th>' +
+      '<th class="p-1 text-left">时间</th><th class="p-1 text-left">收件人</th><th class="p-1 text-left">主题</th>' +
+      '<th class="p-1 w-12">状态</th><th class="p-1 w-6"></th></tr></thead><tbody>';
+    logs.forEach(function(l) {
+      var sc = l.status==='ok'?'text-green-600':l.status==='fail'?'text-red-500':'text-amber-500';
+      var st = l.status==='ok'?'成功':l.status==='fail'?'失败':'限流';
+      var tm = l.created_at?new Date(l.created_at*1000).toLocaleString('zh-CN'):'?';
+      html += '<tr class="border-t border-gray-100 hover:bg-gray-50">' +
+        '<td class="p-1"><input type="checkbox" class="elog-check" data-id="'+l.id+'" /></td>' +
+        '<td class="p-1 whitespace-nowrap text-gray-500">'+tm+'</td>' +
+        '<td class="p-1">'+escHtml(l.recipient)+'</td>' +
+        '<td class="p-1 text-gray-600">'+escHtml(l.subject)+'</td>' +
+        '<td class="p-1 '+sc+' font-medium text-center">'+st+'</td>' +
+        '<td class="p-1"><button class="elog-del-one text-red-400 hover:text-red-600" data-id="'+l.id+'">×</button></td></tr>';
+    });
+    html += '</tbody></table>';
+    $('email-logs-list').innerHTML = html;
+    $('elog-select-all').onclick = function() { document.querySelectorAll('.elog-check').forEach(function(c){c.checked=this.checked;}.bind(this)); };
+    document.querySelectorAll('.elog-del-one').forEach(function(b) {
+      b.onclick = async function() { if(!confirm('确定删除此条？'))return; await api('POST','/api/admin/email-logs/clear',{ids:[parseInt(this.dataset.id)]}); loadEmailLogs(); };
+    });
+    var start=_elPage*_EL_PAGE_SIZE+1,end=Math.min(start+logs.length-1,_elTotal);
+    $('elog-status').textContent='显示 '+start+'-'+end+' / '+_elTotal+' 条';_elRenderPages();
+  } catch(e) { $('email-logs-list').textContent='失败: '+e.message; }
+}
+
+async function loadEmailAuth() {
+  try {
+    const d = await api('GET', '/api/admin/email-dashboard');
+
+    // Invite codes
+    const items = d.invite_codes || [];
+    if (!items.length) {
+      $('invite-codes-list').innerHTML = '<div class="text-gray-400 text-xs">暂无邀请码</div>';
+    } else {
+      $('invite-codes-list').innerHTML = items.map(c => {
+        const used = c.used_count || 0;
+        const max = c.max_uses || 1;
+        const pct = max > 0 ? Math.round(used / max * 100) : 0;
+        const barColor = pct >= 100 ? 'bg-red-400' : pct >= 50 ? 'bg-yellow-400' : 'bg-green-400';
+        const created = c.created_at ? formatTime(c.created_at) : '?';
+        return '<div class="flex items-center gap-2 bg-gray-50 rounded px-2 py-1 mb-1 text-xs">' +
+          '<code class="font-mono text-gray-800 flex-1">' + escHtml(c.code) + '</code>' +
+          '<div class="w-20 bg-gray-200 rounded-full h-1.5 flex-shrink-0"><div class="h-1.5 rounded-full ' + barColor + '" style="width:' + pct + '%"></div></div>' +
+          '<span class="text-gray-500 flex-shrink-0">' + used + '/' + max + '</span>' +
+          '<span class="text-gray-400 flex-shrink-0 text-[10px]">' + created + '</span>' +
+          '<button data-code="' + escHtml(c.code) + '" class="btn-del-invite-code text-[10px] px-1.5 py-0.5 bg-red-100 text-red-500 rounded hover:bg-red-200 flex-shrink-0">删除</button>' +
+          '</div>';
+      }).join('');
+      document.querySelectorAll('.btn-del-invite-code').forEach(b => {
+        b.addEventListener('click', () => deleteInviteCode(b.dataset.code));
+      });
+    }
+
+    // Limits
+    $('cfg-hourly-ip').value = (d.limits || {}).reg_hourly_limit_per_ip || 3;
+    $('cfg-daily-ip').value = (d.limits || {}).reg_daily_limit_per_ip || 10;
+    $('cfg-daily-email').value = (d.limits || {}).reg_daily_limit_per_email || 3;
+
+    // Rate limits
+    if (d.rate_limits) {
+      var labels = {'login_max_per_email_per_min':'Login/min/email','login_max_per_ip_per_min':'Login/min/IP','login_lockout_fails':'Lockout fails','login_lockout_seconds':'Lockout sec','reg_per_ip_per_hour':'Reg/hr/IP','reg_per_ip_per_day':'Reg/day/IP','reg_per_email_per_day':'Reg/day/email','reg_ip_cooldown_seconds':'IP cooldown sec','forgot_pw_per_email_per_hour':'Reset/hr','forgot_pw_per_email_per_day':'Reset/day','reset_link_expire_seconds':'Link expire sec','email_global_per_day':'Email/day','email_global_per_min':'Email/min','verify_retry_max':'Retry max','verify_abuse_threshold':'Abuse threshold'};
+      var h = '';
+      for (var k in d.rate_limits) {
+        h += '<label style="display:flex;flex-direction:column;gap:2px"><span style="color:#6b7280">' + (labels[k]||k) + '</span><input id="rl-' + k + '" type="number" min="0" style="border:1px solid #e5e7eb;border-radius:6px;padding:4px 6px" value="' + d.rate_limits[k] + '" /></label>';
+      }
+      $('rate-limits-grid').innerHTML = h;
+    }
+
+    // Email users count + trigger paginated load
+    $('email-users-count').textContent = '(' + (d.email_users_total || d.email_users?.length || 0) + ')';
+    loadEmailUsers();
+
+    // Abuse IPs
+    var ips = d.abuse_ips || [];
+    if (ips.length > 0) {
+      $('abuse-ips-bar').classList.remove('hidden');
+      var html = '';
+      for (var i = 0; i < ips.length; i++) {
+        html += '<code style="background:#fee2e2;padding:1px 4px;border-radius:4px;margin:0 2px">' + escHtml(ips[i]) + '</code> ';
+        html += '<button data-ip="' + escHtml(ips[i]) + '" class="btn-remove-abuse" style="font-size:10px;color:#ef4444;cursor:pointer;border:none;background:none">[X]</button> ';
+      }
+      $('abuse-ips-list').innerHTML = html;
+      document.querySelectorAll('.btn-remove-abuse').forEach(function(b) {
+        b.addEventListener('click', async function() {
+          if (!confirm('确认移除恶意IP ' + b.dataset.ip + ' ？')) return;
+          const i = prompt('即将移除恶意IP，请输入"确认移除"以继续：');
+          if (i !== '确认移除') { alert('输入不匹配，已取消'); return; }
+          await api('POST', '/api/admin/email-abuse-ips/clear', { ip: b.dataset.ip });
+          loadEmailAuth();
+        });
+      });
+    } else {
+      $('abuse-ips-bar').classList.add('hidden');
+    }
+  } catch(e) { console.error(e); }
+}
+
+async function resetTotp(githubId) {
+  if (!confirm('确定重置此用户的 2FA？')) return;
+  try {
+    await api('POST', '/api/admin/email-users/reset-totp', { github_id: githubId });
+    alert('TOTP 已重置');
+    loadEmailAuth();
+  } catch(e) { alert('失败: ' + e.message); }
+}
+
+async function resendVerify(githubId) {
+  try {
+    await api('POST', '/api/admin/email-users/resend-verify', { github_id: githubId });
+    alert('验证邮件已发送');
+  } catch(e) { alert('失败: ' + e.message); }
+}
+
+async function toggleEmailUserBan(githubId, currentlyBanned) {
+  if (currentlyBanned) {
+    if (!confirm('确定解封用户 ' + githubId + ' ？')) return;
+    const i = prompt('即将解封用户，请输入"确认解封"以继续：');
+    if (i !== '确认解封') { alert('输入不匹配，已取消'); return; }
+    await api('POST', '/api/admin/users/unban', { github_id: githubId });
+  } else {
+    if (!confirm('确定封禁用户 ' + githubId + ' ？')) return;
+    const i = prompt('即将封禁用户，请输入"确认封禁"以继续：');
+    if (i !== '确认封禁') { alert('输入不匹配，已取消'); return; }
+    const reason = prompt('封禁原因（可选）：');
+    await api('POST', '/api/admin/users/ban', { github_id: githubId, reason: reason || '' });
+  }
+  loadEmailAuth();
+}
+
+async function deleteInviteCode(code) {
+  if (!confirm('确定删除邀请码 ' + code + ' ？')) return;
+  await api('POST', '/api/admin/invite-codes/delete', { code });
+  loadEmailAuth();
+}
+
+// 邮箱管理自动刷新
+let _eaTimer = null, _eaAutoEnabled = false;
+function _eaToggleAuto() {
+  _eaAutoEnabled = !_eaAutoEnabled;
+  const b = $('btn-email-auth-auto');
+  if (_eaAutoEnabled) {
+    b.textContent = '自动刷新'; b.className = 'text-sm px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600';
+    _eaStartAuto();
+  } else {
+    b.textContent = '自动刷新: 关'; b.className = 'text-sm px-3 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300';
+    _eaStopAuto();
+  }
+}
+function _eaStopAuto() { if (_eaTimer) { clearInterval(_eaTimer); _eaTimer = null; } }
+function _eaStartAuto() {
+  _eaStopAuto();
+  if (!_eaAutoEnabled) return;
+  const sec = parseInt($('email-auth-interval').value) || 30;
+  _eaTimer = setInterval(() => { loadEmailAuth(); loadEmailLogs(); }, sec * 1000);
+}
+$('btn-email-auth-auto').addEventListener('click', _eaToggleAuto);
+$('email-auth-interval').addEventListener('change', () => { _eaStopAuto(); _eaStartAuto(); });
+
+$('btn-save-email-config').addEventListener('click', async () => {
+  $('email-config-status').textContent = '保存中...';
+  try {
+    await api('POST', '/api/admin/email-config', {
+      REG_HOURLY_LIMIT_PER_IP: parseInt($('cfg-hourly-ip').value) || 3,
+      REG_DAILY_LIMIT_PER_IP: parseInt($('cfg-daily-ip').value) || 10,
+      REG_DAILY_LIMIT_PER_EMAIL: parseInt($('cfg-daily-email').value) || 3,
+    });
+    $('email-config-status').textContent = '已保存';
+    setTimeout(() => { $('email-config-status').textContent = ''; }, 2000);
+  } catch (e) { $('email-config-status').textContent = '失败: ' + e.message; }
+});
+
+$('btn-clear-abuse').addEventListener('click', async function() {
+  if (!confirm('确定清空全部恶意IP标记？')) return;
+  await api('POST', '/api/admin/email-abuse-ips/clear', {});
+  loadEmailAuth();
+});
+
+$('btn-save-rate-limits').addEventListener('click', async function() {
+  $('rate-limits-status').textContent = '保存中...';
+  try {
+    const p = {};
+    document.querySelectorAll('[id^=rl-]').forEach(function(el) {
+      p[el.id.replace('rl-', '')] = parseInt(el.value) || 0;
+    });
+    await api('POST', '/api/admin/rate-limits', p);
+    $('rate-limits-status').textContent = '已保存';
+    setTimeout(function() { $('rate-limits-status').textContent = ''; }, 2000);
+  } catch(e) { $('rate-limits-status').textContent = '失败: ' + e.message; }
+});
+
+$('btn-eu-filter').addEventListener('click', function(){_euPage=0;loadEmailUsers();});
+$('btn-eu-reset').addEventListener('click', function(){$('eu-search').value='';_euPage=0;loadEmailUsers();});
+$('btn-refresh-email-logs').addEventListener('click', function(){_elPage=0;loadEmailLogs();});
+$('btn-filter-email-logs').addEventListener('click', function(){_elPage=0;loadEmailLogs();});
+$('btn-elog-reset').addEventListener('click', function(){$('elog-date-from').value='';$('elog-date-to').value='';$('elog-search').value='';_elPage=0;loadEmailLogs();});
+$('btn-del-selected-email-logs').addEventListener('click', async function() {
+  var ids = [];
+  document.querySelectorAll('.elog-check:checked').forEach(function(cb) { ids.push(parseInt(cb.dataset.id)); });
+  if (!ids.length) { alert('请先勾选要删除的记录'); return; }
+  if (prompt('请输入「确认删除发信日志」以删除选中的 ' + ids.length + ' 条记录：') !== '确认删除发信日志') return;
+  await api('POST', '/api/admin/email-logs/clear', { ids: ids });
+  loadEmailLogs();
+});
+$('btn-clear-email-logs').addEventListener('click', async function() {
+  if (prompt('清空操作不可恢复。请输入「清空全部」以确认：') !== '清空全部') return;
+  await api('POST', '/api/admin/email-logs/clear', {});
+  loadEmailLogs();
+});
+$('btn-refresh-email-auth').addEventListener('click', loadEmailAuth);
+$('btn-gen-invite-codes').addEventListener('click', async () => {
+  const count = parseInt($('ic-gen-count').value) || 1;
+  const maxUses = parseInt($('ic-gen-uses').value) || 1;
+  $('ic-gen-status').textContent = '...';
+  try {
+    const d = await api('POST', '/api/admin/invite-codes/generate', { count, max_uses: maxUses });
+    $('ic-gen-status').textContent = '已生成: ' + d.codes.join(', ');
+    loadEmailAuth();
+  } catch (e) { $('ic-gen-status').textContent = '失败: ' + e.message; }
+});
+
+let bannedSet = new Set();
+let onlineGithubIds = new Set();
+async function refreshBannedSet() {
+  try {
+    const d = await api('GET', '/api/admin/bans');
+    bannedSet = new Set(d.banned || []);
+  } catch(e){console.error(e)}
+}
+
+let _recentPage = 0, _recentTotal = 0;
+const _RECENT_PAGE_SIZE = 12;
+let _recentTimer = null, _recentAutoEnabled = false;
+const featuredState = { loaded: 0, total: 0, pageSize: 5, allItems: [] };
+let featuredSet = new Set();
+
+function rowHTML(it) {
+  const t = it.mtime ? new Date(it.mtime * 1000).toLocaleString('zh-CN') : '?';
+  const isBanned = bannedSet.has(it.ip);
+  const banBtn = isBanned
+    ? `<span class="text-[10px] bg-gray-300 text-gray-700 rounded px-1">已封</span>`
+    : `<button class="btn-ban-row text-[10px] bg-red-500 text-white rounded px-1 hover:bg-red-600" data-ip="${escHtml(it.ip)}">禁此IP</button>`;
+  const isFeat = featuredSet.has(it.path);
+  const featBtn = isFeat
+    ? `<button class="btn-unfeat-row mt-1 w-full text-[10px] bg-amber-500 text-white rounded px-1 py-0.5 hover:bg-amber-600" data-path="${escHtml(it.path)}">★ 已精选 (取消)</button>`
+    : `<button class="btn-feat-row mt-1 w-full text-[10px] bg-yellow-100 text-amber-700 border border-amber-300 rounded px-1 py-0.5 hover:bg-yellow-200" data-path="${escHtml(it.path)}">☆ 加入精选</button>`;
+  return `<div class="border rounded p-1 bg-gray-50" data-row-path="${escHtml(it.path)}">
+    <img src="/api/output/thumb?path=${encodeURIComponent(it.path)}" loading="lazy"
+      class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer"
+      data-path="${escHtml(it.path)}" data-mtime="${it.mtime || ''}" data-ip="${escHtml(it.ip || '?')}" />
+    <div class="text-[10px] mt-1 break-all">${escHtml(it.path)}</div>
+    <div class="text-[10px] text-gray-500">${t}</div>
+    <div class="text-[10px] text-purple-600 truncate" title="${escHtml(it.creator_email || '')}">${escHtml(it.creator_login || '')}</div>
+    <div class="flex items-center justify-between gap-1 mt-1">
+      <span class="text-[10px] font-mono bg-amber-100 text-amber-800 rounded px-1 truncate max-w-[120px] cursor-pointer" title="${escHtml(it.ip || '?')}" data-copy-text="${escHtml(it.ip || '')}">${escHtml(it.ip || '?')}</span>
+      ${banBtn}
+    </div>
+    ${featBtn}
+    <button class="btn-del-row mt-1 w-full text-[10px] bg-gray-700 text-white rounded px-1 py-0.5 hover:bg-black"
+      data-path="${escHtml(it.path)}">🗑 删图</button>
+  </div>`;
+}
+
+function bindRowButtons(scope) {
+  scope.querySelectorAll('.btn-ban-row').forEach(b => b.addEventListener('click', () => ban(b.dataset.ip)));
+  scope.querySelectorAll('.btn-del-row').forEach(b => b.addEventListener('click', () => delImage(b.dataset.path)));
+  scope.querySelectorAll('.btn-feat-row').forEach(b => b.addEventListener('click', () => addFeatured(b.dataset.path)));
+  scope.querySelectorAll('.btn-unfeat-row').forEach(b => b.addEventListener('click', () => removeFeatured(b.dataset.path)));
+}
+
+async function refreshFeaturedSet() {
+  try {
+    const d = await api('GET', '/api/admin/featured');
+    featuredSet = new Set(d.items || []);
+  } catch(e){console.error(e)}
+}
+
+function updateRowFeaturedUI(path) {
+  const card = document.querySelector(`[data-row-path="${CSS.escape(path)}"]`);
+  if (!card) return;
+  const oldFeat = card.querySelector('.btn-feat-row, .btn-unfeat-row');
+  if (!oldFeat) return;
+  const isFeat = featuredSet.has(path);
+  const html = isFeat
+    ? `<button class="btn-unfeat-row mt-1 w-full text-[10px] bg-amber-500 text-white rounded px-1 py-0.5 hover:bg-amber-600" data-path="${escHtml(path)}">★ 已精选 (取消)</button>`
+    : `<button class="btn-feat-row mt-1 w-full text-[10px] bg-yellow-100 text-amber-700 border border-amber-300 rounded px-1 py-0.5 hover:bg-yellow-200" data-path="${escHtml(path)}">☆ 加入精选</button>`;
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  const fresh = tmp.firstElementChild;
+  oldFeat.replaceWith(fresh);
+  bindRowButtons(card);
+}
+
+async function addFeatured(path) {
+  const d = await api('POST', '/api/admin/featured/add', { path });
+  featuredSet = new Set(d.items || []);
+  updateRowFeaturedUI(path);
+  renderFeatured(d.items || []);
+}
+
+async function removeFeatured(path) {
+  const d = await api('POST', '/api/admin/featured/remove', { path });
+  featuredSet = new Set(d.items || []);
+  updateRowFeaturedUI(path);
+  renderFeatured(d.items || []);
+}
+
+function renderFeatured(items) {
+  // 存储全部精选列表，保持当前已显示数量不重置
+  const prevLoaded = featuredState.loaded || featuredState.pageSize;
+  featuredState.allItems = items || [];
+  featuredState.total = featuredState.allItems.length;
+  featuredState.loaded = Math.min(prevLoaded, featuredState.total);
+  _renderFeaturedSlice();
+}
+
+function _renderFeaturedSlice() {
+  const items = featuredState.allItems.slice(0, featuredState.loaded);
+  $('featured-count').textContent = featuredState.total;
+  if (!items.length) {
+    $('featured-list').innerHTML = '<div class="text-gray-400">还没添加任何精选图。在下面「生图记录」里点 ☆ 加入精选。</div>';
+    $('btn-load-more-featured').classList.add('hidden');
+    return;
+  }
+  $('featured-list').innerHTML = '<div id="featured-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">' +
+    items.map(p => `<div class="border rounded p-1 bg-amber-50 cursor-move" draggable="true" data-feat-path="${escHtml(p)}">
+      <img src="/api/output/thumb?path=${encodeURIComponent(p)}" loading="lazy"
+        class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer"
+        data-path="${escHtml(p)}" data-mtime="" data-ip="" />
+      <div class="text-[10px] mt-1 break-all">${escHtml(p)}</div>
+      <button class="btn-unfeat-feat mt-1 w-full text-[10px] bg-amber-500 text-white rounded px-1 py-0.5 hover:bg-amber-600"
+        data-path="${escHtml(p)}">移出精选</button>
+    </div>`).join('') + '</div>';
+  const grid = $('featured-grid');
+  grid.querySelectorAll('.btn-unfeat-feat').forEach(b => b.addEventListener('click', () => removeFeatured(b.dataset.path)));
+  // 拖拽排序
+  let dragSrc = null;
+  grid.querySelectorAll('[data-feat-path]').forEach(el => {
+    el.addEventListener('dragstart', e => { dragSrc = el; el.classList.add('opacity-50'); e.dataTransfer.effectAllowed = 'move'; });
+    el.addEventListener('dragend', () => { el.classList.remove('opacity-50'); dragSrc = null; });
+    el.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+    el.addEventListener('drop', async e => {
+      e.preventDefault();
+      if (!dragSrc || dragSrc === el) return;
+      const rect = el.getBoundingClientRect();
+      const before = (e.clientY - rect.top) < rect.height / 2;
+      grid.insertBefore(dragSrc, before ? el : el.nextSibling);
+      const order = Array.from(grid.querySelectorAll('[data-feat-path]')).map(x => x.dataset.featPath);
+      const d = await api('POST', '/api/admin/featured/reorder', { items: order });
+      featuredSet = new Set(d.items || []);
+    });
+  });
+  // 加载更多按钮
+  if (featuredState.loaded >= featuredState.total) {
+    $('btn-load-more-featured').classList.add('hidden');
+  } else {
+    $('btn-load-more-featured').classList.remove('hidden');
+  }
+}
+
+function loadMoreFeatured() {
+  featuredState.loaded = Math.min(featuredState.loaded + 10, featuredState.total);
+  _renderFeaturedSlice();
+}
+
+async function loadFeatured() {
+  $('featured-list').textContent = '加载中...';
+  try {
+    const d = await api('GET', '/api/admin/featured');
+    featuredSet = new Set(d.items || []);
+    renderFeatured(d.items || []);
+  } catch (e) { $('featured-list').textContent = '失败: ' + e.message; }
+}
+
+function _recentQS() {
+  return 'limit='+_RECENT_PAGE_SIZE+'&offset='+(_recentPage*_RECENT_PAGE_SIZE);
+}
+function _recentToggleAuto() {
+  _recentAutoEnabled=!_recentAutoEnabled; const b=$('btn-recent-auto');
+  if(_recentAutoEnabled){b.textContent='自动刷新';b.className='text-sm px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600';_recentStartAuto();}
+  else{b.textContent='自动刷新: 关';b.className='text-sm px-3 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300';_recentStopAuto();}
+}
+function _recentStopAuto(){if(_recentTimer){clearInterval(_recentTimer);_recentTimer=null;}}
+function _recentStartAuto(){_recentStopAuto();if(!_recentAutoEnabled||_recentPage!==0)return;_recentTimer=setInterval(()=>loadRecent(false),(parseInt($('recent-interval').value)||30)*1000);}
+function _recentRenderPages() {
+  const tp=Math.ceil(_recentTotal/_RECENT_PAGE_SIZE)||1,el=$('recent-pages');
+  if(tp<=1){el.textContent='';return;}
+  let h='';const p=_recentPage;
+  if(p>0)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-rp="${p-1}">上一页</a>`;
+  const s=Math.max(0,p-2),e=Math.min(tp-1,p+2);
+  if(s>0)h+='<span class="mx-1 text-gray-400">...</span>';
+  for(let i=s;i<=e;i++)h+=i===p?`<span class="mx-1 font-bold text-gray-800">${i+1}</span>`:`<a href="#" class="text-blue-600 hover:underline mx-1" data-rp="${i}">${i+1}</a>`;
+  if(e<tp-1)h+='<span class="mx-1 text-gray-400">...</span>';
+  if(p<tp-1)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-rp="${p+1}">下一页</a>`;
+  el.innerHTML=h;
+  el.querySelectorAll('a[data-rp]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_recentPage=parseInt(a.dataset.rp);loadRecent(true);}));
+}
+async function loadRecent(reset = true) {
+  try {
+    await refreshBannedSet();
+    await refreshFeaturedSet();
+    const d = await api('GET', '/api/admin/recent?' + (reset ? _recentQS() : 'limit='+_RECENT_PAGE_SIZE+'&offset='+(_recentPage*_RECENT_PAGE_SIZE)));
+    const items = d.items || [];
+    _recentTotal = d.total || 0;
+    if (!items.length) {
+      $('recent-list').innerHTML = '<div class="text-gray-400">暂无</div>';
+      $('recent-status').textContent = ''; $('recent-pages').textContent = ''; return;
+    }
+    $('recent-list').innerHTML = '<div id="recent-grid" class="grid grid-cols-3 sm:grid-cols-6 gap-2">' +
+      items.map(rowHTML).join('') + '</div>';
+    bindRowButtons($('recent-grid'));
+    const start = _recentPage * _RECENT_PAGE_SIZE + 1;
+    const end = Math.min(start + items.length - 1, _recentTotal);
+    $('recent-shown').textContent = items.length;
+    $('recent-total').textContent = _recentTotal;
+    $('recent-status').textContent = `显示 ${start}-${end} / ${_recentTotal} 条`;
+    _recentRenderPages(); _recentStartAuto();
+  } catch (e) { $('recent-list').textContent = '失败: ' + e.message; }
+}
+
+async function delImage(path) {
+  await api('POST', '/api/admin/delete', { path });
+  const card = document.querySelector(`[data-row-path="${CSS.escape(path)}"]`);
+  if (card) card.remove();
+  if (_recentTotal > 0) _recentTotal -= 1;
+  const shown = $('recent-grid') ? $('recent-grid').children.length : 0;
+  $('recent-shown').textContent = shown;
+  $('recent-total').textContent = _recentTotal;
+}
+$('recent-list').addEventListener('click', (e) => {
+  const s = e.target.closest('[data-copy-text]');
+  if (s) _copyText(s.dataset.copyText, s);
+});
+
+async function loadLimits() {
+  try {
+    const d = await api('GET', '/api/admin/limits');
+    const L = d.limits || {};
+    $('lim-gen-cd').value = L.gen_cooldown_sec ?? '';
+    $('lim-img-window').value = L.image_rate_window_sec ?? '';
+    $('lim-img-max').value = L.image_rate_max ?? '';
+    $('lim-report-window').value = L.report_window_sec ?? '';
+    $('lim-report-max').value = L.report_window_max ?? '';
+    $('lim-report-pending').value = L.report_pending_max ?? '';
+    $('lim-gpu-poll').value = L.gpu_poll_interval_ms ?? '';
+    $('lim-gpu-cache').value = L.gpu_cache_ttl_ms ?? '';
+    $('lim-gc-interval').value = L.gc_interval_hours ?? '';
+    $('lim-featured-tip').value = L.featured_tip ?? '';
+    $('lim-status').textContent = '';
+  } catch (e) {
+    $('lim-status').textContent = '加载失败: ' + e.message;
+  }
+}
+
+async function saveLimits() {
+  const payload = {
+    gen_cooldown_sec: parseInt($('lim-gen-cd').value) || 0,
+    image_rate_window_sec: parseInt($('lim-img-window').value) || 0,
+    image_rate_max: parseInt($('lim-img-max').value) || 0,
+    report_window_sec: parseInt($('lim-report-window').value) || 0,
+    report_window_max: parseInt($('lim-report-max').value) || 1,
+    report_pending_max: parseInt($('lim-report-pending').value) || 1,
+    gpu_poll_interval_ms: parseInt($('lim-gpu-poll').value) || 5000,
+    gpu_cache_ttl_ms: parseInt($('lim-gpu-cache').value) || 5000,
+    gc_interval_hours: parseInt($('lim-gc-interval').value) || 0,
+    featured_tip: $('lim-featured-tip').value.trim(),
+  };
+  try {
+    await api('POST', '/api/admin/limits', payload);
+    $('lim-status').textContent = '✓ 已保存';
+    setTimeout(() => { $('lim-status').textContent = ''; }, 2000);
+  } catch (e) {
+    $('lim-status').textContent = '保存失败: ' + e.message;
+  }
+}
+
+$('btn-refresh-bans').addEventListener('click', loadBans);
+$('btn-refresh-users').addEventListener('click', loadUsers);
+$('btn-refresh-recent').addEventListener('click', () => { _recentPage = 0; loadRecent(true); });
+$('btn-refresh-featured').addEventListener('click', loadFeatured);
+$('btn-refresh-limits').addEventListener('click', loadLimits);
+$('btn-save-limits').addEventListener('click', saveLimits);
+$('btn-run-gc').addEventListener('click', async () => {
+  const backup = confirm('是否先将待删除文件备份到临时目录？\n\n点"确定"=先备份再删除，点"取消"=直接删除不备份');
+  if (!confirm(`确认执行 GC？${backup ? '将先备份再清理。' : '将直接清理文件。'}此操作不可恢复。`)) return;
+  const input = prompt(`${backup ? '备份后' : ''}即将执行 GC 清理，请输入"确认清理"以继续：`);
+  if (input !== '确认清理') { alert('输入不匹配，已取消'); return; }
+  $('lim-status').textContent = 'GC 已触发，后台执行中…';
+  try {
+    const body = backup ? { backup: true } : {};
+    await api('POST', '/api/admin/gc', body);
+    // 轮询等待完成
+    let retries = 0;
+    const poll = setInterval(async () => {
+      try {
+        const s = await api('GET', '/api/admin/gc/status');
+        if (s.status === 'done') {
+          clearInterval(poll);
+          const c = s.cleaned || {};
+          const parts = [];
+          if (c.resolved_reports) parts.push(`举报 ${c.resolved_reports}`);
+          if (c.orphan_thumbs) parts.push(`孤儿缩略图 ${c.orphan_thumbs}`);
+          if (c.orphan_creator_entries) parts.push(`孤儿映射 ${c.orphan_creator_entries}`);
+          if (c.retry_delete_success) parts.push(`清理文件 ${c.retry_delete_success}`);
+          if (c.stale_featured) parts.push(`精选死链 ${c.stale_featured}`);
+          if (c.stale_user_images) parts.push(`用户记录同步`);
+          $('lim-status').textContent = '✓ GC 完成' + (parts.length ? '：' + parts.join('，') : '');
+          setTimeout(() => { $('lim-status').textContent = ''; }, 8000);
+        } else if (s.status === 'error') {
+          clearInterval(poll);
+          $('lim-status').textContent = 'GC 失败: ' + (s.error || '未知');
+        } else if (++retries > 60) {
+          clearInterval(poll);
+          $('lim-status').textContent = 'GC 超时，请查看控制台日志';
+        }
+      } catch(e){console.error(e)}
+    }, 1000);
+  } catch (e) {
+    $('lim-status').textContent = '触发 GC 失败: ' + e.message;
+  }
+});
+$('btn-restart-server').addEventListener('click', async () => {
+  if (!confirm('确定要重启服务端？所有正在进行的任务将被中断。')) return;
+  const input = prompt('请输入"确认重启服务"以继续：');
+  if (input !== '确认重启服务') { alert('输入不匹配，已取消'); return; }
+  try {
+    await api('POST', '/api/admin/force-restart');
+  } catch (e) {
+    // 重启后连接断开，这是正常的
+  }
+  alert('重启信号已发送，服务将在几秒后恢复');
+});
+$('btn-graceful-restart').addEventListener('click', async () => {
+  if (!confirm('确定要优雅重启？将暂停新任务入队，等当前任务完成后再重启。最多等待 10 分钟。')) return;
+  const input = prompt('请输入"确认优雅重启"以继续：');
+  if (input !== '确认优雅重启') { alert('输入不匹配，已取消'); return; }
+  $('lim-status').textContent = '优雅重启中，等待当前任务完成…';
+  try { await api('POST', '/api/admin/graceful-restart'); } catch(e){console.error(e)}
+  alert('重启信号已发送');
+});
+function _annBadge(enabled) {
+  const badge = $('ann-state-badge');
+  if (enabled) {
+    badge.textContent = '已开启';
+    badge.className = 'ml-2 text-xs px-2 py-0.5 rounded bg-blue-500 text-white';
+  } else {
+    badge.textContent = '未开启';
+    badge.className = 'ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700';
+  }
+}
+
+async function loadAnnouncement() {
+  try {
+    const d = await api('GET', '/api/admin/announcement');
+    const a = d.announcement || {};
+    document.querySelector(`input[name="ann-enabled"][value="${a.enabled ? 'on' : 'off'}"]`).checked = true;
+    $('ann-title').value = a.title || '';
+    $('ann-content').value = a.content || '';
+    _annBadge(a.enabled);
+    $('ann-status').textContent = '';
+  } catch (e) { $('ann-status').textContent = '加载失败: ' + e.message; }
+}
+
+async function saveAnnouncement() {
+  try {
+    const enabled = document.querySelector('input[name="ann-enabled"]:checked').value === 'on';
+    const d = await api('POST', '/api/admin/announcement', {
+      enabled,
+      title: $('ann-title').value,
+      content: $('ann-content').value,
+    });
+    _annBadge((d.announcement || {}).enabled);
+    $('ann-status').textContent = '✓ 已保存';
+    setTimeout(() => { $('ann-status').textContent = ''; }, 2000);
+  } catch (e) { $('ann-status').textContent = '保存失败: ' + e.message; }
+}
+
+$('btn-refresh-ann').addEventListener('click', loadAnnouncement);
+$('btn-save-ann').addEventListener('click', saveAnnouncement);
+
+loadAnnouncement();
+
+// -------- 分辨率管理 --------
+let adminRes = {presets: []};
+
+function renderResEntries() {
+  const container = $('res-entries');
+  container.innerHTML = adminRes.presets.map((p, i) => {
+    return `<div class="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2 p-2 border rounded bg-gray-50" data-idx="${i}">
+      <div class="flex items-center gap-2">
+        <input type="number" value="${p.w}" min="64" step="8" placeholder="宽"
+          class="res-w w-16 sm:w-20 border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
+        <span class="text-gray-400 text-xs">×</span>
+        <input type="number" value="${p.h}" min="64" step="8" placeholder="高"
+          class="res-h w-16 sm:w-20 border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
+      </div>
+      <div class="flex items-center gap-2 flex-1 min-w-0">
+        <input type="text" value="${escHtml(p.label || '')}" placeholder="标签（可选）"
+          class="res-label flex-1 min-w-0 border rounded px-2 py-1 text-xs" data-idx="${i}" />
+        <button class="res-up text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 shrink-0" data-idx="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
+        <button class="res-down text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 shrink-0" data-idx="${i}" ${i === adminRes.presets.length - 1 ? 'disabled' : ''}>▼</button>
+        <button class="res-del text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 shrink-0" data-idx="${i}">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+  container.querySelectorAll('.res-w').forEach(el => {
+    el.addEventListener('input', () => { adminRes.presets[+el.dataset.idx].w = parseInt(el.value) || 0; autoSaveRes(); });
+  });
+  container.querySelectorAll('.res-h').forEach(el => {
+    el.addEventListener('input', () => { adminRes.presets[+el.dataset.idx].h = parseInt(el.value) || 0; autoSaveRes(); });
+  });
+  container.querySelectorAll('.res-label').forEach(el => {
+    el.addEventListener('input', () => { adminRes.presets[+el.dataset.idx].label = el.value; autoSaveRes(); });
+  });
+  container.querySelectorAll('.res-up').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = +el.dataset.idx;
+      if (i > 0) { [adminRes.presets[i-1], adminRes.presets[i]] = [adminRes.presets[i], adminRes.presets[i-1]]; renderResEntries(); autoSaveRes(); }
+    });
+  });
+  container.querySelectorAll('.res-down').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = +el.dataset.idx;
+      if (i < adminRes.presets.length - 1) { [adminRes.presets[i], adminRes.presets[i+1]] = [adminRes.presets[i+1], adminRes.presets[i]]; renderResEntries(); autoSaveRes(); }
+    });
+  });
+  container.querySelectorAll('.res-del').forEach(el => {
+    el.addEventListener('click', () => { adminRes.presets.splice(+el.dataset.idx, 1); renderResEntries(); autoSaveRes(); });
+  });
+  $('res-count-badge').textContent = adminRes.presets.length;
+}
+
+let _saveResTimer = null;
+async function saveRes() {
+  try {
+    const d = await api('POST', '/api/admin/resolutions', adminRes);
+    adminRes = {presets: d.presets || []};
+    $('res-status').textContent = '✓ 已保存';
+    setTimeout(() => { $('res-status').textContent = ''; }, 2000);
+  } catch (e) { $('res-status').textContent = '保存失败: ' + e.message; }
+}
+function autoSaveRes() {
+  clearTimeout(_saveResTimer);
+  $('res-status').textContent = '保存中…';
+  _saveResTimer = setTimeout(saveRes, 600);
+}
+
+async function loadRes() {
+  try {
+    const d = await api('GET', '/api/admin/resolutions');
+    adminRes = {presets: d.presets || []};
+    renderResEntries();
+    $('res-status').textContent = '';
+  } catch (e) { $('res-status').textContent = '加载失败: ' + e.message; }
+}
+
+$('btn-add-res').addEventListener('click', () => {
+  adminRes.presets.push({w: 1024, h: 1024, label: ''});
+  renderResEntries();
+  autoSaveRes();
+});
+$('btn-refresh-res').addEventListener('click', loadRes);
+
+loadRes();
+
+// 缩略图前端压缩为 256x256 JPEG（减小传输体积，后端会二次校验）
+async function resizeImageTo256(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const canvas = document.createElement('canvas');
+      canvas.width = 256;
+      canvas.height = 256;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, 256, 256);
+      canvas.toBlob(blob => {
+        if (blob) resolve(new File([blob], file.name.replace(/\.\w+$/i, '.jpg'), { type: 'image/jpeg' }));
+        else reject(new Error('缩略图生成失败'));
+      }, 'image/jpeg', 0.82);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')); };
+    img.src = url;
+  });
+}
+
+// -------- 画风管理 --------
+let adminStyles = [];
+
+function renderStyleEntries() {
+  const container = $('styles-entries');
+  container.innerHTML = adminStyles.map((s, i) => {
+    const thumbSrc = s.image ? `/api/style_thumbnail?name=${encodeURIComponent(s.image)}` : '';
+    const thumbEl = s.image
+      ? `<img src="${thumbSrc}" class="w-12 h-12 object-cover rounded bg-gray-50" />`
+      : `<div class="w-12 h-12 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">无图</div>`;
+    return `<div class="flex items-start gap-2 p-2 border rounded bg-gray-50" data-idx="${i}">
+      <div class="flex-shrink-0 flex flex-col items-center gap-1">
+        ${thumbEl}
+        <label class="text-[10px] text-blue-600 cursor-pointer hover:underline">
+          上传
+          <input type="file" accept="image/*" class="style-upload hidden" data-idx="${i}" />
+        </label>
+      </div>
+      <div class="flex flex-col gap-1 flex-1 text-sm">
+        <textarea rows="2" placeholder="英文 tags（必填，逗号分隔）"
+          class="style-tags border rounded px-2 py-1 font-mono text-xs" data-idx="${i}">${escHtml(s.tags)}</textarea>
+        <input type="text" value="${escHtml(s.name)}" placeholder="别名（可选，不填则显示 tags）"
+          class="style-name border rounded px-2 py-1" data-idx="${i}" />
+      </div>
+      <div class="flex flex-col gap-1">
+        <button class="style-up text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
+        <button class="style-down text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === adminStyles.length - 1 ? 'disabled' : ''}>▼</button>
+        <button class="style-del text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600" data-idx="${i}">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+  container.querySelectorAll('.style-name').forEach(el => {
+    el.addEventListener('input', () => { adminStyles[+el.dataset.idx].name = el.value; autoSaveStyles(); });
+  });
+  container.querySelectorAll('.style-tags').forEach(el => {
+    el.addEventListener('input', () => { adminStyles[+el.dataset.idx].tags = el.value; autoSaveStyles(); });
+  });
+  container.querySelectorAll('.style-upload').forEach(el => {
+    el.addEventListener('change', async () => {
+      const file = el.files[0];
+      if (!file) return;
+      const idx = +el.dataset.idx;
+      const form = new FormData();
+      try {
+        const compressed = await resizeImageTo256(file);
+        form.append('file', compressed, compressed.name);
+      } catch(e) { $('styles-status').textContent = '压缩失败: ' + e.message; return; }
+      try {
+        const r = await fetch('/api/admin/style_thumbnail', { method: 'POST', body: form });
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+        const d = await r.json();
+        const entry = adminStyles[idx];
+        if (entry) { entry.image = d.filename; }
+        renderStyleEntries();
+        autoSaveStyles();
+      } catch (e) { $('styles-status').textContent = '上传失败: ' + e.message; }
+    });
+  });
+  container.querySelectorAll('.style-up').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = +el.dataset.idx;
+      if (i > 0) { [adminStyles[i-1], adminStyles[i]] = [adminStyles[i], adminStyles[i-1]]; renderStyleEntries(); autoSaveStyles(); }
+    });
+  });
+  container.querySelectorAll('.style-down').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = +el.dataset.idx;
+      if (i < adminStyles.length - 1) { [adminStyles[i], adminStyles[i+1]] = [adminStyles[i+1], adminStyles[i]]; renderStyleEntries(); autoSaveStyles(); }
+    });
+  });
+  container.querySelectorAll('.style-del').forEach(el => {
+    el.addEventListener('click', () => { adminStyles.splice(+el.dataset.idx, 1); renderStyleEntries(); autoSaveStyles(); });
+  });
+  $('styles-count-badge').textContent = adminStyles.length;
+}
+
+async function loadStyles() {
+  try {
+    const d = await api('GET', '/api/admin/styles');
+    adminStyles = (d.styles || []).map(s => ({name: s.name || '', tags: s.tags || '', image: s.image || ''}));
+    renderStyleEntries();
+    $('styles-status').textContent = '';
+  } catch (e) { $('styles-status').textContent = '加载失败: ' + e.message; }
+}
+
+let _saveStylesTimer = null;
+async function saveStyles() {
+  try {
+    await api('POST', '/api/admin/styles', { styles: adminStyles });
+    $('styles-status').textContent = '✓ 已保存';
+    setTimeout(() => { $('styles-status').textContent = ''; }, 2000);
+  } catch (e) { $('styles-status').textContent = '保存失败: ' + e.message; }
+}
+function autoSaveStyles() {
+  clearTimeout(_saveStylesTimer);
+  $('styles-status').textContent = '保存中…';
+  _saveStylesTimer = setTimeout(saveStyles, 600);
+}
+
+$('btn-add-style').addEventListener('click', () => {
+  adminStyles.push({name: '', tags: '', image: ''});
+  renderStyleEntries();
+  autoSaveStyles();
+  const entries = $('styles-entries').querySelectorAll('.style-tags');
+  if (entries.length) entries[entries.length - 1].focus();
+});
+$('btn-refresh-styles').addEventListener('click', loadStyles);
+
+loadStyles();
+
+// -------- 工作流元数据管理 --------
+let adminWfMeta = [];
+
+function renderWfMetaEntries() {
+  const container = $('wfmeta-entries');
+  container.innerHTML = adminWfMeta.map((m, i) => {
+    const thumbSrc = m.thumbnail ? `/api/thumbnail?path=${encodeURIComponent(m.workflow)}&_t=${encodeURIComponent(m.thumbnail)}` : '';
+    const thumbEl = m.thumbnail
+      ? `<img src="${thumbSrc}" class="w-12 h-12 object-cover rounded bg-gray-50" />`
+      : `<div class="w-12 h-12 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">无图</div>`;
+    return `<div class="flex items-start gap-2 p-2 border rounded bg-gray-50" data-idx="${i}">
+      <div class="flex-shrink-0 flex flex-col items-center gap-1">
+        ${thumbEl}
+        <label class="text-[10px] text-blue-600 cursor-pointer hover:underline">
+          上传
+          <input type="file" accept="image/*" class="wfmeta-upload hidden" data-idx="${i}" />
+        </label>
+      </div>
+      <div class="flex flex-col gap-1 flex-1 text-sm min-w-0">
+        <div class="flex items-center gap-1">
+          <input type="text" value="${escHtml(m.workflow.replace(/\.json$/i, ''))}" placeholder="工作流名称"
+            class="wfmeta-workflow flex-1 min-w-0 border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
+          <span class="text-xs text-gray-400">.json</span>
+        </div>
+        <input type="text" value="${escHtml(m.lora_link || '')}" placeholder="Lora 链接 URL（可选）"
+          class="wfmeta-link border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
+        <input type="text" value="${escHtml(m.category || '')}" placeholder="分类（可选，如「蔚蓝档案」）"
+          class="wfmeta-category border rounded px-2 py-1 text-xs" data-idx="${i}" />
+      </div>
+      <div class="flex flex-col gap-1">
+        <button class="wfmeta-up text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
+        <button class="wfmeta-down text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === adminWfMeta.length - 1 ? 'disabled' : ''}>▼</button>
+      </div>
+    </div>`;
+  }).join('');
+  container.querySelectorAll('.wfmeta-workflow').forEach(el => {
+    el.addEventListener('change', async () => {
+      const idx = +el.dataset.idx;
+      const oldFull = adminWfMeta[idx].workflow;
+      const newStem = el.value.trim();
+      const newFull = newStem ? newStem + '.json' : '';
+      if (!newStem || newFull === oldFull) { el.value = oldFull.replace(/\.json$/i, ''); return; }
+      $('wfmeta-status').textContent = '重命名中…';
+      try {
+        await api('POST', '/api/admin/workflow_rename', { old: oldFull, new: newFull });
+        adminWfMeta[idx].workflow = newFull;
+        renderWfMetaEntries();
+        $('wfmeta-status').textContent = '✓ 已重命名';
+        setTimeout(() => { $('wfmeta-status').textContent = ''; }, 2000);
+      } catch (e) {
+        el.value = oldFull.replace(/\.json$/i, '');
+        $('wfmeta-status').textContent = '重命名失败: ' + e.message;
+      }
+    });
+  });
+  container.querySelectorAll('.wfmeta-link').forEach(el => {
+    el.addEventListener('input', () => { adminWfMeta[+el.dataset.idx].lora_link = el.value; autoSaveWfMeta(); });
+  });
+  container.querySelectorAll('.wfmeta-category').forEach(el => {
+    el.addEventListener('input', () => { adminWfMeta[+el.dataset.idx].category = el.value; autoSaveWfMeta(); });
+  });
+  container.querySelectorAll('.wfmeta-upload').forEach(el => {
+    el.addEventListener('change', async () => {
+      const file = el.files[0];
+      if (!file) return;
+      const idx = +el.dataset.idx;
+      const form = new FormData();
+      try {
+        const compressed = await resizeImageTo256(file);
+        form.append('file', compressed, compressed.name);
+      } catch(e) { $('wfmeta-status').textContent = '压缩失败: ' + e.message; return; }
+      try {
+        const r = await fetch('/api/admin/wf_thumbnail', { method: 'POST', body: form });
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+        const d = await r.json();
+        adminWfMeta[idx].thumbnail = d.filename;
+        clearTimeout(_saveWfMetaTimer);
+        await saveWfMeta();
+        renderWfMetaEntries();
+      } catch (e) { $('wfmeta-status').textContent = '上传失败: ' + e.message; }
+    });
+  });
+  container.querySelectorAll('.wfmeta-up').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = +el.dataset.idx;
+      if (i > 0) { [adminWfMeta[i-1], adminWfMeta[i]] = [adminWfMeta[i], adminWfMeta[i-1]]; renderWfMetaEntries(); autoSaveWfMeta(); }
+    });
+  });
+  container.querySelectorAll('.wfmeta-down').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = +el.dataset.idx;
+      if (i < adminWfMeta.length - 1) { [adminWfMeta[i], adminWfMeta[i+1]] = [adminWfMeta[i+1], adminWfMeta[i]]; renderWfMetaEntries(); autoSaveWfMeta(); }
+    });
+  });
+  $('wfmeta-count-badge').textContent = adminWfMeta.length;
+}
+
+let _saveWfMetaTimer = null;
+async function saveWfMeta() {
+  try {
+    const d = await api('POST', '/api/admin/workflow_meta', { workflow_meta: adminWfMeta });
+    adminWfMeta = (d.workflow_meta || []).map(m => ({
+      workflow: m.workflow || '',
+      thumbnail: m.thumbnail || '',
+      lora_link: m.lora_link || '',
+      category: m.category || '',
+    }));
+    $('wfmeta-status').textContent = '✓ 已保存';
+    setTimeout(() => { $('wfmeta-status').textContent = ''; }, 2000);
+  } catch (e) { $('wfmeta-status').textContent = '保存失败: ' + e.message; }
+}
+function autoSaveWfMeta() {
+  clearTimeout(_saveWfMetaTimer);
+  $('wfmeta-status').textContent = '保存中…';
+  _saveWfMetaTimer = setTimeout(saveWfMeta, 600);
+}
+
+async function loadWfMeta() {
+  try {
+    const [filesRes, metaRes, limitsRes] = await Promise.all([
+      api('GET', '/api/admin/workflow_files'),
+      api('GET', '/api/admin/workflow_meta'),
+      api('GET', '/api/admin/limits'),
+    ]);
+    _catOrder = (limitsRes.limits || {}).category_order || [];
+    const files = filesRes.files || [];
+    const metaMap = {};
+    for (const m of (metaRes.workflow_meta || [])) {
+      metaMap[m.workflow] = { thumbnail: m.thumbnail || '', lora_link: m.lora_link || '', category: m.category || '' };
+    }
+    adminWfMeta = files.map(f => ({
+      workflow: f,
+      thumbnail: (metaMap[f] || {}).thumbnail || '',
+      lora_link: (metaMap[f] || {}).lora_link || '',
+      category: (metaMap[f] || {}).category || '',
+    }));
+    renderWfMetaEntries();
+    renderCatUI();
+    $('wfmeta-status').textContent = '';
+  } catch (e) { $('wfmeta-status').textContent = '加载失败: ' + e.message; }
+}
+
+let _selectedCat = '';
+let _pendingCats = new Set();
+let _catOrder = [];
+
+async function _saveCatOrder() {
+  try {
+    await api('POST', '/api/admin/limits', { category_order: _catOrder });
+  } catch(e){console.error(e)}
+}
+
+function renderCatUI() {
+  const fromData = adminWfMeta.map(m => (m.category || '').trim()).filter(Boolean);
+  const allCats = new Set([...fromData, ..._pendingCats]);
+  // 保持已有顺序，新分类追加到末尾
+  const ordered = _catOrder.filter(c => allCats.has(c));
+  const extra = [...allCats].filter(c => !_catOrder.includes(c)).sort();
+  _catOrder = [...ordered, ...extra];
+  const cats = _catOrder;
+  const chips = $('wfmeta-cat-chips');
+  chips.innerHTML = cats.map(c => {
+    const sel = c === _selectedCat;
+    return `<span class="wfmeta-cat-chip cursor-grab text-xs px-2 py-0.5 rounded ${sel ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}" draggable="true" data-cat="${escHtml(c)}">${c}
+      <button class="wfmeta-cat-del ml-1 text-[10px] opacity-60 hover:opacity-100" data-cat="${escHtml(c)}">✕</button>
+    </span>`;
+  }).join('');
+  let dragChip = null;
+  chips.querySelectorAll('.wfmeta-cat-chip').forEach(el => {
+    el.addEventListener('dragstart', e => { dragChip = el; el.classList.add('opacity-50'); e.dataTransfer.effectAllowed = 'move'; });
+    el.addEventListener('dragend', () => { el.classList.remove('opacity-50'); dragChip = null; });
+    el.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
+    el.addEventListener('drop', e => {
+      e.preventDefault();
+      if (!dragChip || dragChip === el) return;
+      const from = dragChip.dataset.cat;
+      const to = el.dataset.cat;
+      const fi = _catOrder.indexOf(from);
+      const ti = _catOrder.indexOf(to);
+      if (fi < 0 || ti < 0) return;
+      _catOrder.splice(fi, 1);
+      _catOrder.splice(ti, 0, from);
+      renderCatUI();
+      _saveCatOrder();
+    });
+    el.addEventListener('click', (e) => {
+      if (e.target.classList.contains('wfmeta-cat-del')) return;
+      _selectedCat = _selectedCat === el.dataset.cat ? '' : el.dataset.cat;
+      renderCatUI();
+    });
+    el.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      const oldCat = el.dataset.cat;
+      const newCat = prompt('重命名分类', oldCat);
+      if (!newCat || newCat.trim() === '' || newCat.trim() === oldCat) return;
+      const trimmed = newCat.trim();
+      adminWfMeta.forEach(m => { if (m.category === oldCat) m.category = trimmed; });
+      _pendingCats.delete(oldCat);
+      _pendingCats.add(trimmed);
+      const idx = _catOrder.indexOf(oldCat);
+      if (idx >= 0) _catOrder[idx] = trimmed;
+      if (_selectedCat === oldCat) _selectedCat = trimmed;
+      renderCatUI();
+      renderWfMetaEntries();
+      autoSaveWfMeta();
+      _saveCatOrder();
+    });
+  });
+  chips.querySelectorAll('.wfmeta-cat-del').forEach(el => {
+    el.addEventListener('click', () => {
+      const cat = el.dataset.cat;
+      adminWfMeta.forEach(m => { if (m.category === cat) m.category = ''; });
+      _pendingCats.delete(cat);
+      _catOrder = _catOrder.filter(c => c !== cat);
+      if (_selectedCat === cat) _selectedCat = '';
+      renderCatUI();
+      renderWfMetaEntries();
+      autoSaveWfMeta();
+      _saveCatOrder();
+    });
+  });
+  const uncatDiv = $('wfmeta-uncat');
+  const uncatList = $('wfmeta-uncat-list');
+  const incatDiv = $('wfmeta-incat');
+  const incatList = $('wfmeta-incat-list');
+  if (_selectedCat) {
+    // 已在该分类中的工作流
+    const incat = adminWfMeta.filter(m => (m.category || '').trim() === _selectedCat);
+    if (incat.length) {
+      incatDiv.classList.remove('hidden');
+      incatList.innerHTML = incat.map(m => {
+        const name = m.workflow.replace(/\.json$/i, '');
+        return `<span class="wfmeta-remove cursor-pointer text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-800 hover:bg-red-100 hover:text-red-800" data-wf="${escHtml(m.workflow)}">${escHtml(name)} ✕</span>`;
+      }).join('');
+      incatList.querySelectorAll('.wfmeta-remove').forEach(el => {
+        el.addEventListener('click', () => {
+          const item = adminWfMeta.find(m => m.workflow === el.dataset.wf);
+          if (item) item.category = '';
+          renderCatUI();
+          renderWfMetaEntries();
+          autoSaveWfMeta();
+        });
+      });
+    } else {
+      incatDiv.classList.add('hidden');
+    }
+    // 未分类的工作流
+    const uncat = adminWfMeta.filter(m => !(m.category || '').trim());
+    if (uncat.length) {
+      uncatDiv.classList.remove('hidden');
+      uncatList.innerHTML = uncat.map(m => {
+        const name = m.workflow.replace(/\.json$/i, '');
+        return `<span class="wfmeta-assign cursor-pointer text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 hover:bg-amber-200" data-wf="${escHtml(m.workflow)}">${escHtml(name)}</span>`;
+      }).join('');
+      uncatList.querySelectorAll('.wfmeta-assign').forEach(el => {
+        el.addEventListener('click', () => {
+          const wf = el.dataset.wf;
+          const item = adminWfMeta.find(m => m.workflow === wf);
+          if (item) item.category = _selectedCat;
+          renderCatUI();
+          renderWfMetaEntries();
+          autoSaveWfMeta();
+        });
+      });
+    } else {
+      uncatDiv.classList.add('hidden');
+    }
+  } else {
+    uncatDiv.classList.add('hidden');
+    incatDiv.classList.add('hidden');
+  }
+}
+
+$('btn-add-cat').addEventListener('click', () => {
+  const name = $('wfmeta-cat-input').value.trim();
+  if (!name) return;
+  $('wfmeta-cat-input').value = '';
+  _selectedCat = name;
+  _pendingCats.add(name);
+  if (!_catOrder.includes(name)) _catOrder.push(name);
+  _saveCatOrder();
+  renderCatUI();
+});
+$('wfmeta-cat-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('btn-add-cat').click();
+});
+
+$('btn-refresh-wfmeta').addEventListener('click', loadWfMeta);
+
+loadWfMeta();
+
+function _llmBadge(provider) {
+  const badge = $('llm-state-badge');
+  const map = {
+    google: ['Google AI Studio', 'ml-2 text-xs px-2 py-0.5 rounded bg-green-500 text-white'],
+    custom: ['自定义 API', 'ml-2 text-xs px-2 py-0.5 rounded bg-purple-500 text-white'],
+  };
+  const [text, cls] = map[provider] || ['本地', 'ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700'];
+  badge.textContent = text;
+  badge.className = cls;
+}
+
+function _llmShowSection(provider) {
+  $('llm-section-local').classList.toggle('hidden', provider !== 'local');
+  $('llm-section-google').classList.toggle('hidden', provider !== 'google');
+  $('llm-section-custom').classList.toggle('hidden', provider !== 'custom');
+}
+
+document.querySelectorAll('input[name="llm-provider"]').forEach(r => {
+  r.addEventListener('change', () => _llmShowSection(r.value));
+});
+
+async function loadLLM() {
+  try {
+    const d = await api('GET', '/api/admin/llm');
+    const c = d.llm || {};
+    const provider = c.provider || 'local';
+    const radio = document.querySelector(`input[name="llm-provider"][value="${provider}"]`);
+    if (radio) radio.checked = true;
+    _llmShowSection(provider);
+    $('llm-local-endpoint').value = c.local_endpoint || '';
+    $('llm-google-key').value = '';
+    $('llm-google-key-hint').textContent = c.google_api_key_masked ? `当前: ${c.google_api_key_masked}，留空不修改` : '留空则不修改已保存的密钥。';
+    $('llm-google-model').value = c.google_model || '';
+    $('llm-google-thinking').value = c.google_thinking || 'off';
+    $('llm-custom-endpoint').value = c.custom_endpoint || '';
+    $('llm-custom-key').value = '';
+    $('llm-custom-key-hint').textContent = c.custom_api_key_masked ? `当前: ${c.custom_api_key_masked}，留空不修改` : '留空则不修改已保存的密钥。';
+    $('llm-custom-model').value = c.custom_model || '';
+    $('llm-stream').checked = c.llm_stream !== false;
+    $('llm-max-tokens').value = c.llm_max_tokens || 1024;
+    _llmBadge(provider);
+    $('llm-status').textContent = '';
+  } catch (e) { $('llm-status').textContent = '加载失败: ' + e.message; }
+}
+
+async function saveLLM() {
+  const provider = document.querySelector('input[name="llm-provider"]:checked').value;
+  const payload = {
+    provider,
+    local_endpoint: $('llm-local-endpoint').value,
+    google_model: $('llm-google-model').value,
+    google_thinking: $('llm-google-thinking').value,
+    custom_endpoint: $('llm-custom-endpoint').value,
+    custom_model: $('llm-custom-model').value,
+    llm_stream: $('llm-stream').checked,
+    llm_max_tokens: parseInt($('llm-max-tokens').value) || 1024,
+  };
+  const gKey = $('llm-google-key').value;
+  if (gKey) payload.google_api_key = gKey;
+  const cKey = $('llm-custom-key').value;
+  if (cKey) payload.custom_api_key = cKey;
+  try {
+    await api('POST', '/api/admin/llm', payload);
+    _llmBadge(provider);
+    $('llm-status').textContent = '✓ 已保存';
+    setTimeout(() => { $('llm-status').textContent = ''; }, 2000);
+  } catch (e) { $('llm-status').textContent = '保存失败: ' + e.message; }
+}
+
+$('btn-refresh-llm').addEventListener('click', loadLLM);
+$('btn-save-llm').addEventListener('click', saveLLM);
+
+function _llmPayload() {
+  const provider = document.querySelector('input[name="llm-provider"]:checked').value;
+  const p = {
+    provider,
+    local_endpoint: $('llm-local-endpoint').value,
+    google_model: $('llm-google-model').value,
+    google_thinking: $('llm-google-thinking').value,
+    custom_endpoint: $('llm-custom-endpoint').value,
+    custom_model: $('llm-custom-model').value,
+    llm_stream: $('llm-stream').checked,
+    llm_max_tokens: parseInt($('llm-max-tokens').value) || 1024,
+  };
+  const gKey = $('llm-google-key').value;
+  if (gKey) p.google_api_key = gKey;
+  const cKey = $('llm-custom-key').value;
+  if (cKey) p.custom_api_key = cKey;
+  return p;
+}
+
+$('btn-test-llm').addEventListener('click', async () => {
+  $('llm-status').textContent = '测试中…';
+  try {
+    const d = await api('POST', '/api/admin/llm/test', _llmPayload());
+    if (d.ok) {
+      $('llm-status').textContent = `✓ 连接成功：${d.reply || '(空回复)'}`;
+    } else {
+      $('llm-status').textContent = `✗ 失败：${d.error}`;
+    }
+    setTimeout(() => { $('llm-status').textContent = ''; }, 6000);
+  } catch (e) { $('llm-status').textContent = '测试失败: ' + e.message; }
+});
+
+$('btn-models-llm').addEventListener('click', async () => {
+  $('llm-status').textContent = '探测中…';
+  const list = $('llm-models-list');
+  list.classList.add('hidden');
+  try {
+    const d = await api('POST', '/api/admin/llm/models', _llmPayload());
+    if (!d.ok) {
+      $('llm-status').textContent = `✗ 失败：${d.error}`;
+      return;
+    }
+    const models = d.models || [];
+    if (!models.length) {
+      $('llm-status').textContent = '未发现可用模型';
+      return;
+    }
+    $('llm-status').textContent = `发现 ${models.length} 个模型`;
+    list.innerHTML = models.map(m =>
+      `<div class="flex items-center justify-between py-0.5 border-b last:border-0 cursor-pointer hover:bg-blue-50 px-1 rounded" data-model-id="${escHtml(m.id)}"><span>${escHtml(m.name || m.id)}</span><span class="text-[10px] text-gray-400">${escHtml(m.id)}</span></div>`
+    ).join('');
+    list.classList.remove('hidden');
+    list.querySelectorAll('[data-model-id]').forEach(el => {
+      el.addEventListener('click', () => {
+        const prov = document.querySelector('input[name="llm-provider"]:checked').value;
+        const target = prov === 'google' ? $('llm-google-model') : $('llm-custom-model');
+        target.value = el.dataset.modelId;
+        list.classList.add('hidden');
+        $('llm-status').textContent = `已选择: ${el.dataset.modelId}`;
+        setTimeout(() => { $('llm-status').textContent = ''; }, 2000);
+      });
+    });
+  } catch (e) { $('llm-status').textContent = '探测失败: ' + e.message; }
+});
+
+loadLLM();
+$('btn-recent-auto').addEventListener('click', _recentToggleAuto);
+$('recent-interval').addEventListener('change', () => { _recentStopAuto(); _recentStartAuto(); });
+$('btn-load-more-featured').addEventListener('click', () => loadMoreFeatured());
+$('btn-add-ban').addEventListener('click', () => ban($('ban-input').value.trim()));
+$('btn-add-wl').addEventListener('click', () => addWhitelist($('wl-input').value.trim()));
+$('ban-input').addEventListener('keydown', e => { if (e.key === 'Enter') ban($('ban-input').value.trim()); });
+
+// 折叠：点击带 data-toggle 的标题，切换对应 id 的显隐 + 箭头
+const _toggleLoaded = {};
+document.querySelectorAll('[data-toggle]').forEach(h => {
+  h.addEventListener('click', e => {
+    // 点到右侧的「刷新」按钮等不触发折叠
+    if (e.target.closest('button')) return;
+    const id = h.dataset.toggle;
+    const body = document.getElementById(id);
+    if (!body) return;
+    const arrow = document.querySelector(`[data-arrow="${id}"]`);
+    const collapsed = body.classList.toggle('hidden');
+    if (arrow) arrow.textContent = collapsed ? '▸' : '▾';
+    // 首次展开时懒加载
+    if (!collapsed && !_toggleLoaded[id]) {
+      _toggleLoaded[id] = true;
+      if (id === 'email-auth-body') { loadEmailAuth(); loadEmailLogs(); }
+      if (id === 'access-keys-body') loadAccessKeys();
+      if (id === 'gen-logs-body') loadGenLogs();
+      if (id === 'deletion-log-body') loadDeletionLog();
+    }
+
+  });
+});
+
+// ── 举报管理 ──
+function reportCardHTML(rpt) {
+  const t = rpt.timestamp ? new Date(rpt.timestamp * 1000).toLocaleString('zh-CN') : '?';
+  const imgUrl = '/api/output/thumb?path=' + encodeURIComponent(rpt.image_path);
+  const exists = rpt.image_exists !== false;
+  return `<div class="border rounded p-3 bg-gray-50 flex gap-3" data-report-id="${escHtml(rpt.id)}">
+    <div class="w-24 h-24 flex-shrink-0">
+      ${exists
+        ? `<img src="${imgUrl}" loading="lazy"
+            class="lb-thumb w-full h-full object-cover rounded bg-white cursor-pointer"
+            data-path="${escHtml(rpt.image_path)}" data-mtime="" data-ip="${escHtml(rpt.creator_ip || '')}" />`
+        : `<div class="w-full h-full bg-gray-200 rounded flex items-center justify-center text-xs text-gray-400">已删除</div>`}
+    </div>
+    <div class="flex-1 min-w-0">
+      <div class="text-xs break-all text-gray-600 mb-1">${escHtml(rpt.image_path)}</div>
+      <div class="text-sm mb-1"><strong>举报原因：</strong>${escHtml(rpt.reason)}</div>
+      <div class="text-xs text-gray-500 mb-1">🕒 ${t}</div>
+      <div class="text-xs mb-2">
+        <span class="bg-amber-100 text-amber-800 rounded px-1 font-mono">绘图者: ${escHtml(rpt.creator_ip || '未知')}</span>
+        <span class="bg-blue-100 text-blue-800 rounded px-1 font-mono ml-1">举报者: ${escHtml(rpt.reporter_ip)}</span>
+      </div>
+      <div class="flex gap-1 flex-wrap">
+        <button class="rpt-action text-xs px-2 py-1 bg-gray-700 text-white rounded hover:bg-black"
+          data-id="${escHtml(rpt.id)}" data-action="delete">🗑 删图</button>
+        <button class="rpt-action text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600"
+          data-id="${escHtml(rpt.id)}" data-action="ban_creator">🚫 封禁绘图者</button>
+        <button class="rpt-action text-xs px-2 py-1 bg-orange-500 text-white rounded hover:bg-orange-600"
+          data-id="${escHtml(rpt.id)}" data-action="ban_reporter">🚫 封禁举报者</button>
+        <button class="rpt-action text-xs px-2 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+          data-id="${escHtml(rpt.id)}" data-action="dismiss">忽略</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function loadReports() {
+  $('reports-list').textContent = '加载中...';
+  try {
+    const d = await api('GET', '/api/admin/reports');
+    const reports = d.reports || [];
+    $('reports-count').textContent = reports.length;
+    if (!reports.length) {
+      $('reports-list').innerHTML = '<div class="text-gray-400">暂无待处理举报</div>';
+      return;
+    }
+    $('reports-list').innerHTML = '<div class="space-y-2">' +
+      reports.map(reportCardHTML).join('') + '</div>';
+    $('reports-list').querySelectorAll('.rpt-action').forEach(btn => {
+      btn.addEventListener('click', () => resolveReport(btn.dataset.id, btn.dataset.action));
+    });
+  } catch (e) {
+    $('reports-list').textContent = '加载失败: ' + e.message;
+  }
+}
+
+async function resolveReport(reportId, action) {
+  const labels = {delete: '删图', ban_creator: '封禁绘图者', ban_reporter: '封禁举报者', dismiss: '忽略'};
+  if (!confirm(`确认执行「${labels[action] || action}」？`)) return;
+  try {
+    await api('POST', '/api/admin/report/resolve', {report_id: reportId, action});
+    const card = $('reports-list').querySelector(`[data-report-id="${CSS.escape(reportId)}"]`);
+    if (card) card.remove();
+    const count = parseInt($('reports-count').textContent) || 0;
+    $('reports-count').textContent = Math.max(0, count - 1);
+    if (!$('reports-list').querySelector('[data-report-id]')) {
+      $('reports-list').innerHTML = '<div class="text-gray-400">暂无待处理举报</div>';
+    }
+    if (action === 'ban_creator' || action === 'ban_reporter') loadBans();
+    if (action === 'delete') loadRecent(true);
+  } catch (e) {
+    alert('操作失败: ' + e.message);
+  }
+}
+
+$('btn-refresh-reports').addEventListener('click', loadReports);
+
+// ── IP 图片查看 ──
+let ipImagesSelected = new Set();
+
+async function showIpImages(ip) {
+  const panel = $('ip-images-panel');
+  const grid = $('ip-images-grid');
+  $('ip-images-title').textContent = ip;
+  grid.innerHTML = '<div class="col-span-full text-gray-400">加载中...</div>';
+  panel.classList.remove('hidden');
+  ipImagesSelected.clear();
+  updateIpDelBtn();
+  try {
+    const d = await api('GET', '/api/admin/images_by_ip?ip=' + encodeURIComponent(ip));
+    const items = d.items || [];
+    $('ip-images-count').textContent = items.length;
+    if (!items.length) {
+      grid.innerHTML = '<div class="col-span-full text-gray-400">该 IP 没有关联的图片记录</div>';
+      return;
+    }
+    grid.innerHTML = items.map(it => {
+      const t = it.mtime ? new Date(it.mtime * 1000).toLocaleString('zh-CN') : '?';
+      return `<div class="border rounded p-1 bg-gray-50 relative" data-ip-img-path="${escHtml(it.path)}">
+        <div class="absolute top-2 left-2 z-10">
+          <input type="checkbox" class="ip-img-check w-4 h-4 cursor-pointer" data-path="${escHtml(it.path)}" />
+        </div>
+        <img src="/api/output/thumb?path=${encodeURIComponent(it.path)}" loading="lazy"
+          class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer"
+          data-path="${escHtml(it.path)}" data-mtime="${it.mtime || ''}" data-ip="${escHtml(ip)}" />
+        <div class="text-[10px] mt-1 break-all">${escHtml(it.path)}</div>
+        <div class="text-[10px] text-gray-500">${t}</div>
+      </div>`;
+    }).join('');
+    grid.querySelectorAll('.ip-img-check').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) ipImagesSelected.add(cb.dataset.path);
+        else ipImagesSelected.delete(cb.dataset.path);
+        updateIpDelBtn();
+      });
+    });
+  } catch (e) {
+    grid.innerHTML = `<div class="col-span-full text-red-500">加载失败: ${escHtml(e.message)}</div>`;
+  }
+}
+
+function updateIpDelBtn() {
+  const btn = $('btn-ip-del-selected');
+  if (ipImagesSelected.size > 0) {
+    btn.classList.remove('hidden');
+    btn.textContent = `🗑 删除选中 (${ipImagesSelected.size})`;
+  } else {
+    btn.classList.add('hidden');
+  }
+}
+
+$('btn-ip-select-all').addEventListener('click', () => {
+  const checks = $('ip-images-grid').querySelectorAll('.ip-img-check');
+  const allChecked = Array.from(checks).every(c => c.checked);
+  checks.forEach(c => {
+    c.checked = !allChecked;
+    if (c.checked) ipImagesSelected.add(c.dataset.path);
+    else ipImagesSelected.delete(c.dataset.path);
+  });
+  updateIpDelBtn();
+});
+
+$('btn-ip-del-selected').addEventListener('click', async () => {
+  if (!ipImagesSelected.size) return;
+  if (!confirm(`确定删除选中的 ${ipImagesSelected.size} 张图片？此操作不可撤销。`)) return;
+  const paths = Array.from(ipImagesSelected);
+  try {
+    await api('POST', '/api/admin/delete_batch', { paths });
+    paths.forEach(p => {
+      const card = $('ip-images-grid').querySelector(`[data-ip-img-path="${CSS.escape(p)}"]`);
+      if (card) card.remove();
+      const rowCard = document.querySelector(`[data-row-path="${CSS.escape(p)}"]`);
+      if (rowCard) rowCard.remove();
+    });
+    ipImagesSelected.clear();
+    updateIpDelBtn();
+    const remaining = $('ip-images-grid').querySelectorAll('[data-ip-img-path]').length;
+    $('ip-images-count').textContent = remaining;
+    if (!remaining) {
+      $('ip-images-grid').innerHTML = '<div class="col-span-full text-gray-400">已全部删除</div>';
+    }
+  } catch (e) { alert('删除失败: ' + e.message); }
+});
+
+$('btn-ip-images-close').addEventListener('click', () => {
+  $('ip-images-panel').classList.add('hidden');
+  ipImagesSelected.clear();
+});
+
+// ── 灯箱 ──
+const lbState = { items: [], index: 0 };
+
+function collectLightboxItems() {
+  const imgs = document.querySelectorAll('.lb-thumb');
+  return Array.from(imgs).map(img => ({
+    url: img.dataset.delThumb
+      ? img.dataset.delThumb
+      : '/api/output/file?path=' + encodeURIComponent(img.dataset.path || ''),
+    path: img.dataset.path || '',
+    mtime: img.dataset.mtime || '',
+    ip: img.dataset.ip || '',
+  }));
+}
+
+function showLightbox() {
+  const it = lbState.items[lbState.index];
+  if (!it) return;
+  $('lb-img').src = it.url;
+  const name = it.path.split('/').pop() || it.path;
+  $('lb-title').textContent = name;
+  $('lb-time').textContent = it.mtime ? new Date(it.mtime * 1000).toLocaleString('zh-CN') : '';
+  $('lb-creator').textContent = it.ip ? ('IP: ' + it.ip) : '';
+  $('lb-gh-user').classList.add('hidden');
+  $('lb-ban-user').classList.add('hidden');
+  // 异步查 GitHub 用户信息
+  if (it.path) {
+    api('GET', '/api/output/creator?path=' + encodeURIComponent(it.path)).then(d => {
+      if (d.github_id) {
+        $('lb-gh-user').textContent = 'GitHub: ' + (d.github_login || d.github_id) + (d.github_email ? ' <' + d.github_email + '>' : '');
+        $('lb-gh-user').classList.remove('hidden');
+        $('lb-ban-user').dataset.githubId = d.github_id;
+        $('lb-ban-user').classList.remove('hidden');
+      }
+    }).catch(() => {});
+  }
+  $('lb-download').href = it.url + (it.url.includes('?') ? '&' : '?') + 'full=1';
+  $('lb-root').classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeLightbox() {
+  $('lb-root').classList.remove('open');
+  $('lb-img').src = '';
+  document.body.style.overflow = '';
+}
+
+document.addEventListener('click', (e) => {
+  const img = e.target.closest('.lb-thumb');
+  if (!img) return;
+  if (e.target.closest('button') || e.target.closest('.btn-del-row') || e.target.closest('.btn-ban-row')) return;
+  e.preventDefault();
+  e.stopPropagation();
+  lbState.items = collectLightboxItems();
+  const path = img.dataset.path || '';
+  lbState.index = Math.max(0, lbState.items.findIndex(it => it.path === path));
+  showLightbox();
+});
+
+$('lb-close').addEventListener('click', closeLightbox);
+$('lb-prev').addEventListener('click', () => { lbState.index = (lbState.index - 1 + lbState.items.length) % lbState.items.length; showLightbox(); });
+$('lb-next').addEventListener('click', () => { lbState.index = (lbState.index + 1) % lbState.items.length; showLightbox(); });
+$('lb-ban-user').addEventListener('click', async () => {
+  const gid = $('lb-ban-user').dataset.githubId;
+  if (!gid) return;
+  if (!confirm('确定封禁用户 ' + gid + ' ？')) return;
+  const i = prompt('即将封禁用户，请输入"确认封禁"以继续：');
+  if (i !== '确认封禁') { alert('输入不匹配，已取消'); return; }
+  const reason = prompt('封禁原因（可选）：');
+  try {
+    await api('POST', '/api/admin/users/ban', { github_id: gid, reason: reason || '' });
+    alert('已封禁用户 ' + gid);
+    $('lb-ban-user').classList.add('hidden');
+  } catch (e) { alert('封禁失败: ' + e.message); }
+});
+
+$('lb-img-wrap').addEventListener('click', (e) => { if (e.target === $('lb-img-wrap')) closeLightbox(); });
+$('lb-root').addEventListener('click', (e) => { if (e.target === $('lb-root')) closeLightbox(); });
+
+document.addEventListener('keydown', (e) => {
+  if (!$('lb-root').classList.contains('open')) return;
+  if (e.key === 'Escape') closeLightbox();
+  if (e.key === 'ArrowLeft') { lbState.index = (lbState.index - 1 + lbState.items.length) % lbState.items.length; showLightbox(); }
+  if (e.key === 'ArrowRight') { lbState.index = (lbState.index + 1) % lbState.items.length; showLightbox(); }
+});
+
+// -------- 维护模式 --------
+function _maintBadge(enabled) {
+  const badge = $('maint-state-badge');
+  if (enabled) {
+    badge.textContent = '已开启';
+    badge.className = 'ml-2 text-xs px-2 py-0.5 rounded bg-red-500 text-white';
+  } else {
+    badge.textContent = '未开启';
+    badge.className = 'ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700';
+  }
+}
+
+async function loadMaintenance() {
+  try {
+    const d = await api('GET', '/api/admin/maintenance');
+    const m = d.config || {};
+    $('maint-enabled').checked = !!m.enabled;
+    $('maint-message').value = m.message || '';
+    _maintBadge(!!m.enabled);
+    $('maint-status').textContent = '';
+  } catch (e) { $('maint-status').textContent = '加载失败: ' + e.message; }
+}
+
+async function saveMaintenance() {
+  try {
+    const d = await api('POST', '/api/admin/maintenance', {
+      enabled: $('maint-enabled').checked,
+      message: $('maint-message').value,
+    });
+    _maintBadge(!!(d.config || {}).enabled);
+    $('maint-status').textContent = '✓ 已保存';
+    setTimeout(() => { $('maint-status').textContent = ''; }, 2000);
+  } catch (e) { $('maint-status').textContent = '保存失败: ' + e.message; }
+}
+
+$('btn-refresh-maint').addEventListener('click', loadMaintenance);
+$('btn-save-maint').addEventListener('click', saveMaintenance);
+
+loadMaintenance();
+
+// -------- 自定义 Head --------
+function _cheadBadge(enabled) {
+  const badge = $('chead-state-badge');
+  if (enabled) {
+    badge.textContent = '已开启';
+    badge.className = 'ml-2 text-xs px-2 py-0.5 rounded bg-green-500 text-white';
+  } else {
+    badge.textContent = '未开启';
+    badge.className = 'ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700';
+  }
+}
+
+async function loadCustomHead() {
+  try {
+    const d = await api('GET', '/api/admin/custom_head');
+    const c = d.config || {};
+    $('chead-enabled').checked = !!c.enabled;
+    $('chead-html').value = c.html || '';
+    _cheadBadge(!!c.enabled);
+    $('chead-status').textContent = '';
+  } catch (e) { $('chead-status').textContent = '加载失败: ' + e.message; }
+}
+
+async function saveCustomHead() {
+  try {
+    const d = await api('POST', '/api/admin/custom_head', {
+      enabled: $('chead-enabled').checked,
+      html: $('chead-html').value,
+    });
+    _cheadBadge(!!(d.config || {}).enabled);
+    $('chead-status').textContent = '✓ 已保存';
+    setTimeout(() => { $('chead-status').textContent = ''; }, 2000);
+  } catch (e) { $('chead-status').textContent = '保存失败: ' + e.message; }
+}
+
+$('btn-refresh-chead').addEventListener('click', loadCustomHead);
+$('btn-save-chead').addEventListener('click', saveCustomHead);
+
+loadCustomHead();
+
+loadLimits();
+loadBans();
+loadQueue();
+loadUsers();
+loadReports();
+loadFeatured();
+loadRecent(true);
+
+// -------- 队列管理 --------
+let _queueTimer = null;
+
+async function loadQueue() {
+  try {
+    const d = await api('GET', '/api/admin/queue');
+    const badge = $('queue-badge');
+    const content = $('queue-content');
+    const btn = $('btn-cancel-task');
+    const unlockBtn = $('btn-force-unlock');
+
+    // 在线用户
+    const onlineCount = d.online_count || 0;
+    const onlineUsers = d.online_users || [];
+    onlineGithubIds = new Set(onlineUsers.map(u => u.github_id));
+    $('online-count').textContent = onlineCount;
+    $('online-list').textContent = onlineUsers.map(u => u.login).join(', ');
+    // 同步更新用户管理列表中的在线状态灯
+    document.querySelectorAll('#user-list span[data-gid], #email-user-list span[data-gid]').forEach(dot => {
+      const gid = dot.dataset.gid;
+      if (onlineGithubIds.has(gid)) {
+        dot.classList.remove('bg-gray-300'); dot.classList.add('bg-green-500');
+        dot.title = '在线';
+      } else {
+        dot.classList.remove('bg-green-500'); dot.classList.add('bg-gray-300');
+        dot.title = '离线';
+      }
+    });
+
+    // 排队列表
+    const queue = d.queue || [];
+    let queueHtml = '';
+
+    // 当前执行中
+    if (d.busy) {
+      badge.textContent = '执行中';
+      badge.className = 'ml-2 text-xs px-2 py-0.5 rounded bg-yellow-500 text-white';
+      const t = d.current_task || {};
+      const started = t.started_at ? new Date(t.started_at * 1000).toLocaleTimeString() : '?';
+      const elapsed = t.started_at ? Math.floor((Date.now() / 1000) - t.started_at) + 's' : '?';
+      const login = t.login || '';
+      const githubId = t.github_id || '';
+      const userLabel = login ? (login + (githubId ? ' (#' + githubId + ')' : '')) : (githubId || '?');
+      queueHtml +=
+        '<div class="bg-yellow-50 rounded px-2 py-1.5 mb-2 border border-yellow-200">' +
+        '<div class="flex items-center gap-2 flex-wrap">' +
+        '<span class="font-semibold text-yellow-700">&#x1F534 正在生成</span>' +
+        '<span class="text-xs font-medium text-gray-700">' + escHtml(userLabel) + '</span>' +
+        '<span class="text-xs text-gray-500">' + escHtml(t.workflow || '?') + '</span>' +
+        '<span class="text-[10px] text-gray-400">' + started + ' (' + elapsed + ')</span>' +
+        '<span class="text-[10px] text-gray-400">IP: ' + escHtml(t.client_ip || '?') + '</span>' +
+        '</div>' +
+        '<div class="text-[10px] text-gray-500 mt-0.5">提示词: ' + escHtml((t.final_prompt || '?').substring(0, 80)) + '</div>' +
+        '</div>';
+      if (d.cancel_set) {
+        btn.className = 'px-3 py-1 bg-gray-400 text-white rounded text-sm';
+        btn.textContent = '取消中...';
+        btn.disabled = true;
+      } else {
+        btn.className = 'px-3 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-sm';
+        btn.textContent = '⏹ 取消当前任务';
+        btn.disabled = false;
+      }
+      btn.classList.remove('hidden');
+      unlockBtn.classList.remove('hidden');
+    } else {
+      badge.textContent = '空闲';
+      badge.className = 'ml-2 text-xs px-2 py-0.5 rounded bg-green-500 text-white';
+      if (queue.length === 0) {
+        queueHtml += '<div class="text-green-600">&#x2705 GPU 空闲，无排队</div>';
+      }
+      btn.classList.add('hidden');
+      unlockBtn.classList.remove('hidden');
+    }
+
+    // 排队中任务列表
+    const waitingItems = queue.filter(q => q.status === 'waiting');
+    if (waitingItems.length > 0) {
+      if (!d.busy) {
+        queueHtml += '<div class="text-xs text-gray-500 mb-1">排队中 (' + waitingItems.length + ' 个)：</div>';
+      } else {
+        queueHtml += '<div class="text-xs text-gray-500 mt-2 mb-1">排队中 (' + waitingItems.length + ' 个)：</div>';
+      }
+      waitingItems.forEach((q, i) => {
+        const created = q.created_at ? new Date(q.created_at * 1000).toLocaleTimeString() : '?';
+        queueHtml +=
+          '<div class="flex items-center gap-2 bg-gray-50 rounded px-2 py-1 text-[10px] mb-0.5">' +
+          '<span class="text-gray-400 w-6">#' + (i + 1) + '</span>' +
+          '<span class="font-medium">' + escHtml(q.login || q.github_id) + '</span>' +
+          '<span class="text-gray-400">' + escHtml((q.workflow || '?').substring(0, 30)) + '</span>' +
+          '<span class="text-gray-400 ml-auto">' + created + '</span>' +
+          '<button class="ak-cancel-q text-[9px] px-1.5 py-0.5 bg-red-400 text-white rounded hover:bg-red-500" data-id="' + escHtml(String(q.id)) + '">取消</button>' +
+          '</div>';
+      });
+    }
+
+    content.innerHTML = queueHtml || '<div class="text-gray-400">加载中...</div>';
+
+    // 绑定排队取消按钮
+    content.querySelectorAll('.ak-cancel-q').forEach(btn => {
+      btn.addEventListener('click', () => cancelQueueItem(parseInt(btn.dataset.id)));
+    });
+
+    $('queue-status').textContent = '';
+  } catch (e) {
+    $('queue-content').textContent = '加载失败: ' + e.message;
+    $('queue-status').textContent = '';
+  }
+}
+
+async function cancelQueueItem(itemId) {
+  if (!confirm('确定取消此排队任务？')) return;
+  try {
+    await api('POST', '/api/admin/queue/cancel', { item_id: itemId });
+    $('queue-status').textContent = '已取消';
+    await loadQueue();
+    setTimeout(() => { $('queue-status').textContent = ''; }, 3000);
+  } catch (e) {
+    $('queue-status').textContent = '取消失败: ' + e.message;
+    setTimeout(() => { $('queue-status').textContent = ''; }, 3000);
+  }
+}
+
+async function cancelTask() {
+  if (!confirm('确定要强制取消当前正在执行的任务吗？')) return;
+  try {
+    const d = await api('POST', '/api/admin/queue/cancel');
+    $('queue-status').textContent = '✓ ' + d.message;
+    await loadQueue();
+    setTimeout(() => { $('queue-status').textContent = ''; }, 5000);
+  } catch (e) {
+    $('queue-status').textContent = '取消失败: ' + e.message;
+    setTimeout(() => { $('queue-status').textContent = ''; }, 5000);
+  }
+}
+
+async function forceUnlock() {
+  if (!confirm('确定要强制解锁吗？\n\n仅用于 WebSocket 异常导致锁卡死的情况。如果确实有任务在执行，请先用"取消当前任务"。')) return;
+  try {
+    const d = await api('POST', '/api/admin/queue/force-unlock');
+    $('queue-status').textContent = '✓ ' + d.message;
+    await loadQueue();
+    setTimeout(() => { $('queue-status').textContent = ''; }, 5000);
+  } catch (e) {
+    $('queue-status').textContent = '强制解锁失败: ' + e.message;
+    setTimeout(() => { $('queue-status').textContent = ''; }, 5000);
+  }
+}
+
+function startQueuePolling() {
+  loadQueue();
+  if (_queueTimer) clearInterval(_queueTimer);
+  _queueTimer = setInterval(loadQueue, 1000);
+}
+
+$('btn-refresh-queue').addEventListener('click', loadQueue);
+$('btn-cancel-task').addEventListener('click', cancelTask);
+$('btn-force-unlock').addEventListener('click', forceUnlock);
+
+startQueuePolling();
+
+// ==================== 图片管理 ====================
+const imagesState = { total: 0, loaded: 0, pageSize: 30 };
+const imagesSelected = new Set();
+
+async function loadImages(reset = true) {
+  if (reset) { imagesState.loaded = 0; $('images-grid').innerHTML = ''; imagesSelected.clear(); updateImagesDelBtn(); }
+  try {
+    const d = await api('GET', `/api/admin/images?limit=${imagesState.pageSize}&offset=${imagesState.loaded}`);
+    imagesState.total = d.total || 0;
+    $('images-total').textContent = imagesState.total;
+    if (!d.items || !d.items.length) {
+      if (reset) { $('images-empty').classList.remove('hidden'); $('images-grid').classList.add('hidden'); }
+      $('btn-load-more-images').classList.add('hidden');
+      $('images-shown').textContent = imagesState.loaded;
+      return;
+    }
+    $('images-empty').classList.add('hidden');
+    $('images-grid').classList.remove('hidden');
+    const frag = document.createDocumentFragment();
+    d.items.forEach(it => {
+      const url = '/api/output/thumb?path=' + encodeURIComponent(it.path);
+      const safe = escHtml(it.path);
+      const ip = it.creator_ip ? `${escHtml(it.creator_ip)}` : '';
+      const login = it.creator_login || '';
+      const email = it.creator_email || '';
+      const parts = [ip, login, email].filter(Boolean);
+      const info = parts.length ? parts.join(' | ') : '&nbsp;';
+      const wrapper = document.createElement('div');
+      wrapper.className = 'relative border rounded p-1 bg-gray-50';
+      wrapper.setAttribute('data-img-path', safe);
+      wrapper.innerHTML =
+        `<input type="checkbox" class="img-mgr-check absolute top-0.5 left-0.5 w-4 h-4 cursor-pointer z-10" data-path="${safe}" />
+        <img src="${escHtml(url)}" loading="lazy" decoding="async"
+          class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer"
+          data-path="${safe}" data-mtime="${it.mtime || ''}" data-ip="${it.creator_ip || ''}" />
+        <div class="text-[9px] text-gray-500 mt-0.5 truncate" title="${safe}">${safe.split('/').pop()}</div>
+        <div class="text-[8px] text-gray-400 truncate">${info}</div>`;
+      const cb = wrapper.querySelector('.img-mgr-check');
+      cb.addEventListener('change', () => {
+        if (cb.checked) imagesSelected.add(cb.dataset.path);
+        else imagesSelected.delete(cb.dataset.path);
+        updateImagesDelBtn();
+      });
+      frag.appendChild(wrapper);
+    });
+    $('images-grid').appendChild(frag);
+    imagesState.loaded += d.items.length;
+    $('images-shown').textContent = imagesState.loaded;
+    $('btn-load-more-images').classList.toggle('hidden', imagesState.loaded >= imagesState.total);
+  } catch (e) {
+    if (reset) { $('images-empty').classList.remove('hidden'); $('images-empty').textContent = '加载失败: ' + e.message; }
+  }
+}
+
+function updateImagesDelBtn() {
+  const btn = $('btn-images-del-selected');
+  if (imagesSelected.size > 0) {
+    btn.classList.remove('hidden');
+    btn.textContent = `🗑 删除选中 (${imagesSelected.size})`;
+  } else {
+    btn.classList.add('hidden');
+  }
+}
+
+$('btn-images-select-all').addEventListener('click', () => {
+  const checks = $('images-grid').querySelectorAll('.img-mgr-check');
+  const allChecked = Array.from(checks).every(c => c.checked);
+  checks.forEach(c => {
+    c.checked = !allChecked;
+    if (c.checked) imagesSelected.add(c.dataset.path);
+    else imagesSelected.delete(c.dataset.path);
+  });
+  updateImagesDelBtn();
+});
+
+$('btn-images-del-selected').addEventListener('click', async () => {
+  if (!imagesSelected.size) return;
+  if (!confirm(`确定删除选中的 ${imagesSelected.size} 张图片？将标记删除，文件待 GC 清理。`)) return;
+  const paths = Array.from(imagesSelected);
+  try {
+    await api('POST', '/api/admin/mark_delete_batch', { paths });
+    paths.forEach(p => {
+      const card = $('images-grid').querySelector(`[data-img-path="${CSS.escape(p)}"]`);
+      if (card) card.remove();
+    });
+    imagesSelected.clear();
+    updateImagesDelBtn();
+    imagesState.total -= paths.length;
+    $('images-total').textContent = imagesState.total;
+    imagesState.loaded = $('images-grid').querySelectorAll('[data-img-path]').length;
+    $('images-shown').textContent = imagesState.loaded;
+    if (imagesState.loaded === 0 && imagesState.total === 0) {
+      $('images-empty').classList.remove('hidden');
+      $('images-grid').classList.add('hidden');
+    }
+    if (imagesState.loaded < imagesState.pageSize && imagesState.loaded < imagesState.total && imagesState.total > 0) {
+      loadImages(false);
+    }
+  } catch (e) { alert('删除失败: ' + e.message); }
+});
+
+$('btn-refresh-images').addEventListener('click', () => loadImages(true));
+$('btn-load-more-images').addEventListener('click', () => loadImages(false));
+
+// ==================== 访问密钥管理 ====================
+async function loadAccessKeys() {
+  $('access-keys-list').textContent = '加载中...';
+  try {
+    const d = await api('GET', '/api/admin/access-keys');
+    const items = d.items || [];
+    $('access-keys-count').textContent = items.length;
+    if (!items.length) {
+      $('access-keys-list').innerHTML = '<div class="text-gray-400">暂无密钥，请生成新密钥</div>';
+      return;
+    }
+    $('access-keys-list').innerHTML = '<div class="flex flex-col gap-1 max-h-96 overflow-y-auto">' +
+      items.map(it => {
+        const keyPreview = it.key_preview || '';
+        let statusHtml = '';
+        if (it.disabling) {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-100 text-red-700 font-medium">禁用中…</span>';
+        } else if (it.disabled_at) {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-red-200 text-red-800 font-medium">已禁用</span>';
+        } else if (it.expired) {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-300 text-gray-700">已过期</span>';
+        } else if (it.used_by && (it.max_uses > 0) && (it.used_count >= it.max_uses)) {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-300 text-gray-700">次数用尽</span>';
+        } else if (it.used_by) {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">已使用</span>';
+        } else {
+          statusHtml = '<span class="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">可用</span>';
+        }
+        // 类型标签
+        let typeHtml = '';
+        if (it.max_uses > 0 && it.expires_at > 0) {
+          typeHtml = '<span class="text-[9px] px-1 py-0 rounded bg-purple-50 text-purple-600">时间+次数</span>';
+        } else if (it.max_uses > 0) {
+          typeHtml = '<span class="text-[9px] px-1 py-0 rounded bg-orange-50 text-orange-600">按次数</span>';
+        } else {
+          typeHtml = '<span class="text-[9px] px-1 py-0 rounded bg-cyan-50 text-cyan-600">按时间</span>';
+        }
+        // 次数信息
+        let usesHtml = '';
+        if (it.max_uses > 0) {
+          usesHtml = '<span class="text-[9px] text-gray-400">' + it.used_count + '/' + it.max_uses + '次</span>';
+        }
+        const created = it.created_at ? formatTime(it.created_at) : '?';
+        const expires = it.expires_at ? formatTime(it.expires_at) : (it.max_uses > 0 ? '不限' : '永久');
+        const userInfo = it.used_by ? ('<span class="text-[10px] text-gray-600">' + escHtml(it.login || it.used_by) + '</span>') : '';
+        let actions = '<button class="ak-copy-key text-[10px] px-2 py-0.5 bg-blue-500 text-white rounded hover:bg-blue-600 mr-1" data-key="' + escHtml(keyPreview) + '">复制密钥</button>';
+        if (it.disabling || it.disabled_at) {
+          actions += '<button class="ak-enable text-[10px] px-2 py-0.5 bg-emerald-500 text-white rounded hover:bg-emerald-600" data-key="' + escHtml(keyPreview) + '">重新启用</button>';
+        } else {
+          actions += '<button class="ak-delete text-[10px] px-2 py-0.5 bg-red-500 text-white rounded hover:bg-red-600" data-key="' + escHtml(keyPreview) + '">禁用</button>';
+        }
+        return '<div class="flex items-center gap-2 bg-gray-50 rounded px-2 py-1.5">' +
+          '<code class="text-[10px] font-mono text-gray-700 flex-1 min-w-0 truncate" title="' + escHtml(keyPreview) + '">' + escHtml(keyPreview) +
+          '</code>' +
+          statusHtml +
+          typeHtml +
+          userInfo +
+          usesHtml +
+          '<span class="text-[9px] text-gray-400">创建:' + created + '</span>' +
+          '<span class="text-[9px] text-gray-400">过期:' + expires + '</span>' +
+          actions +
+          '</div>';
+      }).join('') + '</div>';
+    // 禁用密钥
+    $('access-keys-list').querySelectorAll('.ak-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('确定禁用此密钥？2 秒后正式生效，用户将无法继续使用。')) return;
+        try {
+          await api('POST', '/api/admin/access-keys/delete', { key_preview: btn.dataset.key });
+          $('access-keys-status').textContent = '✓ 已禁用（2 秒后正式生效）';
+          setTimeout(() => { $('access-keys-status').textContent = ''; }, 3000);
+          loadAccessKeys();
+        } catch (e) { alert('操作失败: ' + e.message); }
+      });
+    });
+    // 复制完整密钥
+    $('access-keys-list').querySelectorAll('.ak-copy-key').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        try {
+          const d = await api('POST', '/api/admin/access-keys/reveal', { key_preview: btn.dataset.key });
+          if (d.key) {
+            await navigator.clipboard.writeText(d.key);
+            $('access-keys-status').textContent = '✓ 完整密钥已复制到剪贴板';
+            setTimeout(() => { $('access-keys-status').textContent = ''; }, 2000);
+          }
+        } catch (e) { alert('获取密钥失败: ' + e.message); }
+      });
+    });
+    // 重新启用密钥
+    $('access-keys-list').querySelectorAll('.ak-enable').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm('确定重新启用此密钥？')) return;
+        try {
+          await api('POST', '/api/admin/access-keys/enable', { key_preview: btn.dataset.key });
+          $('access-keys-status').textContent = '✓ 已重新启用';
+          setTimeout(() => { $('access-keys-status').textContent = ''; }, 2000);
+          loadAccessKeys();
+        } catch (e) { alert('操作失败: ' + e.message); }
+      });
+    });
+  } catch (e) {
+    $('access-keys-list').textContent = '加载失败: ' + e.message;
+  }
+}
+
+$('btn-refresh-access-keys').addEventListener('click', loadAccessKeys);
+$('btn-cleanup-access-keys').addEventListener('click', async () => {
+  if (!confirm('确定清理所有已过期/耗尽/禁用的密钥？')) return;
+  try {
+    const d = await api('POST', '/api/admin/access-keys/cleanup');
+    $('access-keys-status').textContent = `✓ 已清理 ${d.cleaned} 个失效密钥`;
+    setTimeout(() => { $('access-keys-status').textContent = ''; }, 3000);
+    loadAccessKeys();
+  } catch (e) { alert('清理失败: ' + e.message); }
+});
+// 类型切换：显示/隐藏时间和次数行
+$('ak-gen-type').addEventListener('change', () => {
+  const t = $('ak-gen-type').value;
+  $('ak-gen-time-row').classList.toggle('hidden', t === 'count');
+  $('ak-gen-count-row').classList.toggle('hidden', t === 'time');
+});
+$('btn-gen-access-keys').addEventListener('click', async () => {
+  const count = parseInt($('ak-gen-count').value) || 1;
+  const type = $('ak-gen-type').value;
+  const days = parseInt($('ak-gen-days').value) || 0;
+  const hours = parseInt($('ak-gen-hours').value) || 0;
+  const mins = parseInt($('ak-gen-mins').value) || 0;
+  const max_uses_parsed = parseInt($('ak-gen-max-uses').value);
+  const max_uses = isNaN(max_uses_parsed) ? 50 : max_uses_parsed;
+  if (type !== 'count' && days === 0 && hours === 0 && mins === 0) { alert('请设置有效期'); return; }
+  if (type !== 'time' && max_uses <= 0) { alert('请设置使用次数'); return; }
+  try {
+    const d = await api('POST', '/api/admin/access-keys/generate', { count, type, days, hours, mins, max_uses });
+    const fullKeys = d.keys || [];
+    // 在列表顶部临时展示完整密钥（可点击复制）
+    let keysHtml = '<div class="bg-green-50 border border-green-300 rounded p-2 mb-2">' +
+      '<div class="text-xs font-semibold text-green-800 mb-1">✓ 已生成 ' + fullKeys.length + ' 个密钥（点击复制，刷新后消失）:</div>';
+    fullKeys.forEach(k => {
+      keysHtml += '<code class="ak-full-key block text-[10px] font-mono text-green-900 bg-white rounded px-2 py-1 mb-1 cursor-pointer hover:bg-green-100 select-all" title="点击复制完整密钥">' + escHtml(k) + '</code>';
+    });
+    keysHtml += '</div>';
+    $('access-keys-list').insertAdjacentHTML('afterbegin', keysHtml);
+    $('access-keys-list').querySelectorAll('.ak-full-key').forEach(el => {
+      el.addEventListener('click', () => {
+        navigator.clipboard.writeText(el.textContent).then(() => {
+          $('access-keys-status').textContent = '✓ 已复制到剪贴板';
+          setTimeout(() => { $('access-keys-status').textContent = ''; }, 2000);
+        }).catch(() => {});
+      });
+    });
+    $('access-keys-status').textContent = '✓ 已生成 ' + fullKeys.length + ' 个密钥';
+    setTimeout(() => { $('access-keys-status').textContent = ''; }, 5000);
+    loadAccessKeys();
+  } catch (e) { $('access-keys-status').textContent = '生成失败: ' + e.message; }
+});
+
+// ==================== 生图日志 ====================
+// ==================== 生图日志 ====================
+let _glPage = 0, _glTotal = 0;
+const _GL_PAGE_SIZE = 24;
+let _glTimer = null, _glAutoEnabled = false;
+
+function _glQS() {
+  const q = []; q.push('limit='+_GL_PAGE_SIZE+'&offset='+(_glPage*_GL_PAGE_SIZE));
+  const s=$('gen-logs-search').value.trim(); if(s) q.push('login='+encodeURIComponent(s));
+  const f=$('gen-logs-date-from').value,t=$('gen-logs-date-to').value;
+  if(f) q.push('date_from='+(new Date(f+'T00:00:00').getTime()/1000));
+  if(t) q.push('date_to='+(new Date(t+'T23:59:59').getTime()/1000));
+  return q.join('&');
+}
+function _glToggleAuto() {
+  _glAutoEnabled=!_glAutoEnabled; const b=$('btn-gen-logs-auto');
+  if(_glAutoEnabled){b.textContent='自动刷新';b.className='px-2 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-xs';_glStartAuto();}
+  else{b.textContent='自动刷新: 关';b.className='px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs';_glStopAuto();}
+}
+function _glStopAuto(){if(_glTimer){clearInterval(_glTimer);_glTimer=null;}}
+function _glStartAuto(){_glStopAuto();if(!_glAutoEnabled||_glPage!==0)return;_glTimer=setInterval(()=>loadGenLogs(false),(parseInt($('gen-logs-interval').value)||30)*1000);}
+function _glRenderPages() {
+  const tp=Math.ceil(_glTotal/_GL_PAGE_SIZE)||1,el=$('gen-logs-pages');
+  if(tp<=1){el.textContent='';return;}
+  let h='';const p=_glPage;
+  if(p>0)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-gl="${p-1}">上一页</a>`;
+  const s=Math.max(0,p-2),e=Math.min(tp-1,p+2);
+  if(s>0)h+='<span class="mx-1 text-gray-400">...</span>';
+  for(let i=s;i<=e;i++)h+=i===p?`<span class="mx-1 font-bold text-gray-800">${i+1}</span>`:`<a href="#" class="text-blue-600 hover:underline mx-1" data-gl="${i}">${i+1}</a>`;
+  if(e<tp-1)h+='<span class="mx-1 text-gray-400">...</span>';
+  if(p<tp-1)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-gl="${p+1}">下一页</a>`;
+  el.innerHTML=h;
+  el.querySelectorAll('a[data-gl]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_glPage=parseInt(a.dataset.gl);loadGenLogs(true);}));
+}
+
+// 复制按钮事件代理
+$('gen-logs-list').addEventListener('click', (e) => {
+  const btn = e.target.closest('.btn-copy-positive, .btn-copy-negative');
+  if (!btn) return;
+  e.stopPropagation();
+  _copyText(btn.getAttribute('data-copy-text') || '', btn);
+});
+
+async function loadGenLogs(reset = true) {
+  try {
+    const d = await api('GET', '/api/admin/gen-logs?' + _glQS());
+    const items = d.items || [];
+    _glTotal = d.total || 0;
+    $('gen-logs-count').textContent = _glTotal;
+    if (!items.length) {
+      $('gen-logs-list').innerHTML = '<div class="text-gray-400">暂无日志</div>';
+      $('gen-logs-status').textContent = '';
+      $('gen-logs-pages').textContent = '';
+      return;
+    }
+    $('gen-logs-list').innerHTML = items.map(it => {
+      const t = new Date((it.created_at || 0) * 1000).toLocaleString('zh-CN');
+      const stColor = it.status === 'success' ? 'text-green-600' : 'text-red-600';
+      const stLabel = it.status === 'success' ? '✓' : '✗';
+      const loginInfo = escHtml(it.login || it.github_id || '?');
+      const promptFull = it.prompt || '';
+      const promptText = escHtml(promptFull.substring(0, 80));
+      const negPromptFull = it.negative_prompt || '';
+      const negPromptText = escHtml(negPromptFull.substring(0, 80));
+      const wf = escHtml((it.workflow || '').split('/').pop() || '-');
+      const lid = escHtml(it.id||'');
+      return `<div class="border-b border-gray-100 py-1.5 text-[10px] relative">
+        <input type="checkbox" class="gl-log-check absolute top-1 left-1 w-3 h-3 cursor-pointer z-10" data-log-id="${lid}" />
+        <div class="flex justify-between items-center text-gray-400">
+          <div class="flex items-center gap-2">
+            <span>${t}</span>
+            <button data-copy-text="${escHtml(promptFull)}" title="复制正面提示词" class="btn-copy-positive text-[9px] px-1.5 py-0.5 bg-pink-50 hover:bg-pink-100 text-pink-500 rounded whitespace-nowrap">📋正面</button>
+            ${negPromptFull ? `<button data-copy-text="${escHtml(negPromptFull)}" title="复制负面提示词" class="btn-copy-negative text-[9px] px-1.5 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded whitespace-nowrap">📋负面</button>` : ''}
+          </div>
+          <span class="${stColor} shrink-0">${stLabel} ${it.count}张</span>
+        </div>
+        <div class="flex justify-between">
+          <span class="text-gray-700">👤 ${loginInfo}</span>
+          <span class="text-gray-400">📁 ${wf}</span>
+        </div>
+        <div class="text-gray-500 truncate">💬 ${promptText}</div>
+        ${negPromptFull ? `<div class="text-gray-500 truncate">⚠️ ${negPromptText}</div>` : ''}
+      </div>`;
+    }).join('');
+    const start = _glPage * _GL_PAGE_SIZE + 1;
+    const end = Math.min(start + items.length - 1, _glTotal);
+    $('gen-logs-status').textContent = `显示 ${start}-${end} / ${_glTotal} 条`;
+    _glRenderPages(); _glStartAuto();
+  } catch (e) {
+    $('gen-logs-list').textContent = '加载失败: ' + e.message;
+  }
+}
+
+$('btn-refresh-gen-logs').addEventListener('click', () => { _glPage = 0; loadGenLogs(true); });
+$('btn-gen-logs-filter').addEventListener('click', () => { _glPage = 0; loadGenLogs(true); });
+$('btn-gen-logs-reset').addEventListener('click', () => {
+  $('gen-logs-search').value = '';
+  $('gen-logs-date-from').value = '';
+  $('gen-logs-date-to').value = '';
+  _glPage = 0; loadGenLogs(true);
+});
+$('btn-gen-logs-auto').addEventListener('click', _glToggleAuto);
+$('gen-logs-interval').addEventListener('change', () => { _glStopAuto(); _glStartAuto(); });
+$('btn-clear-gen-logs').addEventListener('click', async () => {
+  const qs = _glQS();
+  const hasDate = $('gen-logs-date-from').value || $('gen-logs-date-to').value;
+  const msg = hasDate ? '确认清空当前日期范围内的生图日志？此操作不可恢复。' : '确认清空所有生图日志？此操作不可恢复。';
+  if (!confirm(msg)) return;
+  const input = prompt('请输入"确认删除生图日志"以继续：');
+  if (input !== '确认删除生图日志') { alert('输入不匹配，已取消'); return; }
+  try {
+    const d = await api('DELETE', '/api/admin/gen-logs?' + qs);
+    $('gen-logs-status').textContent = '✓ ' + (d.message || '日志已清空');
+    loadGenLogs(true);
+  } catch (e) {
+    $('gen-logs-status').textContent = '清空失败: ' + e.message;
+  }
+});
+
+// 生图日志编辑/选择模式
+let _glSelected = new Set();
+$('btn-edit-gen-logs').addEventListener('click',()=>{
+  const grid=$('gen-logs-list'),ed=grid.classList.toggle('gl-log-preview'),b=$('btn-edit-gen-logs'),bb=$('gen-logs-batch-bar');
+  if(ed){b.textContent='编辑';b.className='text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300';bb.classList.add('hidden');_glSelected.clear();document.querySelectorAll('.gl-log-check').forEach(c=>c.checked=false);$('gen-logs-sel-count').textContent='0';}
+  else{b.textContent='退出编辑';b.className='text-sm px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600';_updateGlSelection();}
+});
+function _updateGlSelection(){_glSelected.clear();document.querySelectorAll('.gl-log-check:checked').forEach(c=>_glSelected.add(c.dataset.logId));$('gen-logs-sel-count').textContent=_glSelected.size;$('gen-logs-batch-bar').classList.toggle('hidden',_glSelected.size===0);}
+$('gen-logs-list').addEventListener('change',(e)=>{if(e.target.closest('.gl-log-check'))_updateGlSelection();});
+$('btn-gen-logs-select-all').addEventListener('click',()=>{const c=document.querySelectorAll('.gl-log-check'),a=Array.from(c).every(x=>x.checked);c.forEach(x=>{x.checked=!a;});_updateGlSelection();});
+$('btn-gen-logs-del-selected').addEventListener('click',async()=>{
+  if(!_glSelected.size)return; if(!confirm(`确定删除选中的 ${_glSelected.size} 条生图日志？`))return;
+  const i=prompt(`请输入"确认删除生图日志"以继续删除 ${_glSelected.size} 条记录：`); if(i!=='确认删除生图日志'){alert('输入不匹配，已取消');return;}
+  const ids=Array.from(_glSelected); let done=0;
+  try{const d=await api('POST','/api/admin/gen-logs/delete',{ids});done=d.removed||0;}catch(e){alert('删除失败: '+e.message);}
+  _glSelected.clear();_updateGlSelection();loadGenLogs(true);
+});
+
+// ── GC 系统 ──
+let _gcPage = 0, _gcTotal = 0;
+const _GC_PAGE_SIZE = 20;
+let _gcTimer = null, _gcAutoEnabled = false;
+
+function _gcQS() {
+  const q = [];
+  q.push('limit=' + _GC_PAGE_SIZE + '&offset=' + (_gcPage * _GC_PAGE_SIZE));
+  const f = $('gc-date-from').value, t = $('gc-date-to').value;
+  if (f) q.push('min_time=' + (new Date(f+'T00:00:00').getTime()/1000));
+  if (t) q.push('max_time=' + (new Date(t+'T23:59:59').getTime()/1000));
+  return q.join('&');
+}
+function _gcToggleAuto() {
+  _gcAutoEnabled = !_gcAutoEnabled;
+  const b = $('btn-gc-auto');
+  if (_gcAutoEnabled) {
+    b.textContent = '自动刷新'; b.className = 'px-2 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-xs';
+    _gcStartAuto();
+  } else {
+    b.textContent = '自动刷新: 关'; b.className = 'px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 text-xs';
+    _gcStopAuto();
+  }
+}
+function _gcStopAuto() { if (_gcTimer) { clearInterval(_gcTimer); _gcTimer = null; } }
+function _gcStartAuto() {
+  _gcStopAuto();
+  if (!_gcAutoEnabled || _gcPage !== 0) return;
+  _gcTimer = setInterval(() => loadGcLogs(false), (parseInt($('gc-interval').value)||30)*1000);
+}
+function _gcPages() {
+  const tp = Math.ceil(_gcTotal/_GC_PAGE_SIZE)||1, el = $('gc-log-pages');
+  if (tp<=1) { el.textContent=''; return; }
+  let h=''; const p=_gcPage;
+  if(p>0) h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-gp="${p-1}">上一页</a>`;
+  const s=Math.max(0,p-2),e=Math.min(tp-1,p+2);
+  if(s>0) h+='<span class="mx-1 text-gray-400">...</span>';
+  for(let i=s;i<=e;i++) h+=i===p?`<span class="mx-1 font-bold text-gray-800">${i+1}</span>`:`<a href="#" class="text-blue-600 hover:underline mx-1" data-gp="${i}">${i+1}</a>`;
+  if(e<tp-1) h+='<span class="mx-1 text-gray-400">...</span>';
+  if(p<tp-1) h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-gp="${p+1}">下一页</a>`;
+  el.innerHTML=h;
+  el.querySelectorAll('a[data-gp]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_gcPage=parseInt(a.dataset.gp);loadGcLogs(true);}));
+}
+async function loadGcStats() {
+  try {
+    const d = await api('GET','/api/admin/gc/stats');
+    $('gc-restart-count').textContent = d.restart_count ?? '-';
+    $('gc-total-images').textContent = d.total_images ?? '-';
+    $('gc-online').textContent = (d.online_users??0)+' / 队列 '+(d.queue_size??0);
+    if (d.last_gc_time) {
+      const t = new Date(d.last_gc_time*1000);
+      const n = new Date(); const dm = Math.floor((n-t)/60000);
+      $('gc-last-time').textContent = t.toLocaleString('zh-CN') + ' (' +
+        (dm<1?'刚刚':dm<60?dm+' 分钟前':Math.floor(dm/60)+' 小时前')+')';
+    } else $('gc-last-time').textContent = '从未运行';
+    $('gc-stats-summary').textContent = '重启 '+(d.restart_count??0)+' · 生图 '+(d.total_images??0);
+  } catch(e){$('gc-stats-summary').textContent='加载失败';}
+}
+async function loadGcLogs(reset) {
+  await loadGcStats();
+  try {
+    const d = await api('GET','/api/admin/gc/logs?'+_gcQS());
+    const items = d.items||[]; _gcTotal = d.total||0;
+    if (!items.length) { $('gc-log-list').innerHTML = '<div class="text-gray-400">暂无 GC 日志</div>'; $('gc-log-pages').textContent=''; return; }
+    $('gc-log-list').innerHTML = items.map(it=>{
+      const t = new Date((it.timestamp||0)*1000).toLocaleString('zh-CN');
+      const dur = (it.duration||0).toFixed(1);
+      const c = it.cleaned||{};
+      const p=[];
+      if(c.resolved_reports)p.push('举报 '+c.resolved_reports);
+      if(c.orphan_thumbs)p.push('缩略图 '+c.orphan_thumbs);
+      if(c.orphan_creator_entries)p.push('映射 '+c.orphan_creator_entries);
+      if(c.retry_delete_success)p.push('删文件 '+c.retry_delete_success);
+      if(c.stale_featured)p.push('精选 '+c.stale_featured);
+      if(c.expired_sessions)p.push('会话 '+c.expired_sessions);
+      if(c.backup_dir)p.push('备份');
+      if(c.error)p.push('错误');
+      return '<div class="border-b border-gray-100 py-1.5 text-[10px]">'+
+        '<div class="flex justify-between"><span class="text-gray-400">'+t+'</span><span>⏱ '+dur+'s</span></div>'+
+        '<div class="flex justify-between">'+
+        '<span class="'+(c.error?'text-red-600':'text-green-600')+'">'+escHtml(p.join(' ')||'无清理项')+'</span>'+
+        (it.backup_dir?'<span class="text-gray-400" title="'+escHtml(it.backup_dir)+'">📦 已备份</span>':'')+'</div></div>';
+    }).join('');
+    const start = _gcPage*_GC_PAGE_SIZE+1;
+    const end = Math.min(start+items.length-1,_gcTotal);
+    $('gc-log-status').textContent = '显示 '+start+'-'+end+' / '+_gcTotal+' 条';
+    _gcPages(); _gcStartAuto();
+  } catch(e){$('gc-log-list').textContent='加载失败: '+e.message;}
+}
+async function _gcRun(backup) {
+  $('gc-status').textContent = '⏳ GC 已触发...'; $('gc-status').className = 'text-xs text-blue-500 mb-2';
+  try {
+    await api('POST','/api/admin/gc',backup?{backup:true}:{});
+    let r=0; const poll=setInterval(async()=>{
+      try {
+        const s=await api('GET','/api/admin/gc/status');
+        if(s.status==='done'){clearInterval(poll);_gcDone(s.cleaned);}
+        else if(s.status==='error'){clearInterval(poll);$('gc-status').textContent='✗ GC 失败: '+(s.error||'未知');$('gc-status').className='text-xs text-red-600 mb-2';loadGcLogs(true);}
+        else if(++r>60){clearInterval(poll);$('gc-status').textContent='⏰ 超时';$('gc-status').className='text-xs text-orange-500 mb-2';}
+      }catch(e){}
+    },1000);
+  }catch(e){$('gc-status').textContent='✗ 触发失败: '+e.message;$('gc-status').className='text-xs text-red-600 mb-2';}
+}
+async function _gcRunNoBackup() { _gcRun(false); }
+function _gcDone(c) {
+  const p=[];
+  if(c.resolved_reports)p.push('举报 '+c.resolved_reports);
+  if(c.orphan_thumbs)p.push('缩略图 '+c.orphan_thumbs);
+  if(c.orphan_creator_entries)p.push('映射 '+c.orphan_creator_entries);
+  if(c.retry_delete_success)p.push('删文件 '+c.retry_delete_success);
+  if(c.stale_featured)p.push('精选 '+c.stale_featured);
+  if(c.expired_sessions)p.push('会话 '+c.expired_sessions);
+  $('gc-status').textContent = '✓ GC 完成'+(p.length?'：'+p.join(', '):''); $('gc-status').className='text-xs text-green-600 mb-2';
+  loadGcLogs(true);
+}
+$('btn-refresh-gc').addEventListener('click',()=>{_gcPage=0;loadGcLogs(true);});
+$('btn-gc-run').addEventListener('click',async()=>{
+  if(!confirm('确认执行 GC？将先备份再清理。此操作不可恢复。'))return;
+  const i=prompt('即将执行 GC 清理，请输入"确认清理"以继续：');
+  if(i!=='确认清理'){alert('输入不匹配，已取消');return;}
+  _gcRun(true);
+});
+$('btn-gc-run-no-backup').addEventListener('click',async()=>{
+  if(!confirm('确认执行 GC？将直接清理不备份。此操作不可恢复。'))return;
+  const i=prompt('即将执行 GC 清理，请输入"确认清理"以继续：');
+  if(i!=='确认清理'){alert('输入不匹配，已取消');return;}
+  _gcRun(false);
+});
+$('btn-gc-filter').addEventListener('click',()=>{_gcPage=0;loadGcLogs(true);});
+$('btn-gc-reset').addEventListener('click',()=>{$('gc-date-from').value='';$('gc-date-to').value='';_gcPage=0;loadGcLogs(true);});
+$('btn-gc-auto').addEventListener('click',_gcToggleAuto);
+$('gc-interval').addEventListener('change',()=>{_gcStopAuto();_gcStartAuto();});
+$('btn-gc-clear-log').addEventListener('click',async()=>{
+  if(!confirm('确认清空所有 GC 日志？'))return;
+  try{await api('POST','/api/admin/gc/logs/clear');loadGcLogs(true);}catch(e){alert('清空失败: '+e.message);}
+});
+document.querySelector('[data-toggle="gc-body"]').addEventListener('click',()=>{
+  setTimeout(()=>{if(!document.getElementById('gc-body').classList.contains('hidden'))loadGcLogs(true);},50);
+});
+
+// ==================== 删除记录 ====================
+let _delPage = 0, _delTotal = 0;
+const _DEL_PAGE_SIZE = 24;
+let _delTimer = null, _delAutoEnabled = false;
+
+function _delQS() {
+  const q = []; q.push('limit='+_DEL_PAGE_SIZE+'&offset='+(_delPage*_DEL_PAGE_SIZE));
+  const s=$('del-log-search').value.trim(); if(s) q.push('search='+encodeURIComponent(s));
+  const f=$('del-log-date-from').value,t=$('del-log-date-to').value;
+  if(f) q.push('date_from='+(new Date(f+'T00:00:00').getTime()/1000));
+  if(t) q.push('date_to='+(new Date(t+'T23:59:59').getTime()/1000));
+  return q.join('&');
+}
+function _delToggleAuto() {
+  _delAutoEnabled=!_delAutoEnabled; const b=$('btn-auto-del-log');
+  if(_delAutoEnabled){b.textContent='自动刷新';b.className='text-sm px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600';_delStartAuto();}
+  else{b.textContent='自动刷新: 关';b.className='text-sm px-3 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300';_delStopAuto();}
+}
+function _delStopAuto(){if(_delTimer){clearInterval(_delTimer);_delTimer=null;}}
+function _delStartAuto(){_delStopAuto();if(!_delAutoEnabled||_delPage!==0)return;_delTimer=setInterval(()=>loadDeletionLog(false),(parseInt($('del-log-interval').value)||10)*1000);}
+function _delRenderPages() {
+  const tp=Math.ceil(_delTotal/_DEL_PAGE_SIZE)||1,el=$('del-log-pages');
+  if(tp<=1){el.textContent='';return;}
+  let h='';const p=_delPage;
+  if(p>0)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-dl="${p-1}">上一页</a>`;
+  const s=Math.max(0,p-2),e=Math.min(tp-1,p+2);
+  if(s>0)h+='<span class="mx-1 text-gray-400">...</span>';
+  for(let i=s;i<=e;i++)h+=i===p?`<span class="mx-1 font-bold text-gray-800">${i+1}</span>`:`<a href="#" class="text-blue-600 hover:underline mx-1" data-dl="${i}">${i+1}</a>`;
+  if(e<tp-1)h+='<span class="mx-1 text-gray-400">...</span>';
+  if(p<tp-1)h+=`<a href="#" class="text-blue-600 hover:underline mx-1" data-dl="${p+1}">下一页</a>`;
+  el.innerHTML=h;
+  el.querySelectorAll('a[data-dl]').forEach(a=>a.addEventListener('click',e=>{e.preventDefault();_delPage=parseInt(a.dataset.dl);loadDeletionLog(true);}));
+}
+async function loadDeletionLog(reset) {
+  try {
+    const d=await api('GET','/api/admin/deletion-log?'+_delQS());
+    const items=d.items||[];_delTotal=d.total||0;$('deletion-log-count').textContent=_delTotal;
+    if(!items.length){$('deletion-log-grid').innerHTML='<div class="text-gray-400 text-xs col-span-full">暂无删除记录</div>';$('del-log-status').textContent='';$('del-log-pages').textContent='';return;}
+    $('deletion-log-grid').innerHTML=items.map(it=>{
+      const t=it.deleted_at?new Date(it.deleted_at*1000).toLocaleString('zh-CN'):(it.time?new Date(it.time*1000).toLocaleString('zh-CN'):'?');
+      const thumb=it.thumb_url?`<img src="${escHtml(it.thumb_url)}" loading="lazy" class="lb-thumb w-full aspect-square object-cover rounded bg-gray-100 cursor-pointer" data-path="${escHtml(it.path)}" data-del-thumb="${escHtml(it.thumb_url)}" />`:'<div class="w-full aspect-square rounded bg-gray-200 flex items-center justify-center text-gray-400 text-xs">无缩略图</div>';
+      const creator=it.creator_login?`生图: ${escHtml(it.creator_login)}${it.creator_ip?' ('+escHtml(it.creator_ip)+')':''}`:(it.creator_ip?`生图 IP: ${escHtml(it.creator_ip)}`:'');
+      return `<div class="border rounded p-1 bg-red-50 relative" data-del-path="${escHtml(it.path)}"><input type="checkbox" class="del-log-check absolute top-0.5 left-0.5 w-3 h-3 cursor-pointer z-10" data-path="${escHtml(it.path)}" />${thumb}<div class="text-[9px] mt-1 text-gray-500">👤 删除: ${escHtml(it.deleted_by_login||it.login||'?')}</div>${creator?`<div class="text-[9px] text-gray-500">🎨 ${creator}</div>`:''}<div class="text-[9px] text-gray-400">${t}</div><div class="text-[9px] text-gray-400 truncate">📁 ${escHtml(it.path.split('/').pop()||it.path)}</div><button class="btn-clear-deletion-record mt-1 w-full text-[10px] bg-white border border-red-300 text-red-500 rounded px-1 py-0.5 hover:bg-red-100" data-path="${escHtml(it.path)}">清理记录</button></div>`;
+    }).join('');
+    const start=_delPage*_DEL_PAGE_SIZE+1,end=Math.min(start+items.length-1,_delTotal);
+    $('del-log-status').textContent=`显示 ${start}-${end} / ${_delTotal} 条`;_delRenderPages();_delStartAuto();
+  }catch(e){$('deletion-log-grid').textContent='加载失败: '+e.message;}
+}
+$('btn-refresh-deletion-log').addEventListener('click',()=>{_delPage=0;loadDeletionLog(true);});
+$('btn-edit-del-log').addEventListener('click',()=>{
+  const g=$('deletion-log-grid'),ed=g.classList.toggle('del-log-preview'),b=$('btn-edit-del-log'),cb=$('btn-clear-deletion-log'),bb=$('del-log-batch-bar');
+  if(ed){b.textContent='编辑';b.className='text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300';cb.classList.add('hidden');bb.classList.add('hidden');_delLogSelected.clear();document.querySelectorAll('.del-log-check').forEach(c=>c.checked=false);}
+  else{b.textContent='退出编辑';b.className='text-sm px-3 py-1 bg-orange-500 text-white rounded hover:bg-orange-600';cb.classList.remove('hidden');_updateDelLogSelection();}
+});
+$('btn-auto-del-log').addEventListener('click',_delToggleAuto);
+$('del-log-interval').addEventListener('change',()=>{_delStopAuto();_delStartAuto();});
+$('btn-del-log-filter').addEventListener('click',()=>{_delPage=0;loadDeletionLog(true);});
+$('btn-del-log-reset').addEventListener('click',()=>{$('del-log-search').value='';$('del-log-date-from').value='';$('del-log-date-to').value='';_delPage=0;loadDeletionLog(true);});
+$('btn-clear-deletion-log').addEventListener('click',async()=>{
+  const hasDate=$('del-log-date-from').value||$('del-log-date-to').value; const msg=hasDate?'确认清空当前日期范围内的删除记录？':'确认清空全部删除记录？';
+  if(!confirm(msg))return; const i=prompt('请输入"确认删除删除记录"以继续：');
+  if(i!=='确认删除删除记录'){alert('输入不匹配，已取消');return;}
+  try{
+    const body={}; const f=$('del-log-date-from').value,t=$('del-log-date-to').value;
+    if(f)body.date_from=new Date(f+'T00:00:00').getTime()/1000;
+    if(t)body.date_to=new Date(t+'T23:59:59').getTime()/1000;
+    const d=await api('POST','/api/admin/deletion-log/clear',body); alert(d.message||'已清空'); loadDeletionLog(true);
+  }catch(e){alert('清空失败: '+e.message);}
+});
+$('deletion-log-grid').addEventListener('click',async(e)=>{
+  const cb=e.target.closest('.del-log-check'); if(cb){_updateDelLogSelection();return;}
+  const btn=e.target.closest('.btn-clear-deletion-record'); if(!btn)return;
+  const path=btn.dataset.path; if(!confirm('确认清理此条删除记录？缩略图将一并删除。'))return;
+  try{await api('POST','/api/admin/deletion-log/clear',{path});loadDeletionLog(true);}catch(err){alert('清理失败: '+err.message);}
+});
+let _delLogSelected=new Set();
+function _updateDelLogSelection(){_delLogSelected.clear();document.querySelectorAll('.del-log-check:checked').forEach(c=>_delLogSelected.add(c.dataset.path));$('del-log-sel-count').textContent=_delLogSelected.size;$('del-log-batch-bar').classList.toggle('hidden',_delLogSelected.size===0);}
+$('btn-del-log-select-all').addEventListener('click',()=>{const c=document.querySelectorAll('.del-log-check'),a=Array.from(c).every(x=>x.checked);c.forEach(x=>{x.checked=!a;});_updateDelLogSelection();});
+$('btn-del-log-del-selected').addEventListener('click',async()=>{
+  if(!_delLogSelected.size)return; if(!confirm(`确定清理选中的 ${_delLogSelected.size} 条删除记录？`))return;
+  const i=prompt(`请输入"确认删除删除记录"以继续清理 ${_delLogSelected.size} 条记录：`); if(i!=='确认删除删除记录'){alert('输入不匹配，已取消');return;}
+  const paths=Array.from(_delLogSelected); let done=0;
+  for(const p of paths){try{await api('POST','/api/admin/deletion-log/clear',{path:p});done++;}catch(err){alert(`清理 ${p} 失败: ${err.message}`);break;}}
+  _delLogSelected.clear();_updateDelLogSelection();loadDeletionLog(true);
+});
+
+</script>
+</body>
+</html>
