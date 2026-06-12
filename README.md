@@ -291,6 +291,26 @@ web/
 - 路径校验、上传校验、HTML 转义
 - 全局禁止搜索引擎索引
 
+### ⚠️ 签名下载链接密钥
+
+`/api/output/signed-url` 生成的临时下载链接使用 `DL_SECRET_KEY` 做 HMAC-SHA256 签名。
+
+**默认情况下**，代码内有一个硬编码的回退密钥 `sha256("natureDrawImage_dl_2026")`，源码公开故等同于公开，任何人可伪造下载链接。
+
+**务必在 `.env` 中设置自定义密钥：**
+
+```ini
+DL_SECRET_KEY=你的随机字符串
+```
+
+生成随机密钥：
+
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+未设定自定义密钥时应用仍能正常运行，但存在安全隐患。
+
 ## License
 
 AGPLv3 — 详见 [LICENSE](./LICENSE)
