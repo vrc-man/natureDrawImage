@@ -460,6 +460,7 @@ async def _get_http_client() -> httpx.AsyncClient:
         if _http_client is not None and not _http_client.is_closed:
             return _http_client
         _http_client = httpx.AsyncClient(
+            proxy=None,
             timeout=httpx.Timeout(60.0, connect=10.0),
             limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
         )
@@ -2474,6 +2475,25 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
         return m
 
     SEED_WIDGETS = {"seed", "noise_seed"}
+    COND_PASSTHROUGH_TYPES = {"ReferenceLatent", "ConditioningZeroOut"}
+
+    def _trace_to_text_encoder(nid, seen=None):
+        if seen is None:
+            seen = set()
+        if nid in seen:
+            return None
+        seen.add(nid)
+        nd = prompt.get(nid)
+        if not nd:
+            return None
+        ct = nd.get("class_type", "")
+        if ct in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus"):
+            return (nid, "prompt" if "TextEncodeQwen" in ct else "text")
+        if ct in COND_PASSTHROUGH_TYPES:
+            ref = nd.get("inputs", {}).get("conditioning")
+            if isinstance(ref, list) and len(ref) >= 1:
+                return _trace_to_text_encoder(str(ref[0]), seen)
+        return None
 
     def extract_inputs(node, lmap):
         result: Dict[str, Any] = {}
@@ -2542,9 +2562,9 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
                 if sub_type in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus"):
                     t_low = title.lower()
                     text_field = "prompt" if "TextEncodeQwen" in sub_type else "text"
-                    if "positive" in t_low or "[pos]" in t_low or "[prompt]" in t_low:
+                    if "positive" in t_low or "[pos]" in t_low or "[prompt]" in t_low or "正面" in title:
                         positive_ref = (sub_nid, text_field)
-                    elif "negative" in t_low or "[neg]" in t_low:
+                    elif "negative" in t_low or "[neg]" in t_low or "负面" in title:
                         negative_ref = (sub_nid, text_field)
             continue
         prompt[nid] = {
@@ -2559,7 +2579,7 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
             if ntype in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus"):
                 title = node.get("title", "")
                 t_low = title.lower()
-                if "positive" in t_low or "[pos]" in t_low or "[prompt]" in t_low:
+                if "positive" in t_low or "[pos]" in t_low or "[prompt]" in t_low or "正面" in title:
                     text_field = "prompt" if "TextEncodeQwen" in ntype else "text"
                     positive_ref = (str(node["id"]), text_field)
                     break
@@ -2570,7 +2590,7 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
             if ntype in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus"):
                 title = node.get("title", "")
                 t_low = title.lower()
-                if "negative" in t_low or "[neg]" in t_low:
+                if "negative" in t_low or "[neg]" in t_low or "负面" in title:
                     text_field = "prompt" if "TextEncodeQwen" in ntype else "text"
                     negative_ref = (str(node["id"]), text_field)
                     break
@@ -2581,23 +2601,15 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
                 if positive_ref is None:
                     pos = ndata.get("inputs", {}).get("positive")
                     if isinstance(pos, list) and len(pos) >= 1:
-                        src_id = str(pos[0])
-                        src = prompt.get(src_id)
-                        if src:
-                            src_type = src.get("class_type", "")
-                            if src_type in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus"):
-                                text_field = "prompt" if "TextEncodeQwen" in src_type else "text"
-                                positive_ref = (src_id, text_field)
+                        result = _trace_to_text_encoder(str(pos[0]))
+                        if result:
+                            positive_ref = result
                 if negative_ref is None:
                     neg = ndata.get("inputs", {}).get("negative")
                     if isinstance(neg, list) and len(neg) >= 1:
-                        src_id = str(neg[0])
-                        src = prompt.get(src_id)
-                        if src:
-                            src_type = src.get("class_type", "")
-                            if src_type in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus"):
-                                text_field = "prompt" if "TextEncodeQwen" in src_type else "text"
-                                negative_ref = (src_id, text_field)
+                        result = _trace_to_text_encoder(str(neg[0]))
+                        if result:
+                            negative_ref = result
                 if positive_ref and negative_ref:
                     break
 
@@ -3787,7 +3799,7 @@ async def api_style_thumbnail(request: Request, name: str):
 # ============== ComfyUI output 浏览（只读） ==============
 
 OUTPUT_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
-_DL_SECRET_KEY = hashlib.sha256(b"natureDrawImage_dl_2026").hexdigest()[:32]
+_DL_SECRET_KEY = (os.getenv("DL_SECRET_KEY") or hashlib.sha256(b"natureDrawImage_dl_2026").hexdigest())[:32]
 
 
 def _is_safe_subpath(fp: Path, parent: Path) -> bool:
@@ -4753,7 +4765,7 @@ async def api_img2img_upload(request: Request, image1: UploadFile, image2: Optio
         uploads_dir = Path(__file__).parent / "uploads"
         uploads_dir.mkdir(parents=True, exist_ok=True)
         (uploads_dir / safe_name).write_bytes(raw)
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(proxy=None, timeout=30) as client:
             fd = {"image": (safe_name, raw, "image/jpeg")}
             data = {"type": "input", "overwrite": "true"}
             r = await client.post(f"{COMFYUI_API}/api/upload/image", files=fd, data=data)
@@ -4902,7 +4914,7 @@ async def _recover_queue_on_startup() -> None:
                 if prompt_id:
                     for attempt in range(3):
                         try:
-                            async with httpx.AsyncClient(timeout=10) as client:
+                            async with httpx.AsyncClient(proxy=None, timeout=10) as client:
                                 r = await client.get(f"{COMFYUI_API}/api/history/{prompt_id}")
                                 if r.status_code == 200 and r.json().get(prompt_id):
                                     qi["status"] = "done"
@@ -5929,8 +5941,11 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
 
     neg_text = req.negative_prompt.strip() or (llm_negative if req.nl_prompt else "")
     if negative_ref and neg_text:
-        neg_node_id, neg_input_name = negative_ref
-        prompt_dict[neg_node_id]["inputs"][neg_input_name] = neg_text
+        if negative_ref == positive_ref:
+            await emit(ws, {"type": "log", "message": "正负指向同一节点，跳过负面注入"})
+        else:
+            neg_node_id, neg_input_name = negative_ref
+            prompt_dict[neg_node_id]["inputs"][neg_input_name] = neg_text
 
     # 图生图：默认保持原图尺寸，除非用户勾选注入预设
     is_img2img = bool(req.image1_name or req.image2_name or req.image3_name)
