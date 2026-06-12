@@ -743,6 +743,36 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
                 _save_email_users(email_users)
         return {"ok": True}
 
+    # ── 已登录用户修改密码 ──
+    @app.post("/api/auth/change-password")
+    async def api_change_password(request: Request, payload: Dict[str, Any] = {}):
+        from web.app import _get_user_from_session, _load_sessions, _save_sessions, _sessions_lock
+        user = _get_user_from_session(request)
+        if not user:
+            raise HTTPException(401)
+        email = user.get("github_id", "").replace("email:", "")
+        if not email:
+            raise HTTPException(400, "仅邮箱用户可修改密码")
+        old_pwd = str(payload.get("old_password", "")).strip()
+        new_pwd = str(payload.get("new_password", "")).strip()
+        if not old_pwd or len(new_pwd) < 6:
+            raise HTTPException(400, "旧密码必填，新密码至少6位")
+        async with _email_users_lock:
+            email_users = _load_email_users()
+            eu = email_users.get(email)
+            if not eu or not _verify_password(old_pwd, eu["password_hash"]):
+                raise HTTPException(403, "旧密码错误")
+            eu["password_hash"] = _hash_password(new_pwd)
+            _save_email_users(email_users)
+        # 销毁该用户的所有旧 session
+        uid = "email:" + email
+        async with _sessions_lock:
+            sessions = _load_sessions()
+            sessions = {k: v for k, v in sessions.items() if v.get("github_id") != uid}
+            await _save_sessions(sessions)
+        print(f'[auth] password changed: {email}')
+        return {"ok": True, "message": "密码修改成功"}
+
     # ── 管理员：限流配置 ──
 
     @app.get("/api/admin/rate-limits")

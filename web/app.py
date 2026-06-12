@@ -1326,6 +1326,7 @@ async def _auth_middleware(request: Request, call_next):
         or path == "/favicon.ico"
         or path == "/privacy"
         or path == "/api/privacy-content"
+        or path.startswith("/api/output/file-dl")
     )
 
     # CSRF 保护：对状态变更请求校验 Origin/Referer（需在公开路径 early return 之前）
@@ -3212,7 +3213,8 @@ async def index(request: Request):
 async def api_privacy_content():
     """返回隐私条款正文 HTML（供欢迎页弹窗引用）。"""
     content = (STATIC_DIR / "privacy.html").read_text(encoding="utf-8")
-    content = content.replace("__CONTACT_EMAIL__", CONTACT_EMAIL or "admin@example.com")
+    email_display = (CONTACT_EMAIL or "admin@example.com").replace("@", "&#64;").replace(".", "&#46;")
+    content = content.replace("__CONTACT_EMAIL__", email_display)
     start = content.find("<body>")
     end = content.find("</body>")
     if start != -1 and end != -1:
@@ -3785,6 +3787,7 @@ async def api_style_thumbnail(request: Request, name: str):
 # ============== ComfyUI output 浏览（只读） ==============
 
 OUTPUT_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+_DL_SECRET_KEY = hashlib.sha256(b"natureDrawImage_dl_2026").hexdigest()[:32]
 
 
 def _is_safe_subpath(fp: Path, parent: Path) -> bool:
@@ -3954,6 +3957,68 @@ async def api_output_file(request: Request, path: str, full: int = 0):
         media = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, f"image/{ext}")
         return FileResponse(str(p), media_type=media)
     return _serve_image_maybe_webp(request, p, quality=82, max_side=1600)
+
+
+@app.post("/api/output/signed-url")
+async def api_output_signed_url(request: Request):
+    """生成一个临时签名下载链接（10分钟有效），给 IDM 等多线程工具使用。"""
+    user = _get_user_from_session(request)
+    if not user:
+        raise HTTPException(401)
+    body = await request.body()
+    payload = json.loads(body) if body else {}
+    path = str(payload.get("path", "")).strip()
+    if not path:
+        raise HTTPException(400, "path required")
+    # 权限校验同 /api/output/file
+    if user.get("role") != "admin":
+        github_id = str(user.get("github_id", ""))
+        user_images = _load_user_images().get(github_id, [])
+        owned = {i.get("path", "").replace("\\", "/") for i in user_images}
+        if path.replace("\\", "/") not in owned:
+            featured = set(_read_featured())
+            if path.replace("\\", "/") not in featured:
+                raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
+    deleted_paths: set = set()
+    for dpv in _load_deleted_images().values():
+        for dp in dpv:
+            deleted_paths.add(dp.replace("\\", "/"))
+    if path.replace("\\", "/") in deleted_paths:
+        raise HTTPException(404, "not found")
+    if not _validate_rel_path(path):
+        raise HTTPException(400, "无效路径")
+    p = _resolve_output_path(path)
+    if not p.is_file():
+        raise HTTPException(404, "not found")
+    if p.suffix.lower() not in OUTPUT_IMAGE_EXTS:
+        raise HTTPException(400, "not an image")
+    import time as _t, hmac as _hmac
+    expires = int(_t.time()) + 600
+    sig = _hmac.new(_DL_SECRET_KEY.encode(), f"{path}:{expires}".encode(), hashlib.sha256).hexdigest()[:16]
+    url = f"/api/output/file-dl?path={_urlparse.quote(path)}&exp={expires}&sig={sig}&full=1"
+    return {"url": url}
+
+
+@app.get("/api/output/file-dl")
+async def api_output_file_dl(path: str, exp: int, sig: str, full: int = 1):
+    """签名验证后直接返回文件，无需 cookie。"""
+    import time as _t, hmac as _hmac
+    if _t.time() > exp:
+        raise HTTPException(410, "链接已过期")
+    expected = _hmac.new(_DL_SECRET_KEY.encode(), f"{path}:{exp}".encode(), hashlib.sha256).hexdigest()[:16]
+    if not _hmac.compare_digest(sig, expected):
+        raise HTTPException(403, "签名无效")
+    if not _validate_rel_path(path):
+        raise HTTPException(400, "无效路径")
+    p = _resolve_output_path(path)
+    if not p.is_file():
+        raise HTTPException(404, "not found")
+    if p.suffix.lower() not in OUTPUT_IMAGE_EXTS:
+        raise HTTPException(400, "not an image")
+    ext = p.suffix.lower().lstrip(".")
+    media = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, f"image/{ext}")
+    return FileResponse(str(p), media_type=media,
+        headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/api/output/thumb")

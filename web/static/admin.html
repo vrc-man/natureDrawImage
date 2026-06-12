@@ -1607,7 +1607,7 @@ $('btn-restart-server').addEventListener('click', async () => {
   const input = prompt('请输入"确认重启服务"以继续：');
   if (input !== '确认重启服务') { alert('输入不匹配，已取消'); return; }
   try {
-    await api('POST', '/api/admin/force-restart');
+    await api('POST', '/api/admin/force-restart', {});
   } catch (e) {
     // 重启后连接断开，这是正常的
   }
@@ -1618,7 +1618,7 @@ $('btn-graceful-restart').addEventListener('click', async () => {
   const input = prompt('请输入"确认优雅重启"以继续：');
   if (input !== '确认优雅重启') { alert('输入不匹配，已取消'); return; }
   $('lim-status').textContent = '优雅重启中，等待当前任务完成…';
-  try { await api('POST', '/api/admin/graceful-restart'); } catch(e){console.error(e)}
+  try { await api('POST', '/api/admin/graceful-restart', {}); } catch(e){console.error(e)}
   alert('重启信号已发送');
 });
 function _annBadge(enabled) {
@@ -2806,7 +2806,7 @@ async function cancelQueueItem(itemId) {
 async function cancelTask() {
   if (!confirm('确定要强制取消当前正在执行的任务吗？')) return;
   try {
-    const d = await api('POST', '/api/admin/queue/cancel');
+    const d = await api('POST', '/api/admin/queue/cancel', {});
     $('queue-status').textContent = '✓ ' + d.message;
     await loadQueue();
     setTimeout(() => { $('queue-status').textContent = ''; }, 5000);
@@ -2819,7 +2819,7 @@ async function cancelTask() {
 async function forceUnlock() {
   if (!confirm('确定要强制解锁吗？\n\n仅用于 WebSocket 异常导致锁卡死的情况。如果确实有任务在执行，请先用"取消当前任务"。')) return;
   try {
-    const d = await api('POST', '/api/admin/queue/force-unlock');
+    const d = await api('POST', '/api/admin/queue/force-unlock', {});
     $('queue-status').textContent = '✓ ' + d.message;
     await loadQueue();
     setTimeout(() => { $('queue-status').textContent = ''; }, 5000);
@@ -3068,7 +3068,7 @@ $('btn-refresh-access-keys').addEventListener('click', loadAccessKeys);
 $('btn-cleanup-access-keys').addEventListener('click', async () => {
   if (!confirm('确定清理所有已过期/耗尽/禁用的密钥？')) return;
   try {
-    const d = await api('POST', '/api/admin/access-keys/cleanup');
+    const d = await api('POST', '/api/admin/access-keys/cleanup', {});
     $('access-keys-status').textContent = `✓ 已清理 ${d.cleaned} 个失效密钥`;
     setTimeout(() => { $('access-keys-status').textContent = ''; }, 3000);
     loadAccessKeys();
@@ -3386,7 +3386,7 @@ $('btn-gc-auto').addEventListener('click',_gcToggleAuto);
 $('gc-interval').addEventListener('change',()=>{_gcStopAuto();_gcStartAuto();});
 $('btn-gc-clear-log').addEventListener('click',async()=>{
   if(!confirm('确认清空所有 GC 日志？'))return;
-  try{await api('POST','/api/admin/gc/logs/clear');loadGcLogs(true);}catch(e){alert('清空失败: '+e.message);}
+  try{await api('POST','/api/admin/gc/logs/clear',{});loadGcLogs(true);}catch(e){alert('清空失败: '+e.message);}
 });
 document.querySelector('[data-toggle="gc-body"]').addEventListener('click',()=>{
   setTimeout(()=>{if(!document.getElementById('gc-body').classList.contains('hidden'))loadGcLogs(true);},50);

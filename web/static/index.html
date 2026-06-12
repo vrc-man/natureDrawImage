@@ -278,6 +278,7 @@
     <span id="lb-creator" class="text-xs text-amber-300"></span>
     <a id="lb-download" href="#" target="_blank" rel="noopener" download
        class="text-xs px-3 py-1 bg-gradient-to-r from-pink-500 to-rose-500 text-white rounded-lg hover:from-pink-400 hover:to-rose-400 transition-all">⬇ 下载原图</a>
+    <button id="lb-copy-link" class="text-xs px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600">📋 复制链接</button>
     <button id="lb-fork" class="text-xs px-3 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700">🍴 Fork 工作流</button>
     <button id="lb-report" class="text-xs px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 hidden">🚩 举报</button>
     <span id="lb-status" class="text-xs text-white/80"></span>
@@ -369,6 +370,17 @@
         class="w-full border border-pink-200 rounded-xl px-3 py-2 text-sm bg-white text-gray-700 focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none" />
     </div>
     <div id="picker-grid" class="flex-1 overflow-y-auto px-5 pt-3 pb-4 min-h-0"></div>
+  </div>
+</div>
+
+<!-- 用户设置弹窗 -->
+<div id="settings-modal" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8 hidden" onclick="if(event.target===this)closeSettings()">
+  <div class="mx-4 w-full max-w-[calc(100vw-2.5rem)] sm:max-w-2xl bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]">
+    <div class="flex items-center justify-between p-5 pb-3 border-b border-pink-100 shrink-0">
+      <h3 class="text-lg font-bold text-gray-700">👤 用户设置</h3>
+      <button id="settings-close" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+    </div>
+    <div id="settings-body" class="flex-1 overflow-y-auto px-5 py-4 min-h-0 space-y-4"></div>
   </div>
 </div>
 
@@ -501,23 +513,11 @@
 
       <!-- 图生图上传 -->
       <div id="img2img-box" class="hidden">
-        <div class="img2img-row">
-          <div class="flex-1">
-            <label class="block text-sm font-semibold mb-1.5 text-gray-600">🖼️ 输入图 <span class="text-gray-400 font-normal">(最多3张)</span></label>
-            <input type="file" id="img-input" accept="image/*" multiple class="w-full text-sm" />
-          </div>
+        <div class="flex-1">
+          <label class="block text-sm font-semibold mb-1.5 text-gray-600">🖼️ 输入图 <span class="text-gray-400 font-normal">(最多3张，单张≤3MB)</span></label>
+          <button id="btn-add-img" class="w-full border-2 border-dashed border-pink-200 rounded-xl px-4 py-3 text-sm text-pink-400 hover:border-pink-400 hover:text-pink-500 transition-all">＋ 点击选择图片</button>
         </div>
         <div id="img-preview" class="flex gap-2 mt-2 flex-wrap"></div>
-        <div class="img2img-row">
-          <div class="flex-1">
-            <label class="block text-sm font-semibold mb-1.5 text-gray-600">🖼️ 输入图 2 <span class="text-gray-400 font-normal">(可选)</span></label>
-            <input type="file" id="img2" accept="image/*" class="w-full text-sm" />
-          </div>
-          <div class="flex-1">
-            <label class="block text-sm font-semibold mb-1.5 text-gray-600">🖼️ 输入图 3 <span class="text-gray-400 font-normal">(可选)</span></label>
-            <input type="file" id="img3" accept="image/*" class="w-full text-sm" />
-          </div>
-        </div>
         <label class="flex items-center gap-1.5 text-sm text-gray-500 mt-2 cursor-pointer select-none">
           <input type="checkbox" id="img2img-use-preset" class="w-4 h-4 accent-pink-500" />
           注入上方所选分辨率（默认不勾选，保持原图尺寸）
@@ -1183,16 +1183,15 @@ function showGenNotice(direct, nl, neg, w, h) {
 async function actuallyStartRun(direct, nl, neg, w, h) {
   _finishing = false;
   $('btn-run').disabled = true;
-  // 等待选图时自动上传完成（图片已在后台预上传）
-  const hasImg = $('img-input').files && $('img-input').files.length > 0
-    || $('img2').files && $('img2').files.length > 0
-    || $('img3').files && $('img3').files.length > 0;
+  const hasImg = _accumulatedImages.length > 0;
   if (hasImg) {
     $('progress-box').classList.remove('hidden');
     $('progress-text').textContent = '等待图片上传...';
-    await _preuploadPromise;
+    await Promise.all(_uploadPromises);
   }
-  const { image1_name, image2_name, image3_name } = _preuploadedNames;
+  const image1_name = _accumulatedImages[0]?.name || '';
+  const image2_name = _accumulatedImages[1]?.name || '';
+  const image3_name = _accumulatedImages[2]?.name || '';
   const payload = {
     workflow_path: forkedWorkflow ? '' : getCurrentPath(),
     inline_workflow: forkedWorkflow || null,
@@ -1246,69 +1245,75 @@ async function actuallyStartRun(direct, nl, neg, w, h) {
   ws.onerror = () => { clearTimeout(_connTimer); if (genId === _activeGenId) { appendLog('❌ 连接失败，请稍后重试'); activeWS = null; pollMyQueue(); } };
 }
 
-let _imgPreviewURLs = [];
-let _preuploadedNames = { image1_name: '', image2_name: '', image3_name: '' };
-let _preuploadPromise = Promise.resolve();
+let _accumulatedImages = [];  // { name, file, previewUrl }
 
 function clearImgInput() {
-  _imgPreviewURLs.forEach(u => URL.revokeObjectURL(u));
-  _imgPreviewURLs = [];
-  _preuploadedNames = { image1_name: '', image2_name: '', image3_name: '' };
-  _preuploadPromise = Promise.resolve();
-  ['img-input', 'img2', 'img3'].forEach(id => {
-    const el = $(id);
-    if (el) el.value = '';
-  });
-  const pv = $('img-preview');
-  if (pv) pv.innerHTML = '';
+  _accumulatedImages.forEach(item => URL.revokeObjectURL(item.previewUrl));
+  _accumulatedImages = [];
+  _uploadPromises = [];
+  updatePreviewUI();
 }
-function updateImgPreview() {
+
+function updatePreviewUI() {
   const pv = $('img-preview');
-  _imgPreviewURLs.forEach(u => URL.revokeObjectURL(u));
-  _imgPreviewURLs = [];
-  pv.innerHTML = '';
-  const allFiles = [];
-  const inp1 = $('img-input');
-  const inp2 = $('img2');
-  const inp3 = $('img3');
-  if (inp1 && inp1.files) allFiles.push(...Array.from(inp1.files));
-  if (inp2 && inp2.files && inp2.files[0]) allFiles.push(inp2.files[0]);
-  if (inp3 && inp3.files && inp3.files[0]) allFiles.push(inp3.files[0]);
-  const files = allFiles.slice(0, 3);
-  files.forEach((f, i) => {
-    const url = URL.createObjectURL(f);
-    _imgPreviewURLs.push(url);
-    const wrap = document.createElement('div');
-    wrap.className = 'relative w-16 h-16 rounded-lg overflow-hidden border border-gray-200 bg-gray-50 flex-shrink-0';
-    wrap.innerHTML = `<img src="${url}" class="w-full h-full object-cover" /><span class="absolute bottom-0 left-0 right-0 text-[9px] bg-black/50 text-white text-center">${i + 1}</span>`;
-    pv.appendChild(wrap);
-  });
-  // 选图后自动压缩上传（后台不阻塞），存储文件名供点击开始使用
-  _preuploadPromise = (async () => {
-    if (!files.length) {
-      _preuploadedNames = { image1_name: '', image2_name: '', image3_name: '' };
-      return;
-    }
+  pv.innerHTML = _accumulatedImages.map((item, i) =>
+    `<div class="relative w-20 h-20 rounded-lg overflow-hidden border border-pink-100 bg-pink-50/30 flex-shrink-0 group">
+      <img src="${item.previewUrl}" class="w-full h-full object-cover" />
+      <button data-idx="${i}" class="btn-del-acc absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] leading-none opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700">✕</button>
+      <span class="absolute bottom-0 left-0 right-0 text-[9px] bg-black/50 text-white text-center truncate px-1">${i+1}. ${_esc(item.file.name)}</span>
+    </div>`
+  ).join('');
+  const btn = $('btn-add-img');
+  if (btn) btn.style.display = _accumulatedImages.length >= 3 ? 'none' : '';
+}
+
+let _uploadPromises = [];
+async function addImage(file) {
+  if (_accumulatedImages.length >= 3) return;
+  const previewUrl = URL.createObjectURL(file);
+  const idx = _accumulatedImages.length;
+  _accumulatedImages.push({ name: '', file, previewUrl });
+  updatePreviewUI();
+  const p = (async () => {
     try {
+      const blob = await compressImage(file);
       const fd = new FormData();
-      for (let i = 0; i < files.length; i++) {
-        const compressed = await compressImage(files[i]);
-        fd.append('image' + (i + 1), compressed, compressed.name || 'img' + (i + 1) + '.jpg');
-      }
+      fd.append('image1', blob, blob.name || 'img' + (idx + 1) + '.jpg');
       const r = await fetch('/api/img2img/upload', { method: 'POST', body: fd });
-      if (!r.ok) return;
+      if (!r.ok) throw new Error('上传失败');
       const d = await r.json();
-      _preuploadedNames = {
-        image1_name: d.image1_name || '',
-        image2_name: d.image2_name || '',
-        image3_name: d.image3_name || '',
-      };
-    } catch(e) {}
+      _accumulatedImages[idx].name = d.image1_name || '';
+    } catch(e) {
+      _accumulatedImages.splice(idx, 1);
+      URL.revokeObjectURL(previewUrl);
+      updatePreviewUI();
+    }
   })();
+  _uploadPromises.push(p);
 }
-$('img-input').addEventListener('change', updateImgPreview);
-$('img2').addEventListener('change', updateImgPreview);
-$('img3').addEventListener('change', updateImgPreview);
+
+$('btn-add-img').addEventListener('click', () => {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*';
+  inp.onchange = () => {
+    const f = inp.files[0];
+    if (f) addImage(f);
+  };
+  inp.click();
+});
+
+$('img-preview').addEventListener('click', (e) => {
+  const btn = e.target.closest('.btn-del-acc');
+  if (!btn) return;
+  const idx = parseInt(btn.dataset.idx);
+  const item = _accumulatedImages[idx];
+  if (item) {
+    URL.revokeObjectURL(item.previewUrl);
+    _accumulatedImages.splice(idx, 1);
+    updatePreviewUI();
+  }
+});
 
 /** 前端图片压缩：短边≤1440 长边≤2560 等比缩放 + 质量调节，控制到 3MB 以内 */
 async function compressImage(file) {
@@ -1407,6 +1412,7 @@ function handleMsg(m) {
     appendLog(`✅ 完成，共 ${m.count} 张 — 请到「我的」查看`);
     $('progress-text').textContent = '完成，请到「我的」查看';
     showToast('✅ 生图完成，请到「我的」查看');
+    playSound('done');
     sendNotification('✅ 生图完成，请到「我的」查看');
     _tabLoaded.myworks = false;
     _pendingCooldownSec = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1;
@@ -1415,6 +1421,7 @@ function handleMsg(m) {
   }
   else if (m.type === 'error') {
     appendLog('❌ ' + m.message);
+    playSound('error');
     $('progress-text').textContent = '失败: ' + m.message;
     _pendingCooldownSec = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1;
     finishRun();
@@ -1426,6 +1433,10 @@ function handleMsg(m) {
 
 let _lastDoneGenId = 0;  // Toast/通知去重
 let _doneNotifyEnabled = localStorage.getItem('doneNotify') === 'true';
+let _soundNotifyEnabled = localStorage.getItem('soundNotify') === 'true';
+let _customSoundData = localStorage.getItem('customSoundData') || '';
+let _customSoundName = localStorage.getItem('customSoundName') || '';
+let _soundVolume = parseFloat(localStorage.getItem('soundVolume') || '0.7');
 
 function showToast(text, duration) {
   if (!_doneNotifyEnabled) return;
@@ -1439,6 +1450,54 @@ function showToast(text, duration) {
     el.style.animation = 'toastOut 0.25s ease-in';
     setTimeout(() => { try { el.remove(); } catch(e){} }, 250);
   }, duration || 3000);
+}
+
+let _sndCtx = null;
+async function playSound(type) {
+  if (!_soundNotifyEnabled) return;
+  try {
+    if (!_sndCtx) _sndCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = _sndCtx;
+    if (ctx.state === 'suspended') await ctx.resume();
+    const now = ctx.currentTime;
+    const vol = Math.max(0, Math.min(1, _soundVolume));
+    if (type === 'done' && _customSoundData) {
+      try {
+        const b64 = _customSoundData.split(',')[1];
+        const bin = atob(b64);
+        const buf = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+        ctx.decodeAudioData(buf.buffer).then(data => {
+          const src = ctx.createBufferSource();
+          src.buffer = data;
+          const vGain = ctx.createGain();
+          vGain.gain.value = vol;
+          src.connect(vGain);
+          vGain.connect(ctx.destination);
+          src.start(now + 0.05);
+        }).catch(() => {});
+      } catch(e) { console.warn('[sound] decode', e); }
+      return;
+    }
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    gain.gain.setValueAtTime(vol, now);
+    if (type === 'done') {
+      osc.frequency.value = 880;
+      osc.type = 'sine';
+      osc.start(now + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+      osc.stop(now + 0.25);
+    } else if (type === 'error') {
+      osc.frequency.value = 330;
+      osc.type = 'sawtooth';
+      osc.start(now + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+      osc.stop(now + 0.45);
+    }
+  } catch(e) { console.warn('[sound]', e); }
 }
 
 function sendNotification(text) {
@@ -1701,6 +1760,26 @@ function showLightbox() {
     }
     dl.href = u; dl.download = it.title || '';
   }
+  const copyBtn = $('lb-copy-link');
+  if (copyBtn) {
+    copyBtn.textContent = '📋 复制链接';
+    copyBtn.onclick = async () => {
+      if (!it.relPath) return;
+      try {
+        const r = await fetch('/api/output/signed-url', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path: it.relPath}) });
+        const d = await r.json();
+        if (d.url) {
+          await navigator.clipboard.writeText(location.origin + d.url);
+          const t = copyBtn.textContent;
+          copyBtn.textContent = '✅ 已复制';
+          setTimeout(() => { copyBtn.textContent = t; }, 2000);
+        }
+      } catch(e) {
+        copyBtn.textContent = '❌ 失败';
+        setTimeout(() => { copyBtn.textContent = '📋 复制链接'; }, 2000);
+      }
+    };
+  }
   if (it.relPath && _currentUser && _currentUser.is_admin) {
     fetch('/api/output/creator?path=' + encodeURIComponent(it.relPath)).then(r => r.json()).then(d => { if (d && d.github_id) $('lb-creator').textContent = '👤 ' + (d.github_login || d.github_id); }).catch(() => {});
   }
@@ -1921,74 +2000,146 @@ $('btn-clear-direct').addEventListener('click', () => { $('direct').value = ''; 
 $('btn-clear-neg').addEventListener('click', () => { $('negative_prompt').value = ''; saveFormState(); $('negative_prompt').focus(); });
 $('btn-clear-nl').addEventListener('click', () => { $('nl').value = ''; saveFormState(); $('nl').focus(); });
 
+// ==================== 用户设置弹窗 ====================
+function _renderSettingsBody() {
+  const d = _currentUser;
+  if (!d) return;
+  const body = $('settings-body');
+  const avatarHtml = d.avatar_url ? '<img src="' + _esc(d.avatar_url) + '" class="w-10 h-10 rounded-full">' : '<span class="w-10 h-10 rounded-full bg-pink-100 flex items-center justify-center text-lg">' + _esc(d.login[0]) + '</span>';
+  const loginBadge = d.is_email_user ? '<span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">📧 邮箱登录</span>' : '<span class="text-xs bg-gray-800 text-white px-2 py-0.5 rounded-full">🐙 GitHub</span>';
+  body.innerHTML = '<div class="flex items-center gap-3 pb-3 border-b border-pink-100"><div class="shrink-0">' + avatarHtml + '</div><div class="min-w-0"><div class="font-bold text-gray-700">' + _esc(d.login) + '</div><div class="text-xs text-gray-400 truncate">' + (d.email ? _esc(d.email) : '') + '</div><div class="mt-1">' + loginBadge + '</div></div></div><div id="settings-key-info" class="text-sm bg-gray-50 rounded-xl px-4 py-3 text-gray-600">加载中...</div><div class="pt-1 space-y-1"><label class="flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 cursor-pointer select-none transition-all"><input type="checkbox" id="settings-done-notify" class="w-4 h-4 accent-pink-500 shrink-0" ' + (_doneNotifyEnabled ? 'checked' : '') + '><span class="text-sm text-gray-600">🔔 任务完成提醒</span></label><label class="flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 cursor-pointer select-none transition-all"><input type="checkbox" id="settings-sound" class="w-4 h-4 accent-pink-500 shrink-0" ' + (_soundNotifyEnabled ? 'checked' : '') + '><span class="text-sm text-gray-600">🔊 声音提示</span></label><div id="settings-sound-row" class="' + (_soundNotifyEnabled ? '' : 'hidden') + '"><div class="flex items-center justify-between px-3 py-2 text-xs text-gray-400"><span>自定义提示音：<span id="sound-file-name">' + (_customSoundName ? _esc(_customSoundName) : '未设置') + '</span></span><div class="flex gap-2 shrink-0"><button id="btn-sound-upload" class="text-pink-500 hover:underline">选择音频</button><button id="btn-sound-reset" class="text-gray-400 hover:text-gray-600">重置默认</button></div></div><div class="flex items-center gap-2 px-3 pb-2 text-xs text-gray-400"><span class="shrink-0">音量</span><input type="range" id="settings-volume" min="0" max="100" value="' + Math.round(_soundVolume * 100) + '" class="flex-1 accent-pink-500 h-1 cursor-pointer"><span id="sound-volume-label" class="shrink-0 w-8 text-right">' + Math.round(_soundVolume * 100) + '%</span></div></div>' + (d.is_email_user ? '<button id="settings-totp" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all">🔐 两步验证</button><button id="settings-changepwd" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all">🔑 更改密码</button>' : '') + '<button id="settings-logout" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-red-50 text-sm text-red-500 transition-all">🚪 退出登录</button></div>';
+  $('settings-logout').onclick = async () => { await fetch('/auth/logout', {method:'POST', body: '{}', headers: {'Content-Type': 'application/json'}}); location.href = '/'; };
+  const btnTotp = $('settings-totp');
+  if (btnTotp) btnTotp.onclick = () => { closeSettings(); showTotpModal(); };
+  const btnChgpwd = $('settings-changepwd');
+  if (btnChgpwd) btnChgpwd.onclick = () => {
+    body.innerHTML = '<div class="flex items-center gap-2 pb-3 border-b border-pink-100"><button id="settings-back" class="text-lg text-gray-400 hover:text-gray-600">&larr;</button><h3 class="text-base font-bold text-gray-700">🔑 更改密码</h3></div><div class="space-y-3 pt-2"><input id="cp-old" type="password" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all" placeholder="当前密码" autocomplete="current-password"><input id="cp-new" type="password" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all" placeholder="新密码（至少6位）" autocomplete="new-password"><input id="cp-confirm" type="password" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all" placeholder="确认新密码" autocomplete="new-password"><button id="cp-submit" class="w-full py-2.5 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl hover:from-pink-300 hover:to-rose-300 text-sm font-semibold transition-all">保存</button><span id="cp-status" class="text-xs block text-center min-h-[18px]"></span></div>';
+    $('settings-back').onclick = _renderSettingsBody;
+    $('cp-submit').onclick = async () => {
+      const oldPwd = $('cp-old').value;
+      const newPwd = $('cp-new').value;
+      const confirmPwd = $('cp-confirm').value;
+      const status = $('cp-status');
+      if (!oldPwd) { status.textContent = '请输入当前密码'; status.style.color = '#ef4444'; return; }
+      if (newPwd.length < 6) { status.textContent = '新密码至少6位'; status.style.color = '#ef4444'; return; }
+      if (newPwd !== confirmPwd) { status.textContent = '两次密码不一致'; status.style.color = '#ef4444'; return; }
+      status.textContent = '...';
+      try {
+        const r = await fetch('/api/auth/change-password', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ old_password: oldPwd, new_password: newPwd }) });
+        const d = await r.json();
+        if (r.ok) { status.textContent = '✅ ' + d.message + '，即将跳转登录'; status.style.color = '#16a34a'; setTimeout(() => { location.href = '/auth/email-login'; }, 2000); }
+        else { status.textContent = d.detail || '修改失败'; status.style.color = '#ef4444'; }
+      } catch(e) { status.textContent = e.message; status.style.color = '#ef4444'; }
+    };
+  };
+  const chk = $('settings-done-notify');
+  if (chk) {
+    chk.onchange = () => {
+      _doneNotifyEnabled = chk.checked;
+      localStorage.setItem('doneNotify', _doneNotifyEnabled);
+      if (_doneNotifyEnabled && Notification.permission === 'default') Notification.requestPermission();
+    };
+  }
+  const snd = $('settings-sound');
+  if (snd) {
+    snd.onchange = () => {
+      _soundNotifyEnabled = snd.checked;
+      localStorage.setItem('soundNotify', _soundNotifyEnabled);
+      const row = $('settings-sound-row');
+      if (row) row.classList.toggle('hidden', !_soundNotifyEnabled);
+      if (_soundNotifyEnabled) playSound('done');
+    };
+  }
+  const btnUpload = $('btn-sound-upload');
+  if (btnUpload) {
+    btnUpload.onclick = () => {
+      const inp = document.createElement('input');
+      inp.type = 'file';
+      inp.accept = 'audio/*';
+      inp.onchange = () => {
+        const f = inp.files[0];
+        if (!f) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          _customSoundData = e.target.result;
+          _customSoundName = f.name;
+          localStorage.setItem('customSoundData', _customSoundData);
+          localStorage.setItem('customSoundName', _customSoundName);
+          const fn = $('sound-file-name');
+          if (fn) fn.textContent = _customSoundName;
+          new Audio(_customSoundData).play().catch(() => {});
+        };
+        reader.readAsDataURL(f);
+      };
+      inp.click();
+    };
+  }
+  const btnReset = $('btn-sound-reset');
+  if (btnReset) {
+    btnReset.onclick = () => {
+      _customSoundData = '';
+      _customSoundName = '';
+      localStorage.removeItem('customSoundData');
+      localStorage.removeItem('customSoundName');
+      const fn = $('sound-file-name');
+      if (fn) fn.textContent = '未设置';
+    };
+  }
+  const volSlider = $('settings-volume');
+  if (volSlider) {
+    volSlider.oninput = () => {
+      _soundVolume = parseInt(volSlider.value) / 100;
+      localStorage.setItem('soundVolume', String(_soundVolume));
+      const label = $('sound-volume-label');
+      if (label) label.textContent = Math.round(_soundVolume * 100) + '%';
+    };
+    volSlider.onchange = () => { playSound('done'); };
+  }
+  fetch('/api/whoami').then(r => r.json()).then(fresh => {
+    const ki = fresh.key_info;
+    const el = $('settings-key-info');
+    if (!el) return;
+    let h = '<div class="flex items-center gap-1.5 font-medium text-gray-700 mb-1">🔑 密钥信息</div>';
+    if (ki && !fresh.is_admin && fresh.access_granted) {
+      if (ki.max_uses > 0) h += '<div class="flex justify-between"><span>剩余次数</span><span class="font-semibold">' + Math.max(0, ki.max_uses - ki.used_count) + ' / ' + ki.max_uses + '</span></div>';
+      if (ki.expires_at > 0) {
+        const remain = Math.max(0, Math.ceil(ki.expires_at - Date.now()/1000));
+        const timeStr = remain >= 86400 ? Math.floor(remain/86400)+'天' : remain >= 3600 ? Math.floor(remain/3600)+'时' : Math.floor(remain/60)+'分';
+        h += '<div class="flex justify-between"><span>剩余时间</span><span class="font-semibold">' + timeStr + '</span></div>';
+      }
+      if (ki.max_uses === 0 && ki.expires_at === 0) h += '<div class="text-gray-500">永久有效</div>';
+    } else {
+      h += '<div class="text-gray-400 text-xs">' + (fresh.is_admin ? '管理员无限制' : '无密钥信息') + '</div>';
+    }
+    el.innerHTML = h;
+  }).catch(() => {});
+}
+function openSettings() {
+  lockScroll();
+  _renderSettingsBody();
+  const modal = $('settings-modal');
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+  $('settings-close').focus();
+}
+function closeSettings() {
+  const modal = $('settings-modal');
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+  unlockScroll();
+}
+$('settings-close').addEventListener('click', closeSettings);
+document.addEventListener('keydown', function _settingsEsc(e) {
+  if (e.key === 'Escape' && !$('settings-modal').classList.contains('hidden')) {
+    closeSettings();
+  }
+});
+
 // ==================== 用户身份 ====================
 let _currentUser = null;
-let _keyInfoRateTimes = [];
 $('user-label').addEventListener('click', function(e) {
   if (_currentUser && _currentUser.logged_in) {
-    e.stopPropagation();
-    const menu = document.getElementById('user-menu');
-    if (menu) { menu.remove(); return; }
-    d = _currentUser;
-    const div = document.createElement('div');
-    div.id = 'user-menu';
-    div.className = 'absolute right-0 top-full mt-1 bg-white/95 backdrop-blur-xl rounded-xl shadow-xl border border-pink-100 text-xs z-50 min-w-[100px]';
-    div.innerHTML = `<div class="px-3 py-2 text-gray-400 border-b border-pink-100 text-xs">${_esc(d.login)}</div>
-      <div class="px-3 py-2 text-gray-400 text-xs border-b border-pink-100"><span id="online-count-menu">${$('online-count').textContent || '加载中...'}</span></div>
-      <div id="key-info-placeholder" class="px-3 py-2 text-gray-400 text-xs">加载中...</div>
-      <label class="flex items-center gap-1.5 px-3 py-2 text-gray-400 text-xs cursor-pointer select-none hover:bg-pink-50 transition-all" style="border-bottom:1px solid #fce7f3">
-        <input type="checkbox" id="toggle-done-notify" class="w-3 h-3 accent-pink-500 shrink-0" ${_doneNotifyEnabled ? 'checked' : ''}>
-        <span>🔔 任务完成提醒</span>
-      </label>
-      ${d.is_email_user ? '<button id="btn-totp" class="w-full text-left px-3 py-2 hover:bg-pink-50 text-pink-500 rounded-none text-xs transition-all">🔐 两步验证</button>' : ''}
-      <button id="btn-logout" class="w-full text-left px-3 py-2 hover:bg-red-50 text-red-500 rounded-b-xl text-xs transition-all">🚪 退出登录</button>`;
-    const label = e.currentTarget;
-    label.style.position = 'relative';
-    label.appendChild(div);
-    div.querySelector('#btn-logout').onclick = async () => { await fetch('/auth/logout', {method:'POST', body: '{}', headers: {'Content-Type': 'application/json'}}); location.href = '/'; };
-    const btnTotp = div.querySelector('#btn-totp');
-    if (btnTotp) btnTotp.onclick = () => { div.remove(); showTotpModal(); };
-    const toggleNotify = div.querySelector('#toggle-done-notify');
-    if (toggleNotify) {
-      toggleNotify.closest('label').onclick = (e) => e.stopPropagation();
-      toggleNotify.onchange = () => {
-        _doneNotifyEnabled = toggleNotify.checked;
-        localStorage.setItem('doneNotify', _doneNotifyEnabled);
-        if (_doneNotifyEnabled && Notification.permission === 'default') {
-          Notification.requestPermission();
-        }
-      };
-    }
-    document.addEventListener('click', () => div.remove(), { once: true });
-    const now = Date.now();
-    _keyInfoRateTimes = _keyInfoRateTimes.filter(t => now - t < 60000);
-    if (_keyInfoRateTimes.length < 20) {
-      _keyInfoRateTimes.push(now);
-      fetch('/api/whoami').then(r => r.json()).then(fresh => {
-        const ki = fresh.key_info;
-        let h = '';
-        if (ki && !fresh.is_admin && fresh.access_granted) {
-          if (ki.max_uses > 0) h += '🔢 剩余次数：' + Math.max(0, ki.max_uses - ki.used_count) + ' / ' + ki.max_uses;
-          if (ki.expires_at > 0) {
-            if (ki.max_uses > 0) h += '<br>';
-            const remain = Math.max(0, Math.ceil(ki.expires_at - Date.now()/1000));
-            h += '⏰ 剩余时间：' + (remain >= 86400 ? Math.floor(remain/86400)+'天' : remain >= 3600 ? Math.floor(remain/3600)+'时' : Math.floor(remain/60)+'分');
-          }
-          if (ki.max_uses === 0 && ki.expires_at === 0) h += '永久有效';
-        }
-        const placeholder = div.querySelector('#key-info-placeholder');
-        if (placeholder) {
-          placeholder.innerHTML = h || '<span class="text-gray-400">无密钥信息</span>';
-          placeholder.classList.remove('text-gray-400');
-        }
-      }).catch(() => {});
-    } else {
-      const placeholder = div.querySelector('#key-info-placeholder');
-      if (placeholder) {
-        placeholder.innerHTML = '<span class="text-gray-400">刷新太频繁，请稍后再试</span>';
-        placeholder.classList.remove('text-gray-400');
-      }
-    }
+    openSettings();
   } else {
     location.href = '/auth/login';
   }
