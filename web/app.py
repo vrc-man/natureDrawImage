@@ -4006,7 +4006,7 @@ async def api_output_signed_url(request: Request):
         raise HTTPException(400, "not an image")
     import time as _t, hmac as _hmac
     expires = int(_t.time()) + 600
-    sig = _hmac.new(_DL_SECRET_KEY.encode(), f"{path}:{expires}".encode(), hashlib.sha256).hexdigest()[:16]
+    sig = _hmac.new(_DL_SECRET_KEY.encode(), f"{path}:{expires}:1".encode(), hashlib.sha256).hexdigest()[:16]
     url = f"/api/output/file-dl?path={_urlparse.quote(path)}&exp={expires}&sig={sig}&full=1"
     return {"url": url}
 
@@ -4017,7 +4017,7 @@ async def api_output_file_dl(path: str, exp: int, sig: str, full: int = 1):
     import time as _t, hmac as _hmac
     if _t.time() > exp:
         raise HTTPException(410, "链接已过期")
-    expected = _hmac.new(_DL_SECRET_KEY.encode(), f"{path}:{exp}".encode(), hashlib.sha256).hexdigest()[:16]
+    expected = _hmac.new(_DL_SECRET_KEY.encode(), f"{path}:{exp}:{full}".encode(), hashlib.sha256).hexdigest()[:16]
     if not _hmac.compare_digest(sig, expected):
         raise HTTPException(403, "签名无效")
     if not _validate_rel_path(path):

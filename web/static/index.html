@@ -1709,11 +1709,13 @@ setInterval(() => { if (globalBusy) { /* heartbeat */ } }, 1000);
 
 // ==================== 灯箱 ====================
 const lbState = { items: [], index: 0 };
-function collectLightboxItems() {
-  return Array.from(document.querySelectorAll('a.glightbox')).map(a => ({
-    url: a.getAttribute('href'), title: a.dataset.title || '',
-    relPath: a.dataset.relPath || '', mtime: parseFloat(a.dataset.mtime) || null,
-  }));
+function collectLightboxItems(gallery) {
+  return Array.from(document.querySelectorAll('a.glightbox'))
+    .filter(a => !gallery || a.dataset.gallery === gallery)
+    .map(a => ({
+      url: a.getAttribute('href'), title: a.dataset.title || '',
+      relPath: a.dataset.relPath || '', mtime: parseFloat(a.dataset.mtime) || null,
+    }));
 }
 
 let _scrollLockCount = 0, _scrollLockY = 0;
@@ -1791,7 +1793,7 @@ function closeLightbox() { $('lb-root').classList.remove('open'); $('lb-img').sr
 function prevLightbox() { if (!lbState.items.length) return; lbState.index = (lbState.index - 1 + lbState.items.length) % lbState.items.length; showLightbox(); }
 function nextLightbox() { if (!lbState.items.length) return; lbState.index = (lbState.index + 1) % lbState.items.length; showLightbox(); }
 
-document.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('a.glightbox'); if (!a) return; e.preventDefault(); lbState.items = collectLightboxItems(); lbState.index = Math.max(0, lbState.items.findIndex(it => it.url === a.getAttribute('href'))); showLightbox(); });
+document.addEventListener('click', (e) => { const a = e.target.closest && e.target.closest('a.glightbox'); if (!a) return; e.preventDefault(); lbState.items = collectLightboxItems(a.dataset.gallery); lbState.index = Math.max(0, lbState.items.findIndex(it => it.url === a.getAttribute('href'))); showLightbox(); });
 $('lb-close').addEventListener('click', closeLightbox);
 $('lb-prev').addEventListener('click', prevLightbox);
 $('lb-next').addEventListener('click', nextLightbox);
