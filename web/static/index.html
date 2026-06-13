@@ -169,6 +169,20 @@
     50%      { box-shadow: 0 0 32px rgba(244,114,182,.4), 0 0 12px rgba(251,113,133,.25); }
   }
   #btn-run:not(:disabled) { animation: glowPulse 3s ease-in-out infinite; }
+  /* 上传进度条 */
+  .upload-progress { width: 100%; height: 3px; background: #fce7f3; border-radius: 2px; overflow: hidden; position: absolute; bottom: 18px; left: 0; }
+  .upload-progress-bar { height: 100%; background: linear-gradient(90deg, #f472b6, #fb7185); border-radius: 2px; transition: width 0.2s; width: 0%; }
+  .upload-progress-bar.done { background: #34d399; }
+
+  #btn-run.cooldown {
+    background: linear-gradient(to right, #ef4444, #dc2626) !important;
+    box-shadow: 0 0 15px rgba(239,68,68,0.5) !important;
+    animation: redGlow 2s ease-in-out infinite;
+  }
+  @keyframes redGlow {
+    0%, 100% { box-shadow: 0 0 12px rgba(239,68,68,0.4); }
+    50%      { box-shadow: 0 0 28px rgba(239,68,68,0.8); }
+  }
 
   /* 进度条渐变 — 粉色调 */
   #progress-bar {
@@ -824,7 +838,7 @@ function pushHistory(item) {
 }
 
 // ==================== 我的作品 ====================
-const myworksState = { total: 0, loaded: 0, initialSize: 2, moreSize: 5 };
+const myworksState = { total: 0, loaded: 0, initialSize: 1, moreSize: 5 };
 
 async function loadMyWorks(reset = true) {
   const limit = reset ? myworksState.initialSize : myworksState.moreSize;
@@ -1157,7 +1171,7 @@ let currentPrompt = '';
 function appendLog(line) { const el = $('log'); el.textContent += line + '\n'; }
 
 function startRun() {
-  if ($('btn-run').disabled) return;
+  if (_cooldownTimer) { appendLog('⏳ 冷却中，请稍等'); return; }
   const direct = $('direct').value.trim();
   const nl = $('nl').value.trim();
   if (!direct && !nl) { appendLog('❌ 请填写 prompt'); return; }
@@ -1165,6 +1179,7 @@ function startRun() {
   const h = parseInt($('height').value);
   if (!w || !h) { appendLog('❌ 请选择分辨率'); return; }
   $('btn-run').disabled = true;
+  $('btn-run').textContent = '⏳ 处理中...';
   _isGenerating = true;
   const neg = $('negative_prompt').value.trim();
   if (!_genNoticeAcked) { showGenNotice(direct, nl, neg, w, h); }
@@ -1177,7 +1192,7 @@ function showGenNotice(direct, nl, neg, w, h) {
   lockScroll(); m.dataset.locked = '1';
   const closeModal = () => { m.classList.add('hidden'); m.classList.remove('flex'); if (m.dataset.locked) { unlockScroll(); delete m.dataset.locked; } };
   $('gen-notice-accept').onclick = () => { closeModal(); _genNoticeAcked = true; document.cookie = 'genNoticeAcked=1; path=/; max-age=31536000; Secure; SameSite=Lax'; actuallyStartRun(direct, nl, neg, w, h); };
-  $('gen-notice-cancel').onclick = () => { closeModal(); $('btn-run').disabled = false; _isGenerating = false; };
+  $('gen-notice-cancel').onclick = () => { closeModal(); $('btn-run').disabled = false; $('btn-run').textContent = '▶ 开始生成'; _isGenerating = false; };
 }
 
 async function actuallyStartRun(direct, nl, neg, w, h) {
@@ -1261,10 +1276,16 @@ function updatePreviewUI() {
       <img src="${item.previewUrl}" class="w-full h-full object-cover" />
       <button data-idx="${i}" class="btn-del-acc absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] leading-none opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700">✕</button>
       <span class="absolute bottom-0 left-0 right-0 text-[9px] bg-black/50 text-white text-center truncate px-1">${i+1}. ${_esc(item.file.name)}</span>
+      <div class="upload-progress"><div class="upload-progress-bar" data-idx="${i}"></div></div>
     </div>`
   ).join('');
   const btn = $('btn-add-img');
   if (btn) btn.style.display = _accumulatedImages.length >= 3 ? 'none' : '';
+}
+
+function setUploadProgress(idx, pct) {
+  const bar = document.querySelector(`.upload-progress-bar[data-idx="${idx}"]`);
+  if (bar) { bar.style.width = Math.min(pct, 100) + '%'; if (pct >= 100) bar.classList.add('done'); }
 }
 
 let _uploadPromises = [];
@@ -1274,21 +1295,29 @@ async function addImage(file) {
   const idx = _accumulatedImages.length;
   _accumulatedImages.push({ name: '', file, previewUrl });
   updatePreviewUI();
-  const p = (async () => {
+  const p = new Promise(async (resolve, reject) => {
     try {
       const blob = await compressImage(file);
       const fd = new FormData();
       fd.append('image1', blob, blob.name || 'img' + (idx + 1) + '.jpg');
-      const r = await fetch('/api/img2img/upload', { method: 'POST', body: fd });
-      if (!r.ok) throw new Error('上传失败');
-      const d = await r.json();
-      _accumulatedImages[idx].name = d.image1_name || '';
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable) setUploadProgress(idx, e.loaded / e.total * 99); };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try { const d = JSON.parse(xhr.responseText); _accumulatedImages[idx].name = d.image1_name || ''; setUploadProgress(idx, 100); } catch(e) { reject(e); }
+        } else { reject(new Error('上传失败')); }
+        resolve();
+      };
+      xhr.onerror = () => reject(new Error('上传失败'));
+      xhr.open('POST', '/api/img2img/upload');
+      xhr.send(fd);
     } catch(e) {
       _accumulatedImages.splice(idx, 1);
       URL.revokeObjectURL(previewUrl);
       updatePreviewUI();
+      reject(e);
     }
-  })();
+  });
   _uploadPromises.push(p);
 }
 
@@ -1540,12 +1569,11 @@ function startCooldown(seconds) {
   const el = $('cooldown-timer');
   if (!el || seconds <= 0) return;
   stopCooldown();
-  $('btn-run').disabled = true;
+  $('btn-run').classList.add('cooldown');
   let remaining = seconds;
   const tick = () => {
     if (remaining <= 0) {
       stopCooldown();
-      $('btn-run').disabled = false;
       return;
     }
     const m = Math.floor(remaining / 60);
@@ -1562,6 +1590,7 @@ function stopCooldown() {
   if (_cooldownTimer) { clearInterval(_cooldownTimer); _cooldownTimer = null; }
   const el = $('cooldown-timer');
   if (el) el.classList.add('hidden');
+  $('btn-run').classList.remove('cooldown');
 }
 
 let _finishing = false;
@@ -1569,6 +1598,8 @@ function finishRun() {
   if (_finishing) return;
   _finishing = true;
   _isGenerating = false;
+  $('btn-run').textContent = '▶ 开始生成';
+  $('progress-box').classList.add('hidden');
   _myQueueRunning = false;
   if (activeWS) { try { activeWS.close(); } catch(e){console.error(e)} }
   activeWS = null;
@@ -1697,7 +1728,6 @@ function connectStatus() {
     }
     else if (m.type === 'cooldown_done') {
       stopCooldown();
-      $('btn-run').disabled = false;
     }
     else if (m.type === 'mirror') { if (activeWS) return; handleMsg(m.event); }
   };
@@ -2308,18 +2338,18 @@ async function pollMyQueue() {
     const r = await fetch('/api/my-queue');
     const d = await r.json();
     const items = d.items || [];
+    const waiting = items.filter(i => i.status === 'waiting');
+    const running = items.filter(i => i.status === 'running');
+    const hasMyTask = waiting.length || running.length;
     const card = $('my-queue-card');
     const status = $('my-queue-status');
     const list = $('my-queue-items');
     if (!items.length && !(activeWS && activeWS.readyState === WebSocket.OPEN)) {
       _myQueueRunning = false;
       card.classList.add('hidden');
-      if (!activeWS && !_cooldownTimer && !_isGenerating) $('btn-run').disabled = false;
+      if (!activeWS && !hasMyTask) { $('btn-run').disabled = false; if ($('btn-run').textContent !== '▶ 开始生成') $('btn-run').textContent = '▶ 开始生成'; }
     } else {
       card.classList.remove('hidden');
-      const waiting = items.filter(i => i.status === 'waiting');
-      const running = items.filter(i => i.status === 'running');
-      const hasMyTask = waiting.length || running.length;
       _myQueueRunning = !!running.length;
       if (hasMyTask) $('btn-run').disabled = true;
       if (mirroring) {
@@ -2346,7 +2376,7 @@ async function pollMyQueue() {
     }
   } catch(e){console.error(e)}
 }
-setInterval(pollMyQueue, 2000);
+setInterval(pollMyQueue, 1000);
 pollMyQueue();
 
 
