@@ -139,6 +139,8 @@
   .selected .wf-label, .selected .style-label {
     color: #f472b6;
   }
+  .pick-label-btn { cursor: pointer; }
+  .pick-label-btn:hover { text-decoration: line-through; }
 
   /* 工作流选区容器 */
   .wf-scroll, .style-scroll { max-height: 50vh; overflow-y: auto; }
@@ -148,6 +150,11 @@
   .style-grid {
     display: flex; flex-wrap: wrap; gap: 6px;
   }
+  .char-picker-col { flex: 1; min-width: 0; }
+  .char-picker-col h4 { font-size: 13px; font-weight: 700; color: #374151; margin-bottom: 6px; }
+  .char-picker-col input { width: 100%; border: 1px solid #f9a8d4; border-radius: 10px; padding: 6px 10px; font-size: 12px; margin-bottom: 8px; outline: none; }
+  .char-picker-col input:focus { border-color: #f472b6; box-shadow: 0 0 0 2px rgba(244,114,182,0.15); }
+  .char-picker-grid { display: flex; flex-wrap: wrap; gap: 5px; }
   .wf-cat-title { font-size: 12px; font-weight: 600; color: #9ca3af; margin: 14px 0 8px; }
 
   /* 响应式表单 */
@@ -384,6 +391,28 @@
         class="w-full border border-pink-200 rounded-xl px-3 py-2 text-sm bg-white text-gray-700 focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none" />
     </div>
     <div id="picker-grid" class="flex-1 overflow-y-auto px-5 pt-3 pb-4 min-h-0"></div>
+    <div id="picker-dual" class="hidden flex-1 overflow-y-auto px-5 pt-3 pb-4 min-h-0">
+      <div class="flex items-center gap-4 mb-3 text-sm text-gray-600 font-medium flex-wrap min-h-[28px]" id="pick-current-label"></div>
+      <div class="flex gap-4" style="min-height:200px">
+        <div class="char-picker-col">
+          <h4 style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            🎭 角色
+            <input id="pick-char-search" type="text" placeholder="搜索角色..."
+              style="flex:1;min-width:0;border:1px solid #f9a8d4;border-radius:10px;padding:4px 8px;font-size:12px;outline:none" />
+          </h4>
+          <div id="pick-char-grid" class="char-picker-grid"></div>
+        </div>
+        <div class="w-px bg-pink-100 shrink-0"></div>
+        <div class="char-picker-col">
+          <h4 style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+            🖌️ 画风
+            <input id="pick-style-search" type="text" placeholder="搜索画风..."
+              style="flex:1;min-width:0;border:1px solid #f9a8d4;border-radius:10px;padding:4px 8px;font-size:12px;outline:none" />
+          </h4>
+          <div id="pick-style-grid" class="char-picker-grid"></div>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -458,14 +487,13 @@
       </div>
     </div>
 
-    <!-- 画风 -->
-    <div id="style-section" class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 hidden">
-      <div id="style-header" class="flex items-center cursor-pointer select-none" title="点击选择画风">
+    <!-- 角色 & 画风 -->
+    <div id="charstyle-section" class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 hidden">
+      <div id="charstyle-header" class="flex items-center cursor-pointer select-none" title="点击选择角色和画风">
         <h2 class="text-base font-bold flex flex-col min-w-0 flex-1 text-gray-700">
-          <div class="flex items-center gap-1.5">
-            🖌️ 画风
+          <div class="flex items-center gap-1.5 text-sm sm:text-base">
+            🎭 角色 &amp; 🖌️ 画风
           </div>
-          <span id="style-current" class="hidden font-bold text-pink-600 text-xs sm:text-[18px] self-start inline-block bg-gradient-to-r from-pink-100 to-rose-100 border-2 border-pink-300 rounded-full px-4 py-1.5"></span>
         </h2>
       </div>
     </div>
@@ -1022,6 +1050,7 @@ let _pickerKind = '';
 
 async function openWorkflowPicker() {
   _pickerKind = 'workflow';
+  $('picker-search').style.display = '';
   $('picker-title').textContent = '📋 选择工作流';
   $('picker-search').placeholder = '搜索工作流...';
   $('picker-search').value = '';
@@ -1034,23 +1063,28 @@ async function openWorkflowPicker() {
   renderPickerGrid();
 }
 
-async function openStylePicker() {
-  _pickerKind = 'style';
-  $('picker-title').textContent = '🖌️ 选择画风';
-  $('picker-search').placeholder = '搜索画风...';
-  $('picker-search').value = '';
-  $('picker-grid').innerHTML = '<div class="text-gray-400 text-sm text-center py-8">加载中...</div>';
+async function openCharStylePicker() {
+  _pickerKind = 'charstyle';
+  $('picker-search').style.display = 'none';
+  $('picker-grid').classList.add('hidden');
+  $('picker-dual').classList.remove('hidden');
+  $('pick-char-search').value = '';
+  $('pick-style-search').value = '';
+  $('pick-char-grid').innerHTML = '<div class="text-gray-400 text-sm text-center py-4 w-full">加载中...</div>';
+  $('pick-style-grid').innerHTML = '<div class="text-gray-400 text-sm text-center py-4 w-full">加载中...</div>';
   $('picker-modal').classList.remove('hidden');
   $('picker-modal').classList.add('flex');
   lockScroll();
-  $('picker-search').focus();
   await loadStyles();
-  renderPickerGrid();
+  renderCharStyleGrid();
 }
 
 function closePicker() {
   $('picker-modal').classList.add('hidden');
   $('picker-modal').classList.remove('flex');
+  $('picker-search').style.display = '';
+  $('picker-grid').classList.remove('hidden');
+  $('picker-dual').classList.add('hidden');
   unlockScroll();
 }
 
@@ -1090,15 +1124,82 @@ function renderPickerGrid() {
         const tags = el.dataset.styleTags;
         if (getSelectedStyle() === tags) setSelectedStyle('');
         else setSelectedStyle(tags);
-        renderStyles();
+        renderCharStyles();
         closePicker();
       });
     });
   }
 }
 
+function renderCharStyleGrid() {
+  const cSel = getSelectedCharacter();
+  const sSel = getSelectedStyle();
+  const cObj = cSel ? allCharacters.find(c => c.tags === cSel) : null;
+  const sObj = sSel ? allStyles.find(s => s.tags === sSel) : null;
+  let labelHtml = '';
+  if (cObj) labelHtml += `<span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-pink-100 text-pink-700 font-medium pick-label-btn" data-clear="char">🎭 ✕ ${_esc(cObj.name || cObj.tags)}</span>`;
+  if (sObj) labelHtml += `<span class="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-pink-100 text-pink-700 font-medium pick-label-btn" data-clear="style">🖌️ ✕ ${_esc(sObj.name || sObj.tags)}</span>`;
+  if (!labelHtml) labelHtml = '<span class="text-gray-400">未选择</span>';
+  $('pick-current-label').innerHTML = labelHtml;
+
+  const cq = $('pick-char-search').value.toLowerCase().trim();
+  const sq = $('pick-style-search').value.toLowerCase().trim();
+
+  // 角色
+  let cPool = cq ? allCharacters.filter(c => (c.name||'').toLowerCase().includes(cq) || (c.tags||'').toLowerCase().includes(cq)) : allCharacters;
+  const cGrid = $('pick-char-grid');
+  if (!cPool.length) { cGrid.innerHTML = '<div class="text-gray-400 text-xs text-center py-6 w-full">无匹配角色</div>'; }
+  else {
+    cGrid.innerHTML = cPool.map(c => {
+      const active = c.tags === cSel;
+      const thumb = c.image ? `<img src="/api/character_thumbnail?name=${encodeURIComponent(c.image)}" class="style-thumb" loading="lazy" alt="" />`
+        : `<div class="style-thumb flex items-center justify-center text-gray-300 text-xs">无图</div>`;
+      return `<div class="style-card${active?' selected':''}" data-char-tags="${_esc(c.tags)}" title="${_esc(c.tags)}">${thumb}<div class="style-label">${_esc(c.name||c.tags)}</div></div>`;
+    }).join('');
+    cGrid.querySelectorAll('.style-card').forEach(el => {
+      el.addEventListener('click', () => {
+        const tags = el.dataset.charTags;
+        if (getSelectedCharacter() === tags) setSelectedCharacter('');
+        else setSelectedCharacter(tags);
+        renderCharStyles();
+        renderCharStyleGrid();
+      });
+    });
+  }
+
+  // 画风
+  let sPool = sq ? allStyles.filter(s => (s.name||'').toLowerCase().includes(sq) || (s.tags||'').toLowerCase().includes(sq)) : allStyles;
+  const sGrid = $('pick-style-grid');
+  if (!sPool.length) { sGrid.innerHTML = '<div class="text-gray-400 text-xs text-center py-6 w-full">无匹配画风</div>'; }
+  else {
+    sGrid.innerHTML = sPool.map(s => {
+      const active = s.tags === sSel;
+      const thumb = s.image ? `<img src="/api/style_thumbnail?name=${encodeURIComponent(s.image)}" class="style-thumb" loading="lazy" alt="" />`
+        : `<div class="style-thumb flex items-center justify-center text-gray-300 text-xs">无图</div>`;
+      return `<div class="style-card${active?' selected':''}" data-style-tags="${_esc(s.tags)}" title="${_esc(s.tags)}">${thumb}<div class="style-label">${_esc(s.name||s.tags)}</div></div>`;
+    }).join('');
+    sGrid.querySelectorAll('.style-card').forEach(el => {
+      el.addEventListener('click', () => {
+        const tags = el.dataset.styleTags;
+        if (getSelectedStyle() === tags) setSelectedStyle('');
+        else setSelectedStyle(tags);
+        renderCharStyles();
+        renderCharStyleGrid();
+      });
+    });
+  }
+}
+
 $('wf-header').addEventListener('click', openWorkflowPicker);
-$('style-header').addEventListener('click', openStylePicker);
+$('charstyle-header').addEventListener('click', openCharStylePicker);
+$('pick-char-search').addEventListener('input', () => renderCharStyleGrid());
+$('pick-style-search').addEventListener('input', () => renderCharStyleGrid());
+$('pick-current-label').addEventListener('click', (e) => {
+  const el = e.target.closest('[data-clear]');
+  if (!el) return;
+  if (el.dataset.clear === 'char') { setSelectedCharacter(''); renderCharStyles(); renderCharStyleGrid(); }
+  else if (el.dataset.clear === 'style') { setSelectedStyle(''); renderCharStyles(); renderCharStyleGrid(); }
+});
 
 async function selectWorkflow(path) {
   forkedWorkflow = null;
@@ -1108,11 +1209,15 @@ async function selectWorkflow(path) {
   await loadCurrent(true);
 }
 
-// ==================== 画风 ====================
+// ==================== 角色 & 画风 ====================
 let allStyles = [];
+let allCharacters = [];
 function getSelectedStyle() { return localStorage.getItem('currentStyle') || ''; }
 function setSelectedStyle(tags) { if (tags) localStorage.setItem('currentStyle', tags); else localStorage.removeItem('currentStyle'); }
 function getSelectedStyleTags() { return getSelectedStyle(); }
+function getSelectedCharacter() { return localStorage.getItem('currentCharacter') || ''; }
+function setSelectedCharacter(tags) { if (tags) localStorage.setItem('currentCharacter', tags); else localStorage.removeItem('currentCharacter'); }
+function getSelectedCharacterTags() { return getSelectedCharacter(); }
 
 async function loadResolutions() {
   try {
@@ -1139,26 +1244,19 @@ async function loadResolutions() {
 
 async function loadStyles() {
   try {
-    const r = await fetch('/api/styles');
-    const d = await r.json();
-    allStyles = (d.styles || []).sort((a, b) => (b.name ? 1 : 0) - (a.name ? 1 : 0));
-  } catch { allStyles = []; }
-  renderStyles();
+    const [sr, cr] = await Promise.all([fetch('/api/styles'), fetch('/api/characters')]);
+    const sd = await sr.json();
+    const cd = await cr.json();
+    allStyles = (sd.styles || []).sort((a, b) => (b.name ? 1 : 0) - (a.name ? 1 : 0));
+    allCharacters = (cd.characters || []).sort((a, b) => (b.name ? 1 : 0) - (a.name ? 1 : 0));
+  } catch { allStyles = []; allCharacters = []; }
+  renderCharStyles();
 }
 
-function renderStyles() {
-  const section = $('style-section');
-  if (!allStyles.length) { section.classList.add('hidden'); return; }
+function renderCharStyles() {
+  const section = $('charstyle-section');
+  if (!allStyles.length && !allCharacters.length) { section.classList.add('hidden'); return; }
   section.classList.remove('hidden');
-  const sel = getSelectedStyle();
-  const selStyle = sel ? allStyles.find(s => s.tags === sel) : null;
-  if (selStyle) {
-    $('style-current').textContent = selStyle.name || selStyle.tags;
-    $('style-current').classList.remove('hidden');
-  } else {
-    $('style-current').textContent = '';
-    $('style-current').classList.add('hidden');
-  }
 }
 
 // ==================== 生图 ====================
@@ -1214,6 +1312,7 @@ async function actuallyStartRun(direct, nl, neg, w, h) {
     rewrite: $('rewrite').checked,
     width: w, height: h,
     style_tags: getSelectedStyleTags(),
+    character_tags: getSelectedCharacterTags(),
     negative_prompt: neg,
     prompt_mode: $('prompt-mode').value,
     image1_name: image1_name,
@@ -1844,7 +1943,7 @@ $('lb-fork').addEventListener('click', async () => {
     let bp = ovPrompt;
     for (const s of allStyles) { if (s.tags && bp.startsWith(s.tags)) { styleTags = s.tags; bp = bp.slice(s.tags.length).replace(/^,\s*/, '').trim(); break; } }
     setSelectedStyle(styleTags);
-    renderStyles();
+    renderCharStyles();
     forkedWorkflow = null;
     forkedMeta = null;
     setCurrentPath(d.workflow_name);

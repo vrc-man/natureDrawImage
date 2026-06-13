@@ -720,7 +720,7 @@ def lookup_creator_ip(path: str) -> Optional[str]:
 
 
 # ═══════════════════════════════════════════
-# 画风 / 分辨率 / 工作流元数据
+# 画风 / 角色 / 分辨率 / 工作流元数据
 # ═══════════════════════════════════════════
 
 def load_styles() -> List[Dict]:
@@ -736,6 +736,25 @@ def save_styles(styles: List[Dict]) -> None:
             _db().execute(
                 "INSERT INTO styles (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
                 (s.get("name", ""), s.get("tags", ""), s.get("alias", ""), s.get("thumbnail", ""), i))
+        _db().commit()
+    except Exception:
+        _db().execute("ROLLBACK")
+        raise
+
+
+def load_characters() -> List[Dict]:
+    rows = _db().execute("SELECT * FROM characters ORDER BY sort_order").fetchall()
+    return [dict(r) for r in rows]
+
+
+def save_characters(characters: List[Dict]) -> None:
+    _db().execute("BEGIN IMMEDIATE")
+    try:
+        _db().execute("DELETE FROM characters")
+        for i, c in enumerate(characters):
+            _db().execute(
+                "INSERT INTO characters (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
+                (c.get("name", ""), c.get("tags", ""), c.get("alias", ""), c.get("thumbnail", ""), i))
         _db().commit()
     except Exception:
         _db().execute("ROLLBACK")

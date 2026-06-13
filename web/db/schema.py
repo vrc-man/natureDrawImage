@@ -197,6 +197,18 @@ SCHEMA = [
     )
     """,
 
+    # ── 角色 ──
+    """
+    CREATE TABLE IF NOT EXISTS characters (
+        id        INTEGER PRIMARY KEY AUTOINCREMENT,
+        name      TEXT NOT NULL,
+        tags      TEXT NOT NULL DEFAULT '',
+        alias     TEXT NOT NULL DEFAULT '',
+        thumbnail TEXT NOT NULL DEFAULT '',
+        sort_order INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+
     # ── 分辨率预设 ──
     """
     CREATE TABLE IF NOT EXISTS resolutions (
@@ -450,6 +462,14 @@ def migrate_from_json(data_dir: Path):
         db.execute(
             "INSERT INTO styles (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
             (s.get("name", ""), s.get("tags", ""), s.get("alias", ""), s.get("thumbnail", ""), i)
+        )
+
+    # ── 角色 ──
+    characters = _load_json_list(data_dir / "characters.json")
+    for i, c in enumerate(characters):
+        db.execute(
+            "INSERT INTO characters (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
+            (c.get("name", ""), c.get("tags", ""), c.get("alias", ""), c.get("thumbnail", ""), i)
         )
 
     # ── 分辨率 ──

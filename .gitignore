@@ -24,6 +24,7 @@ web/featured.txt
 web/reports.json
 web/limits.json
 web/styles.json
+web/characters.json
 web/resolutions.json
 web/llm_config.json
 web/announcement.json
@@ -44,6 +45,7 @@ web/deletion_log.json
 web/deletion_thumbs
 web/thumbnails
 web/style_thumbnails
+web/character_thumbnails
 web/lora_links
 web/backups
 web/uploads

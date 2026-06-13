@@ -427,6 +427,8 @@ LLM_CONFIG_FILE = Path(__file__).parent / "llm_config.json"
 
 STYLES_FILE = Path(__file__).parent / "styles.json"
 STYLE_THUMB_DIR = Path(__file__).parent / "style_thumbnails"
+CHARACTERS_FILE = Path(__file__).parent / "characters.json"
+CHAR_THUMB_DIR = Path(__file__).parent / "character_thumbnails"
 RESOLUTIONS_FILE = Path(__file__).parent / "resolutions.json"
 MAINTENANCE_FILE = Path(__file__).parent / "maintenance.json"
 CUSTOM_HEAD_FILE = Path(__file__).parent / "custom_head.json"
@@ -435,6 +437,7 @@ _featured_lock = asyncio.Lock()
 _limits_lock = asyncio.Lock()
 
 _styles_lock = asyncio.Lock()
+_characters_lock = asyncio.Lock()
 _announcement_lock = asyncio.Lock()
 _llm_config_lock = asyncio.Lock()
 _maintenance_lock = asyncio.Lock()
@@ -712,6 +715,37 @@ def _load_styles() -> List[Dict[str, Any]]:
 
 
 _styles: List[Dict[str, Any]] = _load_styles()
+
+
+# ---------------- 角色配置 ----------------
+def _load_characters() -> List[Dict[str, Any]]:
+    if not CHARACTERS_FILE.is_file():
+        return []
+    try:
+        d = json.loads(CHARACTERS_FILE.read_text(encoding="utf-8"))
+        if not isinstance(d, list):
+            return []
+        return [
+            {"name": str(s.get("name", "")), "tags": str(s.get("tags", "")), "image": str(s.get("image", ""))}
+            for s in d if isinstance(s, dict) and str(s.get("tags", "")).strip()
+        ]
+    except Exception:
+        return []
+
+
+_characters: List[Dict[str, Any]] = _load_characters()
+
+
+async def _save_characters(data: List[Dict[str, Any]]) -> bool:
+    async with _characters_lock:
+        try:
+            tmp = CHARACTERS_FILE.with_suffix(".json.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, CHARACTERS_FILE)
+            return True
+        except Exception:
+            return False
 
 
 async def _save_styles(data: List[Dict[str, Any]]) -> bool:
@@ -3770,6 +3804,37 @@ async def api_resolutions_public():
     return dict(_resolutions)
 
 
+@app.get("/api/characters")
+async def api_characters_public():
+    return {"characters": list(_characters)}
+
+
+@app.get("/api/character_thumbnail")
+async def api_character_thumbnail(request: Request, name: str):
+    if not name or ".." in name or "/" in name or "\\" in name:
+        raise HTTPException(400, "invalid name")
+    for ext in THUMB_EXTS:
+        candidate = CHAR_THUMB_DIR / (name + ext)
+        try:
+            cr = candidate.resolve()
+            if cr.is_file() and cr.is_relative_to(CHAR_THUMB_DIR.resolve()):
+                resp = _serve_image_maybe_webp(request, cr, quality=72, max_side=256)
+                resp.headers["Cache-Control"] = "public, max-age=60"
+                return resp
+        except Exception:
+            continue
+    p = CHAR_THUMB_DIR / name
+    try:
+        cr = p.resolve()
+        if cr.is_file() and cr.is_relative_to(CHAR_THUMB_DIR.resolve()):
+            resp = _serve_image_maybe_webp(request, cr, quality=72, max_side=256)
+            resp.headers["Cache-Control"] = "public, max-age=60"
+            return resp
+    except Exception:
+        pass
+    raise HTTPException(404, "no character thumbnail")
+
+
 @app.get("/api/style_thumbnail")
 async def api_style_thumbnail(request: Request, name: str):
     if not name or ".." in name or "/" in name or "\\" in name:
@@ -4794,6 +4859,7 @@ class RunRequest(BaseModel):
     width: Optional[int] = None
     height: Optional[int] = None
     style_tags: str = ""
+    character_tags: str = ""
     negative_prompt: str = ""
     image1_name: str = ""
     image2_name: str = ""
@@ -5899,8 +5965,11 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
     sep = "\n" if req.prompt_mode == "natural" else ", "
 
     style_tags = req.style_tags.strip()
+    character_tags = req.character_tags.strip()
     if style_tags:
         await emit(ws, {"type": "log", "message": f"画风词条：{style_tags}"})
+    if character_tags:
+        await emit(ws, {"type": "log", "message": f"角色词条：{character_tags}"})
 
     llm_negative = ""
     if req.nl_prompt:
@@ -5930,8 +5999,12 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
         sd_prompt = req.direct_prompt
         await emit(ws, {"type": "log", "message": "[2/4] 跳过 LLM"})
 
-    if style_tags:
+    if style_tags and character_tags:
+        sd_prompt = sep.join([style_tags, character_tags, sd_prompt]) if sd_prompt else sep.join([style_tags, character_tags])
+    elif style_tags:
         sd_prompt = sep.join([style_tags, sd_prompt]) if sd_prompt else style_tags
+    elif character_tags:
+        sd_prompt = sep.join([character_tags, sd_prompt]) if sd_prompt else character_tags
 
     if not sd_prompt.strip():
         await emit(ws, {"type": "error", "message": "最终 prompt 为空"})
@@ -7495,6 +7568,51 @@ async def api_admin_styles_set(request: Request, payload: Dict[str, Any]):
     _styles.clear()
     _styles.extend(cleaned)
     return {"ok": True, "styles": list(_styles)}
+
+
+# ---------------- 角色端点 ----------------
+
+@app.get("/api/admin/characters")
+async def api_admin_characters_get(request: Request):
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    return {"characters": list(_characters)}
+
+
+@app.post("/api/admin/characters")
+async def api_admin_characters_set(request: Request, payload: Dict[str, Any]):
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "payload must be object")
+    raw = payload.get("characters")
+    if not isinstance(raw, list):
+        raise HTTPException(400, "characters must be array")
+    cleaned = []
+    for s in raw:
+        if not isinstance(s, dict):
+            continue
+        tags = str(s.get("tags", "")).strip()
+        if not tags:
+            continue
+        cleaned.append({
+            "name": str(s.get("name", "")).strip(),
+            "tags": tags,
+            "image": str(s.get("image", "")).strip(),
+        })
+    if not await _save_characters(cleaned):
+        raise HTTPException(500, "写入 characters.json 失败")
+    _characters.clear()
+    _characters.extend(cleaned)
+    return {"ok": True, "characters": list(_characters)}
+
+
+@app.post("/api/admin/character_thumbnail")
+async def api_admin_character_thumbnail_upload(request: Request, file: UploadFile):
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    filename = await _save_upload(file, CHAR_THUMB_DIR)
+    return {"ok": True, "filename": filename}
 
 
 # ---------------- 分辨率端点 ----------------

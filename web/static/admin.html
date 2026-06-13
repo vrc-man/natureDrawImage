@@ -149,6 +149,26 @@
     </div>
   </div>
 
+  <!-- 角色管理 -->
+  <div class="bg-white rounded shadow p-4 mb-4">
+    <div class="flex items-center justify-between mb-2">
+      <h2 class="text-lg font-semibold cursor-pointer select-none" data-toggle="characters-body">
+        <span class="inline-block w-4 text-gray-400" data-arrow="characters-body">▸</span>
+        🎭 角色管理
+        <span id="characters-count-badge" class="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">0</span>
+      </h2>
+      <button id="btn-refresh-characters" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300">刷新</button>
+    </div>
+    <div id="characters-body" class="hidden">
+      <p class="text-xs text-gray-500 mb-2">配置可选角色。tags 为必填项（英文 Danbooru 标签），名称为可选别名（不填则前端直接显示 tags）。用户选择角色后，tags 会被追加到 prompt 中画风之后。</p>
+      <div id="characters-entries" class="flex flex-col gap-2 mb-3"></div>
+      <div class="flex items-center gap-2">
+        <button id="btn-add-character" class="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm">+ 添加角色</button>
+        <span id="characters-status" class="text-xs text-gray-500"></span>
+      </div>
+    </div>
+  </div>
+
   <!-- 工作流元数据管理 -->
   <div class="bg-white rounded shadow p-4 mb-4">
     <div class="flex items-center justify-between mb-2">
@@ -1877,6 +1897,116 @@ $('btn-add-style').addEventListener('click', () => {
 $('btn-refresh-styles').addEventListener('click', loadStyles);
 
 loadStyles();
+
+// -------- 角色管理 --------
+let adminCharacters = [];
+
+function renderCharacterEntries() {
+  const container = $('characters-entries');
+  container.innerHTML = adminCharacters.map((s, i) => {
+    const thumbSrc = s.image ? `/api/character_thumbnail?name=${encodeURIComponent(s.image)}` : '';
+    const thumbEl = s.image
+      ? `<img src="${thumbSrc}" class="w-12 h-12 object-cover rounded bg-gray-50" />`
+      : `<div class="w-12 h-12 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">无图</div>`;
+    return `<div class="flex items-start gap-2 p-2 border rounded bg-gray-50" data-idx="${i}">
+      <div class="flex-shrink-0 flex flex-col items-center gap-1">
+        ${thumbEl}
+        <label class="text-[10px] text-blue-600 cursor-pointer hover:underline">
+          上传
+          <input type="file" accept="image/*" class="character-upload hidden" data-idx="${i}" />
+        </label>
+      </div>
+      <div class="flex flex-col gap-1 flex-1 text-sm">
+        <textarea rows="2" placeholder="英文 tags（必填，逗号分隔）"
+          class="character-tags border rounded px-2 py-1 font-mono text-xs" data-idx="${i}">${escHtml(s.tags)}</textarea>
+        <input type="text" value="${escHtml(s.name)}" placeholder="别名（可选，不填则显示 tags）"
+          class="character-name border rounded px-2 py-1" data-idx="${i}" />
+      </div>
+      <div class="flex flex-col gap-1">
+        <button class="character-up text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
+        <button class="character-down text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === adminCharacters.length - 1 ? 'disabled' : ''}>▼</button>
+        <button class="character-del text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600" data-idx="${i}">✕</button>
+      </div>
+    </div>`;
+  }).join('');
+  container.querySelectorAll('.character-name').forEach(el => {
+    el.addEventListener('input', () => { adminCharacters[+el.dataset.idx].name = el.value; autoSaveCharacters(); });
+  });
+  container.querySelectorAll('.character-tags').forEach(el => {
+    el.addEventListener('input', () => { adminCharacters[+el.dataset.idx].tags = el.value; autoSaveCharacters(); });
+  });
+  container.querySelectorAll('.character-upload').forEach(el => {
+    el.addEventListener('change', async () => {
+      const file = el.files[0];
+      if (!file) return;
+      const idx = +el.dataset.idx;
+      const form = new FormData();
+      try {
+        const compressed = await resizeImageTo256(file);
+        form.append('file', compressed, compressed.name);
+      } catch(e) { $('characters-status').textContent = '压缩失败: ' + e.message; return; }
+      try {
+        const r = await fetch('/api/admin/character_thumbnail', { method: 'POST', body: form });
+        if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText); }
+        const d = await r.json();
+        const entry = adminCharacters[idx];
+        if (entry) { entry.image = d.filename; }
+        renderCharacterEntries();
+        autoSaveCharacters();
+      } catch (e) { $('characters-status').textContent = '上传失败: ' + e.message; }
+    });
+  });
+  container.querySelectorAll('.character-up').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = +el.dataset.idx;
+      if (i > 0) { [adminCharacters[i-1], adminCharacters[i]] = [adminCharacters[i], adminCharacters[i-1]]; renderCharacterEntries(); autoSaveCharacters(); }
+    });
+  });
+  container.querySelectorAll('.character-down').forEach(el => {
+    el.addEventListener('click', () => {
+      const i = +el.dataset.idx;
+      if (i < adminCharacters.length - 1) { [adminCharacters[i], adminCharacters[i+1]] = [adminCharacters[i+1], adminCharacters[i]]; renderCharacterEntries(); autoSaveCharacters(); }
+    });
+  });
+  container.querySelectorAll('.character-del').forEach(el => {
+    el.addEventListener('click', () => { adminCharacters.splice(+el.dataset.idx, 1); renderCharacterEntries(); autoSaveCharacters(); });
+  });
+  $('characters-count-badge').textContent = adminCharacters.length;
+}
+
+async function loadCharacters() {
+  try {
+    const d = await api('GET', '/api/admin/characters');
+    adminCharacters = (d.characters || []).map(s => ({name: s.name || '', tags: s.tags || '', image: s.image || ''}));
+    renderCharacterEntries();
+    $('characters-status').textContent = '';
+  } catch (e) { $('characters-status').textContent = '加载失败: ' + e.message; }
+}
+
+let _saveCharactersTimer = null;
+async function saveCharacters() {
+  try {
+    await api('POST', '/api/admin/characters', { characters: adminCharacters });
+    $('characters-status').textContent = '✓ 已保存';
+    setTimeout(() => { $('characters-status').textContent = ''; }, 2000);
+  } catch (e) { $('characters-status').textContent = '保存失败: ' + e.message; }
+}
+function autoSaveCharacters() {
+  clearTimeout(_saveCharactersTimer);
+  $('characters-status').textContent = '保存中…';
+  _saveCharactersTimer = setTimeout(saveCharacters, 600);
+}
+
+$('btn-add-character').addEventListener('click', () => {
+  adminCharacters.push({name: '', tags: '', image: ''});
+  renderCharacterEntries();
+  autoSaveCharacters();
+  const entries = $('characters-entries').querySelectorAll('.character-tags');
+  if (entries.length) entries[entries.length - 1].focus();
+});
+$('btn-refresh-characters').addEventListener('click', loadCharacters);
+
+loadCharacters();
 
 // -------- 工作流元数据管理 --------
 let adminWfMeta = [];
