@@ -726,7 +726,7 @@ def _load_characters() -> List[Dict[str, Any]]:
         if not isinstance(d, list):
             return []
         return [
-            {"name": str(s.get("name", "")), "tags": str(s.get("tags", "")), "image": str(s.get("image", ""))}
+            {"name": str(s.get("name", "")), "tags": str(s.get("tags", "")), "image": str(s.get("image", "")), "category": str(s.get("category", "")).strip()}
             for s in d if isinstance(s, dict) and str(s.get("tags", "")).strip()
         ]
     except Exception:
@@ -739,6 +739,7 @@ _characters: List[Dict[str, Any]] = _load_characters()
 async def _save_characters(data: List[Dict[str, Any]]) -> bool:
     async with _characters_lock:
         try:
+            _clean_orphan_thumbs(_characters, data, CHAR_THUMB_DIR)
             tmp = CHARACTERS_FILE.with_suffix(".json.tmp")
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -751,6 +752,7 @@ async def _save_characters(data: List[Dict[str, Any]]) -> bool:
 async def _save_styles(data: List[Dict[str, Any]]) -> bool:
     async with _styles_lock:
         try:
+            _clean_orphan_thumbs(_styles, data, STYLE_THUMB_DIR)
             tmp = STYLES_FILE.with_suffix(".json.tmp")
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -758,6 +760,21 @@ async def _save_styles(data: List[Dict[str, Any]]) -> bool:
             return True
         except Exception:
             return False
+
+
+def _clean_orphan_thumbs(old_list: List[Dict], new_list: List[Dict], thumb_dir: Path) -> None:
+    """保存前删除被移除条目的缩略图文件。"""
+    old_images = set(s.get("image", "") for s in old_list if s.get("image"))
+    new_images = set(s.get("image", "") for s in new_list if s.get("image"))
+    for img in old_images - new_images:
+        for ext in THUMB_EXTS:
+            p = thumb_dir / (img + ext)
+            if p.is_file():
+                try:
+                    p.unlink()
+                except Exception:
+                    pass
+                break
 
 
 DEFAULT_RESOLUTIONS = {
@@ -3818,8 +3835,8 @@ async def api_character_thumbnail(request: Request, name: str):
         try:
             cr = candidate.resolve()
             if cr.is_file() and cr.is_relative_to(CHAR_THUMB_DIR.resolve()):
-                resp = _serve_image_maybe_webp(request, cr, quality=72, max_side=256)
-                resp.headers["Cache-Control"] = "public, max-age=60"
+                resp = _serve_image_maybe_webp(request, cr, quality=80)
+                resp.headers["Cache-Control"] = "public, max-age=604800, immutable"
                 return resp
         except Exception:
             continue
@@ -3827,8 +3844,8 @@ async def api_character_thumbnail(request: Request, name: str):
     try:
         cr = p.resolve()
         if cr.is_file() and cr.is_relative_to(CHAR_THUMB_DIR.resolve()):
-            resp = _serve_image_maybe_webp(request, cr, quality=72, max_side=256)
-            resp.headers["Cache-Control"] = "public, max-age=60"
+            resp = _serve_image_maybe_webp(request, cr, quality=80)
+            resp.headers["Cache-Control"] = "public, max-age=604800, immutable"
             return resp
     except Exception:
         pass
@@ -3844,8 +3861,8 @@ async def api_style_thumbnail(request: Request, name: str):
         try:
             cr = candidate.resolve()
             if cr.is_file() and cr.is_relative_to(STYLE_THUMB_DIR.resolve()):
-                resp = _serve_image_maybe_webp(request, cr, quality=72, max_side=256)
-                resp.headers["Cache-Control"] = "public, max-age=60"
+                resp = _serve_image_maybe_webp(request, cr, quality=80)
+                resp.headers["Cache-Control"] = "public, max-age=604800, immutable"
                 return resp
         except Exception:
             continue
@@ -3853,8 +3870,8 @@ async def api_style_thumbnail(request: Request, name: str):
     try:
         cr = p.resolve()
         if cr.is_file() and cr.is_relative_to(STYLE_THUMB_DIR.resolve()):
-            resp = _serve_image_maybe_webp(request, cr, quality=72, max_side=256)
-            resp.headers["Cache-Control"] = "public, max-age=60"
+            resp = _serve_image_maybe_webp(request, cr, quality=80)
+            resp.headers["Cache-Control"] = "public, max-age=604800, immutable"
             return resp
     except Exception:
         pass
@@ -5999,12 +6016,10 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
         sd_prompt = req.direct_prompt
         await emit(ws, {"type": "log", "message": "[2/4] 跳过 LLM"})
 
-    if style_tags and character_tags:
-        sd_prompt = sep.join([style_tags, character_tags, sd_prompt]) if sd_prompt else sep.join([style_tags, character_tags])
-    elif style_tags:
-        sd_prompt = sep.join([style_tags, sd_prompt]) if sd_prompt else style_tags
-    elif character_tags:
+    if character_tags:
         sd_prompt = sep.join([character_tags, sd_prompt]) if sd_prompt else character_tags
+    if style_tags:
+        sd_prompt = sep.join([sd_prompt, style_tags]) if sd_prompt else style_tags
 
     if not sd_prompt.strip():
         await emit(ws, {"type": "error", "message": "最终 prompt 为空"})
@@ -7599,6 +7614,7 @@ async def api_admin_characters_set(request: Request, payload: Dict[str, Any]):
             "name": str(s.get("name", "")).strip(),
             "tags": tags,
             "image": str(s.get("image", "")).strip(),
+            "category": str(s.get("category", "")).strip(),
         })
     if not await _save_characters(cleaned):
         raise HTTPException(500, "写入 characters.json 失败")
@@ -7613,6 +7629,119 @@ async def api_admin_character_thumbnail_upload(request: Request, file: UploadFil
         raise HTTPException(403)
     filename = await _save_upload(file, CHAR_THUMB_DIR)
     return {"ok": True, "filename": filename}
+
+
+@app.post("/api/admin/scan-thumbnails")
+async def api_admin_scan_thumbnails(request: Request, payload: Dict[str, Any]):
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    stype = payload.get("type", "all")
+    result = {}
+
+    async def _scan_one(data_list: List[Dict], thumb_dir: Path, name: str) -> dict:
+        total = len(data_list)
+        matched = 0
+        missing = 0
+        changed = False
+        import tempfile
+        for entry in data_list:
+            img = entry.get("image", "")
+            if not img:
+                continue
+            found = False
+            for ext in THUMB_EXTS:
+                p = thumb_dir / (img + ext)
+                try:
+                    if p.is_file():
+                        # 强制 128x128 WebP
+                        with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as tf:
+                            tpath = tf.name
+                        from PIL import Image as _PIL
+                        _PIL.open(p).convert("RGB").resize((128, 128), _PIL.LANCZOS).save(tpath, "WEBP", quality=80, optimize=True)
+                        final_name = img[:img.rfind(".")] + ".webp" if "." in img else img + ".webp"
+                        dest = thumb_dir / final_name
+                        import shutil
+                        shutil.move(tpath, dest)
+                        # 删除旧文件
+                        if str(dest) != str(p.resolve()):
+                            p.unlink(missing_ok=True)
+                        if entry.get("image") != final_name:
+                            entry["image"] = final_name
+                            changed = True
+                        matched += 1
+                        found = True
+                        break
+                except Exception:
+                    pass
+            if not found:
+                missing += 1
+        if changed:
+            if name == "styles":
+                await _save_styles(data_list)
+            else:
+                await _save_characters(data_list)
+        return {"total": total, "matched": matched, "missing": missing}
+
+    if stype in ("styles", "all"):
+        result["styles"] = await _scan_one(_styles, STYLE_THUMB_DIR, "styles")
+    if stype in ("characters", "all"):
+        result["characters"] = await _scan_one(_characters, CHAR_THUMB_DIR, "characters")
+    if stype in ("workflows", "all"):
+        wf_total = 0
+        wf_matched = 0
+        wf_missing = 0
+        wf_changed = False
+        import tempfile, shutil
+        # 先扫描未注册到 workflow_meta 的工作流（按文件名发现缩略图）
+        all_wf_paths = set()
+        try:
+            for rel in scan_workflow_files():
+                if rel not in _workflow_meta:
+                    thumb = find_thumbnail(rel)
+                    if thumb:
+                        _workflow_meta[rel] = {"thumbnail": thumb.name}
+                        wf_changed = True
+        except Exception:
+            pass
+        for wf_path, meta in list(_workflow_meta.items()):
+            img = meta.get("thumbnail", "")
+            if not img:
+                # 自动发现：按工作流文件名匹配 thumbnails/ 下的文件
+                found_path = find_thumbnail(wf_path)
+                if found_path:
+                    img = found_path.name
+                else:
+                    continue
+            wf_total += 1
+            found = False
+            img_base = img[:img.rfind(".")] if "." in img else img
+            for ext in THUMB_EXTS:
+                p = THUMB_DIR / (img_base + ext)
+                try:
+                    if p.is_file():
+                        with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as tf:
+                            tpath = tf.name
+                        from PIL import Image as _PIL
+                        _PIL.open(p).convert("RGB").resize((128, 128), _PIL.LANCZOS).save(tpath, "WEBP", quality=80, optimize=True)
+                        final_name = img_base + ".webp"
+                        dest = THUMB_DIR / final_name
+                        shutil.move(tpath, dest)
+                        if str(dest) != str(p.resolve()):
+                            p.unlink(missing_ok=True)
+                        if meta.get("thumbnail") != final_name:
+                            meta["thumbnail"] = final_name
+                            wf_changed = True
+                        wf_matched += 1
+                        found = True
+                        break
+                except Exception:
+                    pass
+            if not found:
+                wf_missing += 1
+        if wf_changed:
+            await asyncio.to_thread(_save_workflow_meta_file, _workflow_meta)
+        result["workflows"] = {"total": wf_total, "matched": wf_matched, "missing": wf_missing}
+    return {"ok": True, **result}
 
 
 # ---------------- 分辨率端点 ----------------
@@ -7653,7 +7782,7 @@ async def api_admin_resolutions_set(request: Request, payload: Dict[str, Any]):
 
 
 def _verify_and_resize_thumb(dest: Path, dest_dir: Path, safe_name: str, ext: str) -> str:
-    """同步执行 PIL 校验+缩放到 256×256（跑在线程池）。"""
+    """同步执行 PIL 校验+缩放到 128×128 WebP（跑在线程池）。"""
     from PIL import Image as _PILImage, UnidentifiedImageError
     try:
         img = _PILImage.open(dest)
@@ -7666,15 +7795,14 @@ def _verify_and_resize_thumb(dest: Path, dest_dir: Path, safe_name: str, ext: st
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
         w, h = img.size
-        if w != 256 or h != 256 or ext != ".jpg":
-            img = img.resize((256, 256), _PILImage.LANCZOS)
+        if w != 128 or h != 128 or ext != ".webp":
+            img = img.resize((128, 128), _PILImage.LANCZOS)
             from io import BytesIO as _BytesIO
             buf = _BytesIO()
-            img.save(buf, format="JPEG", quality=82, optimize=True)
-            if ext != ".jpg":
-                dest.unlink(missing_ok=True)
-                safe_name = safe_name[: safe_name.rfind(".")] + ".jpg"
-                dest = dest_dir / safe_name
+            img.save(buf, format="WEBP", quality=80, optimize=True)
+            dest.unlink(missing_ok=True)
+            safe_name = safe_name[: safe_name.rfind(".")] + ".webp"
+            dest = dest_dir / safe_name
             dest.write_bytes(buf.getvalue())
     except HTTPException:
         raise
@@ -7731,17 +7859,20 @@ async def api_admin_style_thumbnail_upload(request: Request, file: UploadFile):
 # ---------------- 工作流元数据端点 ----------------
 
 def scan_workflow_files() -> List[str]:
-    """扫描 ComfyUI 工作流目录，返回所有 .json 文件的相对路径列表。最多 5000 个文件。"""
+    """扫描 ComfyUI 工作流目录，只返回 文生图/ 和 图生图/ 下的 .json 文件。最多 5000 个文件。"""
     root = Path(COMFYUI_WORKFLOWS_DIR)
     if not root.is_dir():
         return []
     results = []
     _MAX = 5000
-    for p in sorted(root.rglob("*.json")):
-        if len(results) >= _MAX:
-            break
-        rel = str(p.relative_to(root)).replace("\\", "/")
-        results.append(rel)
+    for sub in ("文生图", "图生图"):
+        sub_path = root / sub
+        if sub_path.is_dir():
+            for p in sorted(sub_path.rglob("*.json")):
+                if len(results) >= _MAX:
+                    break
+                rel = f"{sub}/{str(p.relative_to(sub_path)).replace(chr(92), '/')}"
+                results.append(rel)
     return results
 
 
@@ -7834,6 +7965,16 @@ async def api_admin_workflow_meta_set(request: Request, payload: Dict[str, Any])
             cleaned[wf] = entry
     if not await asyncio.to_thread(_save_workflow_meta_file, cleaned):
         raise HTTPException(500, "写入 workflow_meta.json 失败")
+    # 清理被移除条目的缩略图
+    old_thumbs = set(m.get("thumbnail", "") for m in _workflow_meta.values() if m.get("thumbnail"))
+    new_thumbs = set(m.get("thumbnail", "") for m in cleaned.values() if m.get("thumbnail"))
+    for t in old_thumbs - new_thumbs:
+        for ext in THUMB_EXTS:
+            p = THUMB_DIR / (t + ext)
+            if p.is_file():
+                try: p.unlink()
+                except: pass
+                break
     _workflow_meta.clear()
     _workflow_meta.update(cleaned)
     arr = []
