@@ -183,7 +183,7 @@ _gen_log_lock = asyncio.Lock()
 # 跟踪已预扣密钥次数的 WS 连接，用于断开/失败时回滚。key: id(ws)
 _key_usage_reserved_ws: Dict[int, str] = {}
 # 生图日志 {log_id: {github_id, login, prompt, workflow, count, status, client_ip, created_at}}
-# gen_log → SQLite  # 最多保留 20000 条日志
+# gen_log → SQLite  # 最多保留 100000 条日志
 
 def _load_gen_logs() -> Dict[str, Any]:
     return db.load_gen_logs()
@@ -320,6 +320,9 @@ async def _save_users(users: dict) -> None:
               u.get("created_at", _time_module.time())))
     db.invalidate_users_cache()
 
+def _session_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
 def _load_sessions() -> dict:
     return db.load_sessions()  # SQLite
 
@@ -346,7 +349,8 @@ async def _create_session(github_id: str) -> str:
         sessions = {k: v for k, v in sessions.items() if v.get("expires_at", 0) > now}
         # 清除同一用户的旧会话
         sessions = {k: v for k, v in sessions.items() if str(v.get("github_id")) != str(github_id)}
-        sessions[token] = {
+        token_hash = _session_hash(token)
+        sessions[token_hash] = {
             "github_id": str(github_id),
             "expires_at": now + SESSION_MAX_AGE_SEC,
             "access_granted": is_admin,  # 管理员自动放行
@@ -359,8 +363,11 @@ def _get_user_from_session(request: Request) -> Optional[dict]:
     token = request.cookies.get("session") or ""
     if not token:
         return None
+    token_hash = _session_hash(token)
     sessions = _load_sessions()
-    sess = sessions.get(token)
+    sess = sessions.get(token_hash)
+    if not sess:
+        sess = sessions.get(token)  # fallback: cookie中的旧token可能在迁移间隙
     if not sess:
         return None
     now = _time_module.time()
@@ -374,7 +381,7 @@ def _get_user_from_session(request: Request) -> Optional[dict]:
         if now - _last_refresh > 86400:  # 24 小时内不重复续
             sess["expires_at"] = now + SESSION_MAX_AGE_SEC
             _session_refresh_tracker[token] = now
-            db.save_session(token, sess.get("github_id",""), sess["expires_at"],
+            db.save_session(token_hash, sess.get("github_id",""), sess["expires_at"],
                            int(sess.get("access_granted",0)), sess.get("claimed_key",""))
     users = _load_users()
     user = users.get(str(sess.get("github_id")))
@@ -480,7 +487,7 @@ DEFAULT_LIMITS = {
     "gpu_cache_ttl_ms": 5000,
     "gc_interval_hours": 0.5,
     "featured_tip": "💡 温馨提示：可以尝试 Fork 优秀作品二改哦！只收录非 R18、作画好看、无明显坏手坏脚、风格独特的作品。",
-    "category_order": [],
+    "wf_categories": [],
 }
 
 
@@ -846,8 +853,7 @@ def _load_workflow_meta() -> Dict[str, Dict[str, str]]:
                 entry["lora_link"] = str(item["lora_link"])
             if item.get("category"):
                 entry["category"] = str(item["category"])
-            if entry:
-                result[wf] = entry
+            result[wf] = entry
         return result
     except Exception:
         return {}
@@ -1213,7 +1219,7 @@ async def _maintenance_middleware(request: Request, call_next):
             session_token = request.cookies.get("session", "")
             if session_token:
                 sessions = _load_sessions()
-                sess = sessions.get(session_token, {})
+                sess = sessions.get(_session_hash(session_token), {})
                 github_id = str(sess.get("github_id", ""))
                 if github_id:
                     users = _load_users()
@@ -1436,7 +1442,7 @@ async def _auth_middleware(request: Request, call_next):
     if user.get("role") != "admin":
         sessions = _load_sessions()
         token = request.cookies.get("session", "")
-        sess = sessions.get(token, {})
+        sess = sessions.get(_session_hash(token), {})
         if not sess.get("access_granted", False):
             exempt = (
                 "/static/", "/auth/", "/api/auth/", "/api/whoami",
@@ -2047,9 +2053,6 @@ DELETION_LOG_FILE = Path(__file__).parent / "deletion_log.json"
 DELETION_THUMBS_DIR = Path(__file__).parent / "deletion_thumbs"
 _deletion_log_lock = asyncio.Lock()
 
-def _load_deletion_log() -> List[Dict[str, Any]]:
-    return db.load_deletion_log()
-
 # gen_logs 路径→用户缓存，避免批量删图时重复扫全表
 _gen_logs_path_cache: Optional[Dict[str, Tuple[str, str]]] = None
 
@@ -2094,19 +2097,19 @@ async def _record_deletion(rel_path: str, github_id: str, login: str,
             _shutil.move(str(src_thumb), str(dst))
     except Exception:
         dst = None
-    # 查找生图者信息
+    # 始终查 creator_ip（不论调用方是否传入 creator_gid）
     creator_ip = ""
     creator_github_id = creator_gid
-    creator_login = creator_login
+    key = rel_path.replace("\\", "/")
+    try:
+        ip_row = db.lookup_creator_ip(key)
+        if ip_row:
+            creator_ip = ip_row
+    except Exception:
+        pass
+    # 调用方未知（如管理员批量删）时从数据库查生图者
     if not creator_github_id:
-        # 调用方未知，从数据库查
         try:
-            key = rel_path.replace("\\", "/")
-            # 从 SQLite creator_ips 查 IP
-            ip_row = db.lookup_creator_ip(key)
-            if ip_row:
-                creator_ip = ip_row
-            # 从 user_images 查原始生图者
             ui = _load_user_images()
             for uid_, entries in ui.items():
                 for e in entries:
@@ -2115,7 +2118,6 @@ async def _record_deletion(rel_path: str, github_id: str, login: str,
                         break
                 if creator_github_id:
                     break
-            # 从 gen_logs.file_paths 补充查找（user_images 可能缺失）
             if not creator_github_id:
                 creator_github_id, creator_login = _gen_logs_lookup(key)
             if creator_github_id:
@@ -3334,7 +3336,7 @@ async def api_whoami(request: Request):
     if user and not user.get("banned"):
         sessions = _load_sessions()
         token = request.cookies.get("session", "")
-        sess = sessions.get(token, {})
+        sess = sessions.get(_session_hash(token), {})
         access_granted = sess.get("access_granted", False)
         claimed_key = ""
         # 重验密钥是否仍有效
@@ -3642,7 +3644,7 @@ async def api_auth_claim_key(request: Request):
     # 已解锁用户无需重复领取
     token = request.cookies.get("session", "")
     sessions = _load_sessions()
-    sess = sessions.get(token, {})
+    sess = sessions.get(_session_hash(token), {})
     if sess.get("access_granted") and sess.get("claimed_key"):
         return _JR({"error": "你已通过密钥验证，无需重复操作"}, status_code=400)
     # 频率限制检查（按 github_id 限流，防止换会话绕过）
@@ -3707,7 +3709,7 @@ async def api_auth_claim_key(request: Request):
     if token:
         async with _sessions_lock:
             sessions = _load_sessions()
-            sess = sessions.get(token)
+            sess = sessions.get(_session_hash(token))
             if sess and str(sess.get("github_id")) == github_id:
                 sess["access_granted"] = True
                 sess["claimed_key"] = key
@@ -3794,7 +3796,7 @@ async def api_list(subdir: str = ""):
         w["category"] = meta.get("category", "")
     return {
         "workflows": wfs,
-        "category_order": _limits.get("category_order", []),
+        "category_order": _limits.get("wf_categories", []),
         "txt2img_dir": WF_DIR_TXT2IMG,
         "img2img_dir": WF_DIR_IMG2IMG,
     }
@@ -4059,6 +4061,17 @@ async def api_output_signed_url(request: Request):
     user = _get_user_from_session(request)
     if not user:
         raise HTTPException(401)
+    # 用户级别限流：20次/分钟
+    uid = str(user.get("github_id", ""))
+    ip = _client_ip_from_request(request)
+    limit_key = f"signed_url:{uid or ip}"
+    async with _translate_rate_lock:
+        bucket = _TRANSLATE_RATE.get(limit_key) or []
+        bucket = [t for t in bucket if _time_module.time() - t < 60]
+        if len(bucket) >= 20:
+            raise HTTPException(429, "请求过于频繁，请稍后再试")
+        bucket.append(_time_module.time())
+        _TRANSLATE_RATE[limit_key] = bucket
     body = await request.body()
     payload = json.loads(body) if body else {}
     path = str(payload.get("path", "")).strip()
@@ -4683,7 +4696,7 @@ async def api_admin_auth_elevate(request: Request, payload: Dict[str, Any]):
     if token:
         async with _sessions_lock:
             sessions = _load_sessions()
-            sess = sessions.get(token)
+            sess = sessions.get(_session_hash(token))
             if sess:
                 sess["_elevated_at"] = _time_module.time()
                 await _save_sessions(sessions)
@@ -4702,7 +4715,7 @@ async def api_admin_auth_elevate_status(request: Request):
     if elevated:
         token = request.cookies.get("session") or ""
         sessions = _load_sessions()
-        sess = sessions.get(token, {})
+        sess = sessions.get(_session_hash(token), {})
         et = sess.get("_elevated_at", 0)
         remaining = max(0, int(_ADMIN_ELEVATION_TTL - (_time_module.time() - et)))
     return {"required": True, "elevated": elevated, "remaining_sec": remaining}
@@ -5174,7 +5187,7 @@ def _is_admin_elevated(request: Request) -> bool:
     if not token:
         return False
     sessions = _load_sessions()
-    sess = sessions.get(token)
+    sess = sessions.get(_session_hash(token))
     if not sess:
         return False
     elevated_at = sess.get("_elevated_at", 0)
@@ -5189,9 +5202,11 @@ _SENSITIVE_ADMIN_PATHS = (
     "/api/admin/unban",
     "/api/admin/delete",
     "/api/admin/delete_batch",
+    "/api/admin/mark_delete_batch",
     "/api/admin/access-keys/generate",
     "/api/admin/access-keys/delete",
     "/api/admin/force-restart",
+    "/api/admin/graceful-restart",
     "/api/admin/deletion-log/clear",
     "/api/admin/featured/",
     "/api/admin/llm",
@@ -5238,7 +5253,7 @@ def _ws_get_user(headers) -> Optional[dict]:
     if not token:
         return None
     sessions = _load_sessions()
-    sess = sessions.get(token)
+    sess = sessions.get(_session_hash(token))
     if not sess or _time_module.time() > sess.get("expires_at", 0):
         return None
     user = _load_users().get(str(sess.get("github_id")))
@@ -6016,10 +6031,14 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
         sd_prompt = req.direct_prompt
         await emit(ws, {"type": "log", "message": "[2/4] 跳过 LLM"})
 
-    if character_tags:
-        sd_prompt = sep.join([character_tags, sd_prompt]) if sd_prompt else character_tags
+    prefix_parts = []
     if style_tags:
-        sd_prompt = sep.join([sd_prompt, style_tags]) if sd_prompt else style_tags
+        prefix_parts.append(style_tags)
+    if character_tags:
+        prefix_parts.append(character_tags)
+    if prefix_parts:
+        prefix = sep.join(prefix_parts)
+        sd_prompt = sep.join([prefix, sd_prompt]) if sd_prompt else prefix
 
     if not sd_prompt.strip():
         await emit(ws, {"type": "error", "message": "最终 prompt 为空"})
@@ -7961,8 +7980,7 @@ async def api_admin_workflow_meta_set(request: Request, payload: Dict[str, Any])
             entry["lora_link"] = link
         if cat:
             entry["category"] = cat
-        if entry:
-            cleaned[wf] = entry
+        cleaned[wf] = entry
     if not await asyncio.to_thread(_save_workflow_meta_file, cleaned):
         raise HTTPException(500, "写入 workflow_meta.json 失败")
     # 清理被移除条目的缩略图
@@ -8527,33 +8545,46 @@ async def api_admin_deletion_thumb(request: Request, filename: str):
     fp = (DELETION_THUMBS_DIR / filename).resolve()
     if not fp.is_relative_to(DELETION_THUMBS_DIR.resolve()) or not fp.is_file():
         raise HTTPException(404)
-    return FileResponse(str(fp), media_type="image/webp",
-                        headers={"Cache-Control": "public, max-age=3600"})
+    etag = f'"{filename}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304)
+    headers = {
+        "Cache-Control": "public, max-age=600, must-revalidate",
+        "ETag": etag,
+    }
+    return FileResponse(str(fp), media_type="image/webp", headers=headers)
 
 
 @app.post("/api/admin/deletion-log/clear")
 async def api_admin_deletion_log_clear(request: Request, payload: Dict[str, Any] = {}):
-    """清理删除记录，支持按 path、日期范围或全部清理。同步清理 deletion_thumbs 文件。"""
+    """清理删除记录，支持按 path、日期范围、批量 paths 或全部清理。同步清理 deletion_thumbs 文件。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
+    # 批量 paths 优先
+    paths = payload.get("paths") if payload else None
+    if isinstance(paths, list) and paths:
+        removed = 0
+        for p in paths:
+            p = str(p).strip()
+            if not p:
+                continue
+            rows = db.query_deletion_logs_thumb(path=p)
+            for r in rows:
+                if r.get("thumb_file"):
+                    (DELETION_THUMBS_DIR / r["thumb_file"]).unlink(missing_ok=True)
+            removed += db.clear_deletion_logs(path=p)
+        return {"ok": True, "removed": removed, "message": f"已清理 {removed} 条记录"}
     target_path = str(payload.get("path", "")).strip() if payload else ""
     date_from = float(payload.get("date_from") or 0) if payload else 0
     date_to = float(payload.get("date_to") or 0) if payload else 0
-    thumb_files: List[str] = []
-    removed = 0
-    if target_path:
-        thumb_files = db.clear_deletion_logs_by_path(target_path)
-        removed = len(thumb_files)
-    elif date_from or date_to:
-        thumb_files, removed = db.clear_deletion_logs_by_date(date_from, date_to)
-    else:
-        thumb_files = db.clear_all_deletion_logs()
-        removed = len(thumb_files)
-    for f in thumb_files:
-        try:
-            (DELETION_THUMBS_DIR / f).unlink(missing_ok=True)
-        except Exception:
-            pass
+    # 1 先查（快照）
+    rows = db.query_deletion_logs_thumb(path=target_path, date_from=date_from, date_to=date_to)
+    # 2 先删文件
+    for r in rows:
+        if r.get("thumb_file"):
+            (DELETION_THUMBS_DIR / r["thumb_file"]).unlink(missing_ok=True)
+    # 3 再删库（与查询使用相同条件，避免不一致）
+    removed = db.clear_deletion_logs(path=target_path, date_from=date_from, date_to=date_to)
     return {"ok": True, "message": f"已清理 {removed} 条记录"}
 
 # ═══ 邮箱认证模块 ═══

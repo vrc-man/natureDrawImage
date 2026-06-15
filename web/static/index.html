@@ -441,6 +441,74 @@
   </div>
 </div>
 
+<!-- 提示词预设弹窗（大尺寸） -->
+<div id="preset-modal" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8 hidden" onclick="if(event.target===this)closePresetModal()">
+  <div class="mx-4 w-full max-w-[calc(100vw-3rem)] bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]">
+    <!-- 列表视图 -->
+    <div id="preset-list-view" class="flex flex-col min-h-0 flex-1">
+      <div class="flex items-center justify-between p-5 pb-3 border-b border-pink-100 shrink-0">
+        <h3 id="preset-title" class="text-lg font-bold text-gray-700">📝 正面提示词预设</h3>
+        <button id="preset-close" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+      </div>
+      <div id="preset-list" class="flex-1 overflow-y-auto px-5 pt-3 pb-4 min-h-0 space-y-1"></div>
+      <div class="flex items-center justify-between gap-2 px-5 py-4 border-t border-pink-100 shrink-0">
+        <div class="flex items-center gap-2">
+          <span id="preset-count" class="text-xs text-gray-400"></span>
+          <button id="preset-export" class="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200 transition-all">📤 导出</button>
+          <button id="preset-import" class="text-xs px-2 py-1 bg-gray-100 text-gray-500 rounded-lg hover:bg-gray-200 transition-all">📥 导入</button>
+        </div>
+        <div class="flex gap-2">
+          <button id="preset-new" class="px-4 py-2 bg-pink-50 text-pink-600 rounded-xl hover:bg-pink-100 text-sm transition-all">➕ 新建预设</button>
+          <button id="preset-del-selected" class="px-4 py-2 bg-gray-100 text-gray-400 rounded-xl text-sm transition-all cursor-not-allowed" disabled>🗑 删除选中 (0)</button>
+        </div>
+      </div>
+    </div>
+    <!-- 表单视图（新建/编辑） -->
+    <div id="preset-form-view" class="hidden flex flex-col min-h-0 flex-1">
+      <div class="flex items-center justify-between p-5 pb-3 border-b border-pink-100 shrink-0">
+        <h3 id="preset-form-title" class="text-lg font-bold text-gray-700">📝 新建预设</h3>
+        <button id="preset-form-close" class="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+      </div>
+      <div class="flex-1 overflow-y-auto px-5 py-4 min-h-0 space-y-3">
+        <div>
+          <label class="text-xs text-gray-500 font-medium mb-1 block">预设名称</label>
+          <input id="preset-form-name" type="text" maxlength="50" placeholder="输入预设名称..."
+            class="w-full border border-pink-200 rounded-xl px-3 py-2 text-sm bg-white text-gray-700 focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all" />
+        </div>
+        <div>
+          <label class="text-xs text-gray-500 font-medium mb-1 block">提示词内容</label>
+          <textarea id="preset-form-text" rows="8" placeholder="输入提示词内容..."
+            class="w-full border border-pink-200 rounded-xl px-3 py-2 text-sm bg-white text-gray-700 focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all resize-y"></textarea>
+        </div>
+        <div class="flex justify-end">
+          <button id="preset-import-box" class="text-xs text-pink-500 hover:text-pink-600 transition-all">📥 从提示词框导入</button>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 px-5 py-4 border-t border-pink-100 shrink-0">
+        <button id="preset-form-cancel" class="px-4 py-2 bg-gray-100 rounded-xl hover:bg-gray-200 text-sm text-gray-600 transition-all">取消</button>
+        <button id="preset-form-save" class="px-4 py-2 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl hover:from-pink-300 hover:to-rose-300 text-sm font-medium transition-all">💾 保存预设</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 预设预览弹窗（小尺寸） -->
+<div id="preset-preview-modal" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm items-center justify-center p-4 hidden">
+  <div class="bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 max-w-lg w-full p-5 max-h-[85vh] flex flex-col">
+    <div class="flex items-center justify-between mb-3">
+      <h3 id="preview-title" class="text-base font-bold text-gray-700 truncate pr-2">预设名称</h3>
+      <button id="preview-close" class="text-gray-400 hover:text-gray-600 text-2xl leading-none shrink-0">×</button>
+    </div>
+    <div id="preview-body" class="flex-1 overflow-y-auto min-h-0 mb-3">
+      <div class="text-sm text-gray-600 bg-gray-50 rounded-xl p-4 whitespace-pre-wrap break-all leading-relaxed">内容</div>
+    </div>
+    <div class="flex justify-end gap-2 pt-3 border-t border-pink-100">
+      <button id="preview-fill" class="px-4 py-2 bg-pink-100 text-pink-600 rounded-xl hover:bg-pink-200 text-sm transition-all">📥 填入</button>
+      <button id="preview-edit" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 text-sm transition-all">✏️ 编辑</button>
+    </div>
+  </div>
+</div>
+
 <!-- ==================== Tab 1: 生图 ==================== -->
 <div id="page-generate" class="tab-page active">
 
@@ -519,10 +587,13 @@
         <div>
           <label class="flex text-sm font-semibold mb-1.5 text-gray-600 items-start gap-1">
             <span class="flex flex-col sm:flex-row items-start sm:items-center">
-              <span>📝 正面</span>
+              <button type="button" id="btn-preset-direct" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit font-inherit" title="提示词预设">📝</button>
+              <span> 正面</span>
               <span>提示词</span>
             </span>
-            <button type="button" id="btn-clear-direct" class="ml-auto text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all">清空</button>
+            <span class="ml-auto flex items-center gap-1">
+              <button type="button" id="btn-clear-direct" class="text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all">清空</button>
+            </span>
           </label>
           <div id="direct-body" class="prompt-body">
             <textarea id="direct" rows="1"
@@ -532,10 +603,13 @@
         <div>
           <label class="flex text-sm font-semibold mb-1.5 text-gray-600 items-start gap-1">
             <span class="flex flex-col sm:flex-row items-start sm:items-center">
-              <span>📝 负面</span>
+              <button type="button" id="btn-preset-neg" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit font-inherit" title="提示词预设">📝</button>
+              <span> 负面</span>
               <span>提示词</span>
             </span>
-            <button type="button" id="btn-clear-neg" class="ml-auto text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all">清空</button>
+            <span class="ml-auto flex items-center gap-1">
+              <button type="button" id="btn-clear-neg" class="text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all">清空</button>
+            </span>
           </label>
           <div id="neg-body" class="prompt-body">
             <textarea id="negative_prompt" rows="1"
@@ -997,6 +1071,8 @@ async function loadCurrent(setResolution = false) {
 
 // ==================== 工作流列表 ====================
 let _categoryOrder = [];
+let _wfCatState = {};
+let _wfCatLastSearch = '';
 
 async function loadList() {
   // 首次加载不带 subdir，获取目录配置
@@ -1113,7 +1189,32 @@ function renderPickerGrid() {
   if (_pickerKind === 'workflow') {
     let filtered = q ? allWorkflows.filter(w => (w.path||'').toLowerCase().includes(q) || (w.category||'').toLowerCase().includes(q)) : allWorkflows;
     if (!filtered.length) { grid.innerHTML = '<div class="text-gray-400 text-sm text-center py-8">无匹配工作流</div>'; return; }
-    grid.innerHTML = `<div class="wf-grid">${filtered.map(w => _wfCard(w, q)).join('')}</div>`;
+    // 按分类分组
+    const groups = {};
+    for (const w of filtered) {
+      const cat = (w.category || '').trim() || '未分类';
+      if (!groups[cat]) groups[cat] = [];
+      groups[cat].push(w);
+    }
+    const catKeys = Object.keys(groups).sort((a, b) =>
+      a === '未分类' ? 1 : b === '未分类' ? -1 : a.localeCompare(b, 'zh'));
+    if (q !== _wfCatLastSearch) {
+      _wfCatLastSearch = q;
+      _wfCatState = {};
+    }
+    let html = '';
+    const cur = getCurrentPath();
+    for (const cat of catKeys) {
+      const items = groups[cat];
+      const hasSel = items.some(w => w.path === cur);
+      const initExpand = !!q || hasSel;
+      if (!(cat in _wfCatState)) _wfCatState[cat] = initExpand;
+      if (hasSel) _wfCatState[cat] = true;
+      const expanded = _wfCatState[cat];
+      html += `<div class="wf-cat-title" style="cursor:pointer;user-select:none"><span class="cat-arrow">${expanded ? '▾' : '▸'}</span> ${_esc(cat)}</div>
+        <div class="wf-cat-body" style="display:${expanded ? '' : 'none'}"><div class="wf-grid">${items.map(w => _wfCard(w, q)).join('')}</div></div>`;
+    }
+    grid.innerHTML = html;
     grid.querySelectorAll('.wf-card').forEach(el => {
       el.addEventListener('click', () => {
         forkedWorkflow = null; forkedMeta = null;
@@ -1813,6 +1914,25 @@ $('picker-search').addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closePicker();
 });
 $('picker-close').addEventListener('click', closePicker);
+// 工作流选择器分类折叠
+$('picker-grid').addEventListener('click', (e) => {
+  const title = e.target.closest('.wf-cat-title');
+  if (title) {
+    const body = title.nextElementSibling;
+    if (body && body.classList.contains('wf-cat-body')) {
+      const arrow = title.querySelector('.cat-arrow');
+      if (body.style.display === 'none') {
+        body.style.display = '';
+        if (arrow) arrow.textContent = '▾';
+        if (_wfCatState) _wfCatState[title.textContent.replace(/[▸▾]/g,'').trim()] = true;
+      } else {
+        body.style.display = 'none';
+        if (arrow) arrow.textContent = '▸';
+        if (_wfCatState) _wfCatState[title.textContent.replace(/[▸▾]/g,'').trim()] = false;
+      }
+    }
+  }
+});
 $('btn-run').addEventListener('click', startRun);
 $('res-presets').addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-w]');
@@ -2042,10 +2162,15 @@ $('lb-fork').addEventListener('click', async () => {
     $('negative_prompt').value = ovNegPrompt;
     forkedMeta = { workflow_name: d.workflow_name, format: d.format, summary: d.summary, default_width: d.default_width, default_height: d.default_height, prompt: bp, negative_prompt: ovNegPrompt, loras: d.loras };
     applyForkedToUI();
+    $('fork-loading').classList.add('hidden');
+    setTimeout(() => { closeLightbox(); $('lb-fork').disabled = false; $('lb-fork').textContent = '🍴 Fork'; }, 300);
     switchTab('generate');
-  } catch (err) { $('lb-status').textContent = '失败: ' + (err.message || err); }
-  $('fork-loading').classList.add('hidden');
-  setTimeout(() => { closeLightbox(); $('lb-fork').disabled = false; $('lb-fork').textContent = '🍴 Fork'; }, 300);
+  } catch (err) {
+    $('fork-loading').classList.add('hidden');
+    $('lb-fork').disabled = false;
+    $('lb-fork').textContent = '🍴 Fork';
+    $('lb-status').textContent = '❌ ' + (err.message || err);
+  }
 });
 
 // ==================== 举报 ====================
@@ -2567,7 +2692,246 @@ async function pollMyQueue() {
 setInterval(pollMyQueue, 1000);
 pollMyQueue();
 
+// ==================== 提示词预设管理 ====================
+const _PRESET_KEYS = { direct: 'presets_direct', negative_prompt: 'presets_neg' };
+let _presetTargetId = 'direct';
+let _presetEditingId = null;
+let _presetChecked = {};
+let _previewPresetId = null;
 
+function openPresetModal(target) {
+  _presetTargetId = target;
+  _presetChecked = {};
+  $('preset-title').textContent = '📝 ' + (target === 'direct' ? '正面' : '负面') + '提示词预设';
+  switchPresetView('list');
+  renderPresetList();
+  const m = $('preset-modal');
+  m.classList.remove('hidden');
+  m.style.display = 'flex';
+  if (!m.dataset.locked) { lockScroll(); m.dataset.locked = '1'; }
+}
+function closePresetModal() {
+  const m = $('preset-modal');
+  m.style.display = '';
+  m.classList.add('hidden');
+  if (m.dataset.locked) { unlockScroll(); delete m.dataset.locked; }
+}
+function switchPresetView(view) {
+  $('preset-list-view').classList.toggle('hidden', view !== 'list');
+  $('preset-form-view').classList.toggle('hidden', view !== 'form');
+}
+function getPresets() {
+  try { return JSON.parse(localStorage.getItem(_PRESET_KEYS[_presetTargetId])) || []; } catch (e) { return []; }
+}
+function savePresets(arr) {
+  localStorage.setItem(_PRESET_KEYS[_presetTargetId], JSON.stringify(arr));
+}
+function renderPresetList() {
+  const list = $('preset-list');
+  const presets = getPresets();
+  $('preset-count').textContent = presets.length + ' 个预设';
+  if (!presets.length) {
+    list.innerHTML = '<div class="text-gray-300 text-sm text-center py-12">暂无预设，点击下方「新建预设」添加</div>';
+    updateDelSelectedBtn();
+    return;
+  }
+  list.innerHTML = presets.map(p => {
+    const checked = _presetChecked[p.id] ? 'checked' : '';
+    return '<div class="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-pink-50 transition-all" data-preset-id="' + p.id + '">' +
+      '<input type="checkbox" class="preset-check w-4 h-4 accent-pink-500 shrink-0 cursor-pointer" data-id="' + p.id + '" ' + checked + '>' +
+      '<span class="flex-1 text-sm font-medium text-gray-700 truncate min-w-0">' + _esc(p.name || '(未命名)') + '</span>' +
+      '<span class="text-xs text-gray-400 shrink-0">' + (p.text ? p.text.length : 0) + '字</span>' +
+      '<div class="flex gap-1 shrink-0">' +
+        '<button data-action="preview" data-id="' + p.id + '" class="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-all">预览</button>' +
+        '<button data-action="edit" data-id="' + p.id + '" class="text-xs px-2 py-1 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-all">编辑</button>' +
+        '<button data-action="fill" data-id="' + p.id + '" class="text-xs px-2 py-1 bg-pink-100 text-pink-600 rounded-lg hover:bg-pink-200 transition-all">📥 填入</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+  list.querySelectorAll('.preset-check').forEach(cb => {
+    cb.addEventListener('change', function () {
+      const id = parseInt(this.dataset.id);
+      if (this.checked) _presetChecked[id] = true;
+      else delete _presetChecked[id];
+      updateDelSelectedBtn();
+    });
+  });
+  updateDelSelectedBtn();
+}
+function updateDelSelectedBtn() {
+  const ids = Object.keys(_presetChecked).filter(k => !k.startsWith('_'));
+  const btn = $('preset-del-selected');
+  const n = ids.length;
+  btn.textContent = '🗑 删除选中 (' + n + ')';
+  btn.disabled = n === 0;
+  btn.className = 'px-4 py-2 rounded-xl text-sm transition-all ' + (n === 0 ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-red-50 text-red-500 hover:bg-red-100');
+}
+function openPreview(id) {
+  const presets = getPresets();
+  const p = presets.find(p => p.id === id);
+  if (!p) return;
+  _previewPresetId = id;
+  $('preview-title').textContent = _esc(p.name || '(未命名)');
+  $('preview-body').innerHTML = '<div class="text-sm text-gray-600 bg-gray-50 rounded-xl p-4 whitespace-pre-wrap break-all leading-relaxed max-h-60 overflow-y-auto">' + _esc(p.text) + '</div>';
+  const m = $('preset-preview-modal');
+  m.classList.remove('hidden');
+  m.style.display = 'flex';
+}
+function closePreview() {
+  const m = $('preset-preview-modal');
+  m.style.display = '';
+  m.classList.add('hidden');
+  _previewPresetId = null;
+}
+function fillPreset(id) {
+  const presets = getPresets();
+  const p = presets.find(p => p.id === id);
+  if (p) { $(_presetTargetId).value = p.text; saveFormState(); }
+  closePresetModal();
+}
+function fillPreviewPreset() {
+  if (_previewPresetId !== null) fillPreset(_previewPresetId);
+}
+function editFromPreview() {
+  const id = _previewPresetId;
+  if (id !== null) {
+    closePreview();
+    if ($('preset-modal').classList.contains('hidden')) { openPresetModal(_presetTargetId); }
+    showEditPresetForm(id);
+  }
+}
+function showNewPresetForm() {
+  _presetEditingId = null;
+  $('preset-form-title').textContent = '📝 新建预设';
+  $('preset-form-name').value = '';
+  $('preset-form-text').value = '';
+  switchPresetView('form');
+  setTimeout(() => $('preset-form-name').focus(), 100);
+}
+function showEditPresetForm(id) {
+  const presets = getPresets();
+  const p = presets.find(p => p.id === id);
+  if (!p) return;
+  _presetEditingId = id;
+  $('preset-form-title').textContent = '📝 编辑预设';
+  $('preset-form-name').value = p.name || '';
+  $('preset-form-text').value = p.text || '';
+  switchPresetView('form');
+  setTimeout(() => $('preset-form-name').focus(), 100);
+}
+function importFromBox() {
+  const text = $(_presetTargetId).value.trim();
+  if (!text) { showToast('提示词框为空', 1500); return; }
+  $('preset-form-text').value = text;
+  showToast('已导入提示词框内容', 1000);
+}
+function savePresetForm() {
+  const name = $('preset-form-name').value.trim();
+  const text = $('preset-form-text').value.trim();
+  if (!name) { showToast('请输入预设名称', 1500); $('preset-form-name').focus(); return; }
+  if (!text) { showToast('请输入提示词内容', 1500); $('preset-form-text').focus(); return; }
+  let presets = getPresets();
+  if (_presetEditingId) {
+    const idx = presets.findIndex(p => p.id === _presetEditingId);
+    if (idx !== -1) { presets[idx].name = name; presets[idx].text = text; }
+    showToast('已更新预设', 1000);
+  } else {
+    presets.unshift({ id: Date.now(), name, text });
+    showToast('已保存预设', 1000);
+  }
+  savePresets(presets);
+  switchPresetView('list');
+  renderPresetList();
+}
+function deleteSelectedPresets() {
+  const ids = Object.keys(_presetChecked).filter(k => !k.startsWith('_')).map(Number);
+  if (!ids.length) return;
+  let presets = getPresets();
+  presets = presets.filter(p => !ids.includes(p.id));
+  savePresets(presets);
+  _presetChecked = {};
+  renderPresetList();
+  showToast('已删除 ' + ids.length + ' 个预设', 1500);
+}
+function exportPresets() {
+  const presets = getPresets();
+  if (!presets.length) { showToast('暂无预设可导出', 1500); return; }
+  const name = _presetTargetId === 'direct' ? '正面' : '负面';
+  const blob = new Blob([JSON.stringify(presets, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '提示词预设_' + name + '_' + new Date().toISOString().slice(0, 10) + '.json';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('已导出 ' + presets.length + ' 个预设', 1500);
+}
+function importPresets() {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.json';
+  inp.onchange = function () {
+    const file = this.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function (e) {
+      try {
+        const data = JSON.parse(e.target.result);
+        if (!Array.isArray(data) || !data.every(p => typeof p === 'object' && 'text' in p)) {
+          showToast('JSON 格式错误，请选择有效预设文件', 2000); return;
+        }
+        data.forEach(p => { if (!p.name) p.name = '(未命名)'; if (!p.id) p.id = Date.now() + Math.floor(Math.random() * 10000); });
+        const existing = getPresets();
+        const merged = existing.concat(data);
+        savePresets(merged);
+        renderPresetList();
+        showToast('已导入 ' + data.length + ' 个预设（原有 ' + existing.length + ' 个保留）', 2000);
+      } catch (err) { showToast('文件读取失败：' + err.message, 2000); }
+    };
+    reader.readAsText(file);
+  };
+  inp.click();
+}
+// 绑定预设主弹窗事件
+$('btn-preset-direct').onclick = () => openPresetModal('direct');
+$('btn-preset-neg').onclick = () => openPresetModal('negative_prompt');
+$('preset-close').onclick = closePresetModal;
+$('preset-form-close').onclick = closePresetModal;
+$('preset-new').onclick = showNewPresetForm;
+$('preset-del-selected').onclick = deleteSelectedPresets;
+$('preset-form-cancel').onclick = () => switchPresetView('list');
+$('preset-form-save').onclick = savePresetForm;
+$('preset-import-box').onclick = importFromBox;
+$('preset-export').onclick = exportPresets;
+$('preset-import').onclick = importPresets;
+// 预设列表事件委托
+$('preset-list').addEventListener('click', function _presetActionClick(e) {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const id = parseInt(btn.dataset.id);
+  const action = btn.dataset.action;
+  if (action === 'preview') openPreview(id);
+  else if (action === 'edit') showEditPresetForm(id);
+  else if (action === 'fill') fillPreset(id);
+});
+// 绑定预览弹窗事件
+$('preview-close').onclick = closePreview;
+$('preview-fill').onclick = fillPreviewPreset;
+$('preview-edit').onclick = editFromPreview;
+$('preset-preview-modal').addEventListener('click', (e) => { if (e.target === $('preset-preview-modal')) closePreview(); });
+document.addEventListener('keydown', function _presetGlobalEsc(e) {
+  if (e.key !== 'Escape') return;
+  const preview = $('preset-preview-modal');
+  if (!preview.classList.contains('hidden')) { closePreview(); return; }
+  const main = $('preset-modal');
+  if (!main.classList.contains('hidden')) {
+    if (!$('preset-form-view').classList.contains('hidden')) switchPresetView('list');
+    else closePresetModal();
+  }
+});
+// ==================== 结束 提示词预设管理 ====================
 
 // ── 点击提示（手机友好） ──
 let _activePopup = null;

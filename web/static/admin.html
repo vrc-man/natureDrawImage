@@ -192,21 +192,14 @@
 
       <!-- 分类管理 -->
       <div class="mb-3 border rounded p-3 bg-blue-50">
-        <div class="text-sm font-semibold mb-2">📁 分类管理</div>
-        <div class="flex flex-wrap gap-1 mb-2" id="wfmeta-cat-chips"></div>
+        <div class="text-sm font-semibold mb-2">📁 分类标签管理</div>
+        <div class="flex flex-wrap gap-1 mb-2" id="wf-cat-tags"></div>
         <div class="flex gap-2">
-          <input id="wfmeta-cat-input" type="text" placeholder="输入分类名称" class="flex-1 border rounded px-2 py-1 text-xs" />
-          <button id="btn-add-cat" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">添加分类</button>
-        </div>
-        <div id="wfmeta-uncat" class="mt-2 hidden">
-          <div class="text-xs text-gray-600 mb-1">未分类的工作流（点击添加到该分类）：</div>
-          <div id="wfmeta-uncat-list" class="flex flex-wrap gap-1"></div>
-        </div>
-        <div id="wfmeta-incat" class="mt-2 hidden">
-          <div class="text-xs text-gray-600 mb-1">该分类下的工作流（点击移除）：</div>
-          <div id="wfmeta-incat-list" class="flex flex-wrap gap-1"></div>
+          <input id="wf-cat-input" type="text" placeholder="输入新分类名称" class="flex-1 border rounded px-2 py-1 text-xs" />
+          <button id="btn-add-wf-cat" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs">添加分类</button>
         </div>
       </div>
+      <datalist id="wf-cat-list"></datalist>
 
       <div class="flex items-center gap-2 mb-2">
         <button id="btn-scan-wfmeta" class="text-xs px-3 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200">📂 扫描缩略图</button>
@@ -513,6 +506,20 @@
           <span id="eu-status" class="text-gray-500"></span>
           <span class="text-gray-400" id="eu-pages"></span>
         </div>
+
+        <!-- 自定义发信弹窗 -->
+        <div id="send-email-modal" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm items-center justify-center p-4 hidden" onclick="if(event.target===this)closeSendEmailModal()">
+          <div class="bg-white rounded-2xl max-w-md w-full p-5 shadow-xl" onclick="event.stopPropagation()">
+            <h3 class="text-sm font-semibold mb-3">📧 发送邮件给 <span id="send-email-target" class="text-blue-600"></span></h3>
+            <input id="send-email-subject" type="text" placeholder="邮件主题" class="w-full border rounded-lg px-3 py-2 text-sm mb-2" />
+            <textarea id="send-email-body" rows="5" placeholder="邮件内容（支持HTML）" class="w-full border rounded-lg px-3 py-2 text-sm mb-2 resize-y"></textarea>
+            <div class="flex gap-2 justify-end">
+              <button id="btn-send-email-cancel" class="px-4 py-1.5 text-xs rounded-lg bg-gray-200 hover:bg-gray-300">取消</button>
+              <button id="btn-send-email-submit" class="px-4 py-1.5 text-xs rounded-lg bg-blue-500 text-white hover:bg-blue-600">发送</button>
+            </div>
+            <span id="send-email-status" class="text-xs text-gray-500 mt-1 block"></span>
+          </div>
+        </div>
         <div style="border-top:1px solid #fce7f3;padding-top:12px;margin-top:12px">
         <h3 style="font-size:14px;font-weight:600;margin-bottom:8px">⚙️ 速率限制 <button id="btn-save-rate-limits" style="margin-left:8px;font-size:12px;padding:2px 8px;background:#3b82f6;color:#fff;border:0;border-radius:6px;cursor:pointer">保存（重启生效）</button> <span id="rate-limits-status" style="font-size:12px;color:#6b7280"></span></h3>
         <div id="rate-limits-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px">加载中...</div>
@@ -603,7 +610,7 @@
       </div>
     </div>
     <div id="gen-logs-body" class="hidden">
-      <p class="text-xs text-gray-500 mb-2">记录每次生图的用户、prompt、工作流、状态等信息，最多保留 20000 条。</p>
+      <p class="text-xs text-gray-500 mb-2">记录每次生图的用户、prompt、工作流、状态等信息，最多保留 100000 条。</p>
       <div class="flex flex-wrap gap-2 mb-2 items-center text-xs">
         <input id="gen-logs-search" type="text" placeholder="用户名搜索" class="border rounded px-2 py-1 text-xs w-28" />
         <label class="text-gray-500">日期:</label>
@@ -644,7 +651,7 @@
       </div>
     </div>
     <div id="deletion-log-body" class="hidden">
-      <p class="text-xs text-gray-500 mb-2">用户或管理员删除的图片存档，可查看缩略图确认后清理。最多保留 20000 条。</p>
+      <p class="text-xs text-gray-500 mb-2">用户或管理员删除的图片存档，可查看缩略图确认后清理。最多保留 100000 条。</p>
       <div class="flex flex-wrap gap-2 mb-2 items-center text-xs">
         <input id="del-log-search" type="text" placeholder="用户名搜索" class="border rounded px-2 py-1 text-xs w-28" />
         <label class="text-gray-500">日期:</label>
@@ -1072,11 +1079,15 @@ async function loadEmailUsers() {
         '<span class="text-gray-400 text-[10px]">' + (u.created_at?formatTime(u.created_at):'') + '</span>' +
         (u.totp_enabled?'<button data-gid="'+escHtml(u.github_id)+'" class="btn-reset-totp text-[10px] px-2 py-0.5 bg-purple-100 text-purple-500 rounded hover:bg-purple-200 ml-1">Reset 2FA</button>':'') +
         (u.role==='admin'?'<span class="text-[10px] text-purple-400">不可封禁</span>':'<button data-gid="'+escHtml(u.github_id)+'" data-banned="'+banned+'" class="btn-toggle-email-ban text-[10px] px-2 py-0.5 text-white rounded '+banCls+'">'+banLabel+'</button>') +
-        (u.verified?'':'<button data-gid="'+escHtml(u.github_id)+'" class="btn-resend-verify text-[10px] px-2 py-0.5 bg-blue-100 text-blue-500 rounded hover:bg-blue-200 ml-1">Resend</button>') + '</div>';
+        (u.verified?'':'<button data-gid="'+escHtml(u.github_id)+'" class="btn-resend-verify text-[10px] px-2 py-0.5 bg-blue-100 text-blue-500 rounded hover:bg-blue-200 ml-1">Resend</button>') +
+        '<button data-gid="'+escHtml(u.github_id)+'" class="btn-send-reset text-[10px] px-2 py-0.5 bg-orange-100 text-orange-600 rounded hover:bg-orange-200 ml-1" title="发送密码重置链接到用户邮箱">重置密码</button>' +
+        '<button data-gid="'+escHtml(u.github_id)+'" data-email="'+escHtml(email)+'" class="btn-send-email text-[10px] px-2 py-0.5 bg-teal-100 text-teal-600 rounded hover:bg-teal-200 ml-1" title="发送自定义邮件">📧</button>' + '</div>';
     }).join('') + '</div>';
     document.querySelectorAll('.btn-reset-totp').forEach(function(b){b.addEventListener('click',function(){resetTotp(b.dataset.gid);});});
     document.querySelectorAll('.btn-toggle-email-ban').forEach(function(b){b.addEventListener('click',function(){toggleEmailUserBan(b.dataset.gid,b.dataset.banned==='true');});});
     document.querySelectorAll('.btn-resend-verify').forEach(function(b){b.addEventListener('click',function(){resendVerify(b.dataset.gid);});});
+    document.querySelectorAll('.btn-send-reset').forEach(function(b){b.addEventListener('click',function(){sendResetPasswordLink(b.dataset.gid);});});
+    document.querySelectorAll('.btn-send-email').forEach(function(b){b.addEventListener('click',function(){openSendEmailModal(b.dataset.email, b.dataset.gid);});});
     var start=_euPage*_EU_PAGE_SIZE+1,end=Math.min(start+items.length-1,_euTotal);
     $('eu-status').textContent='显示 '+start+'-'+end+' / '+_euTotal+' 条';_euRenderPages();
   } catch(e) { $('email-users-list').textContent='加载失败: '+e.message; }
@@ -1224,6 +1235,49 @@ async function resendVerify(githubId) {
   try {
     await api('POST', '/api/admin/email-users/resend-verify', { github_id: githubId });
     alert('验证邮件已发送');
+  } catch(e) { alert('失败: ' + e.message); }
+}
+
+let _sendEmailGid = '';
+function openSendEmailModal(email, gid) {
+  _sendEmailGid = gid;
+  $('send-email-target').textContent = email;
+  $('send-email-subject').value = '';
+  $('send-email-body').value = '';
+  $('send-email-status').textContent = '';
+  const m = $('send-email-modal');
+  m.classList.remove('hidden');
+  m.style.display = 'flex';
+}
+function closeSendEmailModal() {
+  const m = $('send-email-modal');
+  m.style.display = '';
+  m.classList.add('hidden');
+}
+$('btn-send-email-cancel').addEventListener('click', closeSendEmailModal);
+$('btn-send-email-submit').addEventListener('click', async function() {
+  const subject = $('send-email-subject').value.trim();
+  const body = $('send-email-body').value.trim();
+  if (!subject || !body) { $('send-email-status').textContent = '主题和内容不能为空'; return; }
+  $('btn-send-email-submit').disabled = true;
+  $('send-email-status').textContent = '发送中...';
+  try {
+    const d = await api('POST', '/api/admin/email-users/send-custom-email', { github_id: _sendEmailGid, subject: subject, message: body });
+    alert(d.message);
+    closeSendEmailModal();
+  } catch(e) { $('send-email-status').textContent = '失败: ' + e.message; }
+  finally { $('btn-send-email-submit').disabled = false; }
+});
+
+async function sendResetPasswordLink(githubId) {
+  if (!confirm('确定发送密码重置链接到该用户邮箱？')) return;
+  try {
+    const d = await api('POST', '/api/admin/email-users/reset-password', { github_id: githubId });
+    if (d.link) {
+      prompt('邮件发送失败，请复制下方链接手动发送给用户（有效期30分钟）：', d.link);
+    } else {
+      alert(d.message);
+    }
   } catch(e) { alert('失败: ' + e.message); }
 }
 
@@ -1994,7 +2048,7 @@ function renderCharacterEntries() {
 async function loadCharacters() {
   try {
     const d = await api('GET', '/api/admin/characters');
-    adminCharacters = (d.characters || []).map(s => ({name: s.name || '', tags: s.tags || '', image: s.image || ''}));
+    adminCharacters = (d.characters || []).map(s => ({name: s.name || '', tags: s.tags || '', image: s.image || '', category: s.category || ''}));
     renderCharacterEntries();
     $('characters-status').textContent = '';
   } catch (e) { $('characters-status').textContent = '加载失败: ' + e.message; }
@@ -2074,12 +2128,8 @@ function renderWfMetaEntries() {
         </div>
         <input type="text" value="${escHtml(m.lora_link || '')}" placeholder="Lora 链接 URL（可选）"
           class="wfmeta-link border rounded px-2 py-1 font-mono text-xs" data-idx="${i}" />
-        <input type="text" value="${escHtml(m.category || '')}" placeholder="分类（可选，如「蔚蓝档案」）"
-          class="wfmeta-category border rounded px-2 py-1 text-xs" data-idx="${i}" />
-      </div>
-      <div class="flex flex-col gap-1">
-        <button class="wfmeta-up text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === 0 ? 'disabled' : ''}>▲</button>
-        <button class="wfmeta-down text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300" data-idx="${i}" ${i === adminWfMeta.length - 1 ? 'disabled' : ''}>▼</button>
+        <input type="text" value="${escHtml(m.category || '')}" placeholder="无分类"
+          class="wfmeta-category border rounded px-2 py-1 text-xs" data-idx="${i}" list="wf-cat-list" autocomplete="off" />
       </div>
     </div>`;
   }).join('');
@@ -2130,18 +2180,6 @@ function renderWfMetaEntries() {
       } catch (e) { $('wfmeta-status').textContent = '上传失败: ' + e.message; }
     });
   });
-  container.querySelectorAll('.wfmeta-up').forEach(el => {
-    el.addEventListener('click', () => {
-      const i = +el.dataset.idx;
-      if (i > 0) { [adminWfMeta[i-1], adminWfMeta[i]] = [adminWfMeta[i], adminWfMeta[i-1]]; renderWfMetaEntries(); autoSaveWfMeta(); }
-    });
-  });
-  container.querySelectorAll('.wfmeta-down').forEach(el => {
-    el.addEventListener('click', () => {
-      const i = +el.dataset.idx;
-      if (i < adminWfMeta.length - 1) { [adminWfMeta[i], adminWfMeta[i+1]] = [adminWfMeta[i+1], adminWfMeta[i]]; renderWfMetaEntries(); autoSaveWfMeta(); }
-    });
-  });
   $('wfmeta-count-badge').textContent = adminWfMeta.length;
 }
 
@@ -2155,6 +2193,7 @@ async function saveWfMeta() {
       lora_link: m.lora_link || '',
       category: m.category || '',
     }));
+    renderWfMetaEntries();
     $('wfmeta-status').textContent = '✓ 已保存';
     setTimeout(() => { $('wfmeta-status').textContent = ''; }, 2000);
   } catch (e) { $('wfmeta-status').textContent = '保存失败: ' + e.message; }
@@ -2172,7 +2211,7 @@ async function loadWfMeta() {
       api('GET', '/api/admin/workflow_meta'),
       api('GET', '/api/admin/limits'),
     ]);
-    _catOrder = (limitsRes.limits || {}).category_order || [];
+    _wfCategories = [...((limitsRes.limits || {}).wf_categories || [])];
     const files = filesRes.files || [];
     const metaMap = {};
     for (const m of (metaRes.workflow_meta || [])) {
@@ -2185,154 +2224,56 @@ async function loadWfMeta() {
       category: (metaMap[f] || {}).category || '',
     }));
     renderWfMetaEntries();
-    renderCatUI();
+    renderWfCatTags();
     $('wfmeta-status').textContent = '';
   } catch (e) { $('wfmeta-status').textContent = '加载失败: ' + e.message; }
 }
 
-let _selectedCat = '';
-let _pendingCats = new Set();
-let _catOrder = [];
+let _wfCategories = [];
 
-async function _saveCatOrder() {
+async function _saveWfCategories() {
   try {
-    await api('POST', '/api/admin/limits', { category_order: _catOrder });
+    await api('POST', '/api/admin/limits', { wf_categories: _wfCategories });
   } catch(e){console.error(e)}
 }
 
-function renderCatUI() {
-  const fromData = adminWfMeta.map(m => (m.category || '').trim()).filter(Boolean);
-  const allCats = new Set([...fromData, ..._pendingCats]);
-  // 保持已有顺序，新分类追加到末尾
-  const ordered = _catOrder.filter(c => allCats.has(c));
-  const extra = [...allCats].filter(c => !_catOrder.includes(c)).sort();
-  _catOrder = [...ordered, ...extra];
-  const cats = _catOrder;
-  const chips = $('wfmeta-cat-chips');
-  chips.innerHTML = cats.map(c => {
-    const sel = c === _selectedCat;
-    return `<span class="wfmeta-cat-chip cursor-grab text-xs px-2 py-0.5 rounded ${sel ? 'bg-blue-500 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}" draggable="true" data-cat="${escHtml(c)}">${c}
-      <button class="wfmeta-cat-del ml-1 text-[10px] opacity-60 hover:opacity-100" data-cat="${escHtml(c)}">✕</button>
-    </span>`;
-  }).join('');
-  let dragChip = null;
-  chips.querySelectorAll('.wfmeta-cat-chip').forEach(el => {
-    el.addEventListener('dragstart', e => { dragChip = el; el.classList.add('opacity-50'); e.dataTransfer.effectAllowed = 'move'; });
-    el.addEventListener('dragend', () => { el.classList.remove('opacity-50'); dragChip = null; });
-    el.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; });
-    el.addEventListener('drop', e => {
-      e.preventDefault();
-      if (!dragChip || dragChip === el) return;
-      const from = dragChip.dataset.cat;
-      const to = el.dataset.cat;
-      const fi = _catOrder.indexOf(from);
-      const ti = _catOrder.indexOf(to);
-      if (fi < 0 || ti < 0) return;
-      _catOrder.splice(fi, 1);
-      _catOrder.splice(ti, 0, from);
-      renderCatUI();
-      _saveCatOrder();
-    });
-    el.addEventListener('click', (e) => {
-      if (e.target.classList.contains('wfmeta-cat-del')) return;
-      _selectedCat = _selectedCat === el.dataset.cat ? '' : el.dataset.cat;
-      renderCatUI();
-    });
-    el.addEventListener('dblclick', (e) => {
-      e.preventDefault();
-      const oldCat = el.dataset.cat;
-      const newCat = prompt('重命名分类', oldCat);
-      if (!newCat || newCat.trim() === '' || newCat.trim() === oldCat) return;
-      const trimmed = newCat.trim();
-      adminWfMeta.forEach(m => { if (m.category === oldCat) m.category = trimmed; });
-      _pendingCats.delete(oldCat);
-      _pendingCats.add(trimmed);
-      const idx = _catOrder.indexOf(oldCat);
-      if (idx >= 0) _catOrder[idx] = trimmed;
-      if (_selectedCat === oldCat) _selectedCat = trimmed;
-      renderCatUI();
-      renderWfMetaEntries();
-      autoSaveWfMeta();
-      _saveCatOrder();
-    });
-  });
-  chips.querySelectorAll('.wfmeta-cat-del').forEach(el => {
-    el.addEventListener('click', () => {
+function renderWfCatTags() {
+  const container = $('wf-cat-tags');
+  container.innerHTML = _wfCategories.map(c =>
+    `<span class="inline-flex items-center text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">
+      ${escHtml(c)}
+      <button class="wf-cat-del ml-1 text-[10px] opacity-60 hover:opacity-100" data-cat="${escHtml(c)}">✕</button>
+    </span>`
+  ).join('');
+  container.querySelectorAll('.wf-cat-del').forEach(el => {
+    el.addEventListener('click', async () => {
       const cat = el.dataset.cat;
+      _wfCategories = _wfCategories.filter(c => c !== cat);
       adminWfMeta.forEach(m => { if (m.category === cat) m.category = ''; });
-      _pendingCats.delete(cat);
-      _catOrder = _catOrder.filter(c => c !== cat);
-      if (_selectedCat === cat) _selectedCat = '';
-      renderCatUI();
+      await _saveWfCategories();
+      renderWfCatTags();
       renderWfMetaEntries();
       autoSaveWfMeta();
-      _saveCatOrder();
     });
   });
-  const uncatDiv = $('wfmeta-uncat');
-  const uncatList = $('wfmeta-uncat-list');
-  const incatDiv = $('wfmeta-incat');
-  const incatList = $('wfmeta-incat-list');
-  if (_selectedCat) {
-    // 已在该分类中的工作流
-    const incat = adminWfMeta.filter(m => (m.category || '').trim() === _selectedCat);
-    if (incat.length) {
-      incatDiv.classList.remove('hidden');
-      incatList.innerHTML = incat.map(m => {
-        const name = m.workflow.replace(/\.json$/i, '');
-        return `<span class="wfmeta-remove cursor-pointer text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-800 hover:bg-red-100 hover:text-red-800" data-wf="${escHtml(m.workflow)}">${escHtml(name)} ✕</span>`;
-      }).join('');
-      incatList.querySelectorAll('.wfmeta-remove').forEach(el => {
-        el.addEventListener('click', () => {
-          const item = adminWfMeta.find(m => m.workflow === el.dataset.wf);
-          if (item) item.category = '';
-          renderCatUI();
-          renderWfMetaEntries();
-          autoSaveWfMeta();
-        });
-      });
-    } else {
-      incatDiv.classList.add('hidden');
-    }
-    // 未分类的工作流
-    const uncat = adminWfMeta.filter(m => !(m.category || '').trim());
-    if (uncat.length) {
-      uncatDiv.classList.remove('hidden');
-      uncatList.innerHTML = uncat.map(m => {
-        const name = m.workflow.replace(/\.json$/i, '');
-        return `<span class="wfmeta-assign cursor-pointer text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-800 hover:bg-amber-200" data-wf="${escHtml(m.workflow)}">${escHtml(name)}</span>`;
-      }).join('');
-      uncatList.querySelectorAll('.wfmeta-assign').forEach(el => {
-        el.addEventListener('click', () => {
-          const wf = el.dataset.wf;
-          const item = adminWfMeta.find(m => m.workflow === wf);
-          if (item) item.category = _selectedCat;
-          renderCatUI();
-          renderWfMetaEntries();
-          autoSaveWfMeta();
-        });
-      });
-    } else {
-      uncatDiv.classList.add('hidden');
-    }
-  } else {
-    uncatDiv.classList.add('hidden');
-    incatDiv.classList.add('hidden');
-  }
+  // 更新 datalist
+  const dl = $('wf-cat-list');
+  dl.innerHTML = '<option value="">无分类</option>' + _wfCategories.map(c => `<option value="${escHtml(c)}">`).join('');
 }
 
-$('btn-add-cat').addEventListener('click', () => {
-  const name = $('wfmeta-cat-input').value.trim();
+$('btn-add-wf-cat').addEventListener('click', async () => {
+  const name = $('wf-cat-input').value.trim();
   if (!name) return;
-  $('wfmeta-cat-input').value = '';
-  _selectedCat = name;
-  _pendingCats.add(name);
-  if (!_catOrder.includes(name)) _catOrder.push(name);
-  _saveCatOrder();
-  renderCatUI();
+  $('wf-cat-input').value = '';
+  if (!_wfCategories.includes(name)) {
+    _wfCategories.push(name);
+    await _saveWfCategories();
+    renderWfCatTags();
+    renderWfMetaEntries();
+  }
 });
-$('wfmeta-cat-input').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') $('btn-add-cat').click();
+$('wf-cat-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('btn-add-wf-cat').click();
 });
 
 $('btn-refresh-wfmeta').addEventListener('click', loadWfMeta);
@@ -3662,8 +3603,11 @@ $('btn-del-log-select-all').addEventListener('click',()=>{const c=document.query
 $('btn-del-log-del-selected').addEventListener('click',async()=>{
   if(!_delLogSelected.size)return; if(!confirm(`确定清理选中的 ${_delLogSelected.size} 条删除记录？`))return;
   const i=prompt(`请输入"确认删除删除记录"以继续清理 ${_delLogSelected.size} 条记录：`); if(i!=='确认删除删除记录'){alert('输入不匹配，已取消');return;}
-  const paths=Array.from(_delLogSelected); let done=0;
-  for(const p of paths){try{await api('POST','/api/admin/deletion-log/clear',{path:p});done++;}catch(err){alert(`清理 ${p} 失败: ${err.message}`);break;}}
+  try{
+    const paths=Array.from(_delLogSelected);
+    const d=await api('POST','/api/admin/deletion-log/clear',{paths});
+    alert(d.message||`已清理 ${d.removed} 条记录`);
+  }catch(err){alert('批量清理失败: '+err.message);}
   _delLogSelected.clear();_updateDelLogSelection();loadDeletionLog(true);
 });
 

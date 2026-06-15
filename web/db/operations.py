@@ -10,6 +10,7 @@ SQLite 数据操作层 (Data Access Layer)
 import json
 import time as _time_module
 import secrets
+import hashlib as _hashlib
 from typing import Dict, Any, List, Optional, Tuple
 
 from db.schema import get_db, config_get, config_set, config_get_section
@@ -101,7 +102,22 @@ def load_sessions() -> Dict[str, Dict]:
     if cached is not None:
         return cached
     rows = _db().execute("SELECT * FROM sessions").fetchall()
-    data = {r["token"]: dict(r) for r in rows}
+    data = {}
+    migrated = False
+    for r in rows:
+        token = r["token"]
+        if len(token) != 64:  # old-style raw token, migrate to sha256
+            hashed = _hashlib.sha256(token.encode()).hexdigest()
+            if hashed not in data:
+                _db().execute("UPDATE sessions SET token=? WHERE token=?", (hashed, token))
+                migrated = True
+            else:
+                _db().execute("DELETE FROM sessions WHERE token=?", (token,))
+            token = hashed
+        data[token] = dict(r)
+    if migrated:
+        _db().commit()
+        invalidate_sessions_cache()
     _cache_set("sessions", data)
     return data
 
@@ -328,19 +344,6 @@ def backfill_user_images_from_gen_logs() -> int:
     return added
 
 
-def cleanup_stale_user_images(existing_paths_fn) -> int:
-    """使用回调检查路径有效性。"""
-    rows = _db().execute("SELECT id, path FROM user_images").fetchall()
-    removed = 0
-    for r in rows:
-        if not existing_paths_fn(r["path"]):
-            _db().execute("DELETE FROM user_images WHERE id=?", (r["id"],))
-            removed += 1
-    if removed:
-        _db().commit()
-    return removed
-
-
 # ═══════════════════════════════════════════
 # 删除标记
 # ═══════════════════════════════════════════
@@ -415,6 +418,18 @@ def save_gen_log(github_id: str, login: str, prompt: str, workflow: str,
 def load_gen_logs_raw():
     """Return all gen_logs rows as list of dicts (for fallback lookups)."""
     return [dict(r) for r in _db().execute("SELECT * FROM gen_logs ORDER BY created_at DESC").fetchall()]
+
+def find_gen_log_by_file_path(file_path: str) -> Optional[Dict]:
+    rows = _db().execute("SELECT * FROM gen_logs WHERE file_paths LIKE ?", (f'%{file_path}%',)).fetchall()
+    for r in rows:
+        try:
+            fps = json.loads(r["file_paths"] or "[]")
+        except Exception:
+            fps = []
+        if file_path in fps:
+            return dict(r)
+    return None
+
 
 def clean_gen_logs_by_file_paths(deleted_paths: set) -> int:
     """删除所有 file_paths 已全部被删的日志。"""
@@ -512,29 +527,37 @@ def add_deletion_log_entry(entry: Dict) -> None:
     _db().commit()
 
 
-def clear_deletion_logs_by_path(path: str) -> int:
-    r = _db().execute("DELETE FROM deletion_logs WHERE path=?", (path,))
-    _db().commit()
-    return r.rowcount
-
-
-def clear_deletion_logs_by_date(date_from: float, date_to: float) -> int:
+def query_deletion_logs_thumb(path: str = "", date_from: float = 0, date_to: float = 0) -> List[Dict]:
     conditions = []
     params = []
+    if path:
+        conditions.append("path=?")
+        params.append(path)
     if date_from:
         conditions.append("deleted_at >= ?")
         params.append(date_from)
     if date_to:
         conditions.append("deleted_at <= ?")
         params.append(date_to)
-    where = " WHERE " + " AND ".join(conditions)
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
+    rows = _db().execute(f"SELECT * FROM deletion_logs{where}", params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def clear_deletion_logs(path: str = "", date_from: float = 0, date_to: float = 0) -> int:
+    conditions = []
+    params = []
+    if path:
+        conditions.append("path=?")
+        params.append(path)
+    if date_from:
+        conditions.append("deleted_at >= ?")
+        params.append(date_from)
+    if date_to:
+        conditions.append("deleted_at <= ?")
+        params.append(date_to)
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
     r = _db().execute(f"DELETE FROM deletion_logs{where}", params)
-    _db().commit()
-    return r.rowcount
-
-
-def clear_all_deletion_logs() -> int:
-    r = _db().execute("DELETE FROM deletion_logs")
     _db().commit()
     return r.rowcount
 

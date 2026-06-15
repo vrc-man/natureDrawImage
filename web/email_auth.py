@@ -15,6 +15,7 @@ import hmac as _hmac
 import struct as _struct
 import asyncio
 import smtplib
+import re
 from typing import Dict, Any, Optional
 import html as _html
 from email.mime.text import MIMEText
@@ -116,6 +117,15 @@ def _hash_password(password: str) -> str:
     h = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 200000)
     return salt + ":" + h.hex()
 
+def _validate_password(password: str) -> Optional[str]:
+    if len(password) < 8:
+        return "密码至少8位"
+    if not re.search(r'[A-Za-z]', password):
+        return "密码必须包含字母"
+    if not re.search(r'[0-9]', password):
+        return "密码必须包含数字"
+    return None
+
 def _verify_password(password: str, stored: str) -> bool:
     try:
         salt, h = stored.split(":", 1)
@@ -212,6 +222,9 @@ def get_email_user(session_uid: str) -> Optional[dict]:
 # ═══ 限流 & Turnstile ═══
 _email_rate_ip: Dict[str, list] = {}
 _email_rate_addr: Dict[str, list] = {}
+_ip_login_fails: Dict[str, dict] = {}
+IP_LOCKOUT_FAILS = 10
+IP_LOCKOUT_SECONDS = 7200
 EMAIL_GLOBAL_DAILY_LIMIT = _get_limit('email_global_per_day', 250)
 EMAIL_GLOBAL_MINUTE_LIMIT = _get_limit('email_global_per_min', 10)
 _email_sent_today: list = []  # 全局发信时间戳
@@ -289,7 +302,7 @@ async def _retry_verify_loop():
                     continue
                 vu = f"{SITE_URL}/api/auth/verify-email?token={eu['verify_token']}&email={email}"
                 ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
-                    _email_html("邮箱验证", "<p style='font-size:14px;line-height:1.8'>感谢注册！</p><div style='text-align:center;margin:20px 0'><a href='" + vu + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>验证邮箱</a></div><p style='font-size:12px;color:#9ca3af'>24小时内有效，非本人操作请忽略。</p>"))
+                    _email_html("邮箱验证", "<p style='font-size:14px;line-height:1.8'>感谢注册！</p><div style='text-align:center;margin:20px 0'><a href='" + vu + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>验证邮箱</a></div><p style='font-size:12px;color:#9ca3af'>30分钟内有效，非本人操作请忽略。</p>"))
                 if ok:
                     _verify_retry.pop(email, None)
                 else:
@@ -360,8 +373,11 @@ def init_email_auth():
             password = str(payload.get("password", "")).strip()
             invite_code = str(payload.get("invite_code", "")).strip().upper()
             turnstile_token = str(payload.get("turnstile_token", "")).strip()
-            if not email or "@" not in email or len(password) < 6:
+            if not email or "@" not in email:
                 raise HTTPException(400, "Invalid input")
+            pw_err = _validate_password(password)
+            if pw_err:
+                raise HTTPException(400, pw_err)
             from web.app import _client_ip_from_request
             client_ip = _client_ip_from_request(request)
             if not await _verify_turnstile(turnstile_token, client_ip):
@@ -415,7 +431,7 @@ def init_email_auth():
             else:
                 vu = f"{SITE_URL}/api/auth/verify-email?token={verify_token}&email={email}"
                 mail_ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
-                    _email_html("邮箱验证", "<p style='font-size:14px;line-height:1.8'>感谢注册！</p><div style='text-align:center;margin:20px 0'><a href='" + vu + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>验证邮箱</a></div><p style='font-size:12px;color:#9ca3af'>24小时内有效，非本人操作请忽略。</p>"))
+                    _email_html("邮箱验证", "<p style='font-size:14px;line-height:1.8'>感谢注册！</p><div style='text-align:center;margin:20px 0'><a href='" + vu + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>验证邮箱</a></div><p style='font-size:12px;color:#9ca3af'>30分钟内有效，非本人操作请忽略。</p>"))
                 if mail_ok:
                     return {"ok": True, "message": "注册成功！请查收验证邮件并点击链接激活账号。"}
                 else:
@@ -447,8 +463,8 @@ def init_email_auth():
             eu = email_users.get(email.lower())
             if not eu or eu.get("verify_token") != token:
                 return Response("<h3>链接无效或已过期</h3>", media_type="text/html")
-            # 检查验证令牌是否超过24小时（created_at + 86400）
-            if time.time() - eu.get("created_at", 0) > 86400:
+            # 检查验证令牌是否超过30分钟（created_at + 1800）
+            if time.time() - eu.get("created_at", 0) > 1800:
                 return Response("<h3>验证链接已过期，请重新注册</h3>", media_type="text/html")
             eu["verified"] = True
             eu["verify_token"] = ""
@@ -475,15 +491,24 @@ def init_email_auth():
         attempts = [t for t in _email_rate_addr.get(fg_key, []) if t > now - _get_limit("forgot_pw_per_email_per_hour", 3600)]
         if attempts:
             return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
+        # 每日限流：每邮箱每天最多2封重置邮件
+        daily_key = f"fgd:{email}"
+        daily_attempts = [t for t in _email_rate_addr.get(daily_key, []) if t > now - 86400]
+        if len(daily_attempts) >= 2:
+            return {"ok": True, "message": "每日重置邮件已达上限，请联系管理员生成重置链接"}
         email_users = _load_email_users()
         if email not in email_users:
             return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
+        if not email_users[email].get("verified"):
+            return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
         token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
         db = get_db()
         db.execute("INSERT OR REPLACE INTO password_resets VALUES (?,?,?)",
-                   (email, token, time.time() + RESET_EXPIRE_SEC))
+                   (email, token_hash, time.time() + RESET_EXPIRE_SEC))
         db.commit()
         _email_rate_addr.setdefault(fg_key, []).append(now)
+        _email_rate_addr.setdefault(daily_key, []).append(now)
         link = f"{SITE_URL}/api/auth/reset-password?token={token}&email={email}"
         await _send_email(email, f"[{SITE_NAME}] 重置密码",
             _email_html("密码重置", "<p style='font-size:14px;line-height:1.8'>您请求重置密码。</p><div style='text-align:center;margin:20px 0'><a href='" + link + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>重置密码</a></div><p style='font-size:12px;color:#9ca3af'>30分钟内有效，非本人操作请忽略。</p>"))
@@ -494,7 +519,8 @@ def init_email_auth():
         if not token or not email:
             return Response("<h3>链接无效</h3>", media_type="text/html")
         db = get_db()
-        row = db.execute("SELECT * FROM password_resets WHERE email=? AND token=?", (email.lower(), token)).fetchone()
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        row = db.execute("SELECT * FROM password_resets WHERE email=? AND token=?", (email.lower(), token_hash)).fetchone()
         if not row or row["expires_at"] < time.time():
             return Response("<h3>链接已过期或无效</h3>", media_type="text/html")
         # Simple inline HTML form
@@ -527,7 +553,10 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
   var s = document.getElementById('status');
   var p1 = document.getElementById('new-pwd').value;
   var p2 = document.getElementById('confirm-pwd').value;
-  if (p1.length < 6) { s.textContent = '密码至少6位'; s.style.color = '#ef4444'; return; }
+  var hasLetter = /[a-zA-Z]/.test(p1); var hasDigit = /[0-9]/.test(p1);
+  if (p1.length < 8) { s.textContent = '密码至少8位'; s.style.color = '#ef4444'; return; }
+  if (!hasLetter) { s.textContent = '密码必须包含字母'; s.style.color = '#ef4444'; return; }
+  if (!hasDigit) { s.textContent = '密码必须包含数字'; s.style.color = '#ef4444'; return; }
   if (p1 !== p2) { s.textContent = '两次密码不一致'; s.style.color = '#ef4444'; return; }
   s.textContent = '...';
   try {
@@ -554,18 +583,37 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         email = str(payload.get("email", "")).strip().lower()
         token = str(payload.get("token", "")).strip()
         password = str(payload.get("password", "")).strip()
-        if not email or not token or len(password) < 6:
+        if not email or not token:
             raise HTTPException(400, "参数无效")
-        db = get_db()
-        row = db.execute("SELECT * FROM password_resets WHERE email=? AND token=?", (email, token)).fetchone()
-        if not row or row["expires_at"] < time.time():
-            raise HTTPException(400, "链接已过期或无效")
+        pw_err = _validate_password(password)
+        if pw_err:
+            raise HTTPException(400, pw_err)
+        from web.app import _client_ip_from_request
+        client_ip = _client_ip_from_request(request)
+        now_rl = time.time()
+        rp_key = f"rp:{client_ip}"
+        re_key = f"rpe:{email}"
+        rp_attempts = [t for t in _email_rate_ip.get(rp_key, []) if t > now_rl - 60]
+        re_attempts = [t for t in _email_rate_addr.get(re_key, []) if t > now_rl - 60]
+        if len(rp_attempts) >= 5:
+            raise HTTPException(429, "操作过于频繁，请稍后再试")
+        if len(re_attempts) >= 3:
+            raise HTTPException(429, "该邮箱操作过于频繁，请稍后再试")
+        _email_rate_ip.setdefault(rp_key, []).append(now_rl)
+        _email_rate_addr.setdefault(re_key, []).append(now_rl)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
         async with _email_users_lock:
+            db = get_db()
+            row = db.execute("SELECT * FROM password_resets WHERE email=? AND token=?", (email, token_hash)).fetchone()
+            if not row or row["expires_at"] < time.time():
+                raise HTTPException(400, "链接已过期或无效")
             email_users = _load_email_users()
             eu = email_users.get(email)
             if not eu:
                 raise HTTPException(404, "用户不存在")
             eu["password_hash"] = _hash_password(password)
+            eu["login_fails"] = 0
+            eu["login_fail_time"] = 0
             _save_email_users(email_users)
             db.execute("DELETE FROM password_resets WHERE email=?", (email,))
             db.commit()
@@ -596,27 +644,20 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         async with _email_users_lock:
             email_users = _load_email_users()
             eu = email_users.get(email)
-            # 账号锁定检查
-            if eu:
-                now_ts = time.time()
-                fails = eu.get("login_fails", 0)
-                fail_time = eu.get("login_fail_time", 0)
-                lockout_fails = _get_limit('login_lockout_fails', 5)
-                lockout_sec = _get_limit('login_lockout_seconds', 900)
-                if fails >= lockout_fails and now_ts - fail_time < lockout_sec:
-                    raise HTTPException(429, f"账号已被锁定，请{lockout_sec//60}分钟后再试")
+            # IP 锁定检查（锁定期间直接拒绝，不记录）
+            ip_lock = _ip_login_fails.get(client_ip)
+            if ip_lock and ip_lock.get("lock_until", 0) > now:
+                raise HTTPException(429, "登录失败次数过多，已被临时限制")
             if not eu or not _verify_password(password, eu["password_hash"]):
-                if eu:
-                    now_ts = time.time()
-                    fail_time = eu.get("login_fail_time", 0)
-                    eu["login_fails"] = 1 if now_ts - fail_time > 900 else eu.get("login_fails", 0) + 1
-                    eu["login_fail_time"] = now_ts
-                    _save_email_users(email_users)
-                raise HTTPException(401, "Invalid credentials")
-            if eu and eu.get("login_fails", 0) > 0:
-                eu["login_fails"] = 0
-                eu["login_fail_time"] = 0
-                _save_email_users(email_users)
+                # IP 维度失败计数
+                ip_data = _ip_login_fails.setdefault(client_ip, {"fails": 0, "lock_until": 0})
+                ip_data["fails"] += 1
+                if ip_data["fails"] >= IP_LOCKOUT_FAILS:
+                    ip_data["lock_until"] = now + IP_LOCKOUT_SECONDS
+                await asyncio.sleep(ip_data["fails"] * 0.2)
+                raise HTTPException(401, "邮箱或密码错误")
+            # 登录成功，清理 IP 记录
+            _ip_login_fails.pop(client_ip, None)
             if not eu.get("verified"):
                 raise HTTPException(401, "Email not verified")
             if eu.get("banned"):
@@ -633,7 +674,8 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             uid = "email:" + email
             sessions = {k: v for k, v in sessions.items() if v.get("expires_at", 0) > now}
             sessions = {k: v for k, v in sessions.items() if str(v.get("github_id", "")) != uid}
-            sessions[token] = {
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            sessions[token_hash] = {
                 "github_id": uid,
                 "expires_at": now + SESSION_MAX_AGE_SEC,
                 "access_granted": False,
@@ -755,8 +797,11 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             raise HTTPException(400, "仅邮箱用户可修改密码")
         old_pwd = str(payload.get("old_password", "")).strip()
         new_pwd = str(payload.get("new_password", "")).strip()
-        if not old_pwd or len(new_pwd) < 6:
-            raise HTTPException(400, "旧密码必填，新密码至少6位")
+        if not old_pwd:
+            raise HTTPException(400, "旧密码必填")
+        pw_err = _validate_password(new_pwd)
+        if pw_err:
+            raise HTTPException(400, pw_err)
         async with _email_users_lock:
             email_users = _load_email_users()
             eu = email_users.get(email)
@@ -963,11 +1008,11 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             if eu.get("verified"):
                 raise HTTPException(400, "邮箱已验证，无需重新发送")
             eu["verify_token"] = secrets.token_urlsafe(32)
-            eu["created_at"] = time.time()  # 重置24h窗口
+            eu["created_at"] = time.time()  # 重置30分钟窗口
             _save_email_users(email_users)
         vu = f"{SITE_URL}/api/auth/verify-email?token={eu['verify_token']}&email={email}"
         mail_ok = await _send_email(email, f"[{SITE_NAME}] 验证邮箱",
-            _email_html("邮箱验证", "<p style='font-size:14px;line-height:1.8'>管理员为您重新发送了验证邮件。</p><div style='text-align:center;margin:20px 0'><a href='" + vu + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>验证邮箱</a></div><p style='font-size:12px;color:#9ca3af'>24小时内有效，非本人操作请忽略。</p>"))
+            _email_html("邮箱验证", "<p style='font-size:14px;line-height:1.8'>管理员为您重新发送了验证邮件。</p><div style='text-align:center;margin:20px 0'><a href='" + vu + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>验证邮箱</a></div><p style='font-size:12px;color:#9ca3af'>30分钟内有效，非本人操作请忽略。</p>"))
         if mail_ok:
             return {"ok": True, "message": "验证邮件已重新发送"}
         else:
@@ -996,6 +1041,61 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             eu["totp_secret"] = ""
             _save_email_users(email_users)
         return {"ok": True, "message": "TOTP 已重置，用户下次登录无需2FA码"}
+
+
+    @app.post("/api/admin/email-users/reset-password")
+    async def api_admin_reset_password(request: Request, payload: Dict[str, Any] = {}):
+        if not getattr(request.state, "is_admin", False):
+            raise HTTPException(403)
+        email = str(payload.get("email", "")).strip().lower()
+        if not email:
+            github_id = str(payload.get("github_id", "")).strip()
+            if github_id.startswith("email:"):
+                email = github_id[6:]
+        if not email:
+            raise HTTPException(400, "请提供邮箱地址")
+        email_users = _load_email_users()
+        if email not in email_users:
+            raise HTTPException(404, "未找到该邮箱用户")
+        if not email_users[email].get("verified"):
+            raise HTTPException(400, "该用户邮箱未验证，无法重置密码，请先发送验证邮件")
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        db = get_db()
+        db.execute("INSERT OR REPLACE INTO password_resets VALUES (?,?,?)",
+                   (email, token_hash, time.time() + RESET_EXPIRE_SEC))
+        db.commit()
+        link = f"{SITE_URL}/api/auth/reset-password?token={token}&email={email}"
+        mail_ok = await _send_email(email, f"[{SITE_NAME}] 管理员重置密码",
+            _email_html("密码重置", "<p style='font-size:14px;line-height:1.8'>管理员为您生成了密码重置链接。</p><div style='text-align:center;margin:20px 0'><a href='" + link + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>重置密码</a></div><p style='font-size:12px;color:#9ca3af'>30分钟内有效，非本人操作请忽略。</p>"))
+        if mail_ok:
+            return {"ok": True, "message": "重置链接已发送到用户邮箱，有效期30分钟"}
+        return {"ok": True, "link": link, "message": "邮件发送失败，可手动将下方链接发送给用户，有效期30分钟"}
+
+
+    @app.post("/api/admin/email-users/send-custom-email")
+    async def api_admin_send_custom_email(request: Request, payload: Dict[str, Any] = {}):
+        if not getattr(request.state, "is_admin", False):
+            raise HTTPException(403)
+        email = str(payload.get("email", "")).strip().lower()
+        if not email:
+            github_id = str(payload.get("github_id", "")).strip()
+            if github_id.startswith("email:"):
+                email = github_id[6:]
+        if not email:
+            raise HTTPException(400, "请提供邮箱地址")
+        subject = str(payload.get("subject", "")).strip()
+        message = str(payload.get("message", "")).strip()
+        if not subject or not message:
+            raise HTTPException(400, "主题和内容不能为空")
+        email_users = _load_email_users()
+        if email not in email_users:
+            raise HTTPException(404, "未找到该邮箱用户")
+        mail_ok = await _send_email(email, f"[{SITE_NAME}] {subject}",
+            _email_html(subject, message.replace("\n", "<br>")))
+        if mail_ok:
+            return {"ok": True, "message": "邮件已发送"}
+        return {"ok": True, "message": "邮件发送失败，请检查SMTP配置"}
 
 
     @app.post("/api/admin/email-users/ban")
@@ -1052,7 +1152,10 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             return None
         from web.app import _load_sessions
         sessions = _load_sessions()
-        sess = sessions.get(token)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+        sess = sessions.get(token_hash)
+        if not sess:
+            sess = sessions.get(token)  # fallback旧token
         if not sess:
             return None
         now = time.time()
