@@ -317,16 +317,20 @@ async function pollMyQueue() {
       }
     } else {
       _myQueueRunning.value = !!running.length
+      // 有任务时禁用按钮（原版逻辑：刷新页面后 _isGenerating 可能为 false 但任务仍在运行）
+      if (hasMyTask) {
+        const btn = document.getElementById('btn-run') as HTMLButtonElement | null
+        if (btn && !btn.disabled) btn.disabled = true
+      }
     }
 
-    // WS 断开后轮询检测任务完成（队列中还有项时）
+    // WS 断开后轮询检测任务完成
     if (_watchingMode.value) {
       if (!running.length && !waiting.length) {
-        _isGenerating.value = false
         const btn = document.getElementById('btn-run') as HTMLButtonElement | null
         if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
         if (!_finishing.value && !_doneNotified) {
-          _watchingMode.value = false
+          _watchingMode.value = false; _doneNotified = true
           const failedItem = items.find((i: any) => i.status === 'failed')
           const errMsg = failedItem?.error_message || ''
           showToast(errMsg ? '❌ ' + errMsg : '✅ 任务已完成，请到「我的」查看')
@@ -341,7 +345,6 @@ async function pollMyQueue() {
     // 页面刷新后检测已完成/失败的任务
     const doneItems = items.filter((i: any) => i.status === 'done' || i.status === 'failed')
     if (doneItems.length) {
-      _isGenerating.value = false
       const btn = document.getElementById('btn-run') as HTMLButtonElement | null
       if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
     }
@@ -349,6 +352,7 @@ async function pollMyQueue() {
       if (!_notifiedTaskIds.has(item.id)) {
         _notifiedTaskIds.add(item.id)
         if (!_finishing.value && !_doneNotified && noActiveWS) {
+          _doneNotified = true
           const errMsg = item.error_message || ''
           showToast(errMsg ? '❌ ' + errMsg : '✅ 任务已完成，请到「我的」查看')
           sound.play(item.status === 'done' ? 'done' : 'error')
