@@ -13,15 +13,26 @@ onMounted(load)
 
 async function load() {
   loading.value = true
+  statusMsg.value = ''
   try {
     const st = await totpStatus()
     enabled.value = st.totp_enabled
     if (!st.totp_enabled) {
       const setup = await totpSetup()
       if (setup.enabled) { enabled.value = true }
-      else { secret.value = setup.secret }
+      else { secret.value = setup.secret || '' }
     }
-  } catch {}
+  } catch (e: any) {
+    statusMsg.value = '获取状态失败: ' + (e.message || '未知错误')
+    // 尝试直接调用 totpSetup 兜底
+    try {
+      const setup = await totpSetup()
+      if (setup.enabled) { enabled.value = true }
+      else { secret.value = setup.secret || '' }
+    } catch (e2: any) {
+      statusMsg.value = '加载失败: ' + (e2.message || '未知错误')
+    }
+  }
   loading.value = false
 }
 
