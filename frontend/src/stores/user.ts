@@ -9,6 +9,7 @@ export interface UserInfo {
   avatar_url?: string
   is_email_user?: boolean
   access_granted?: boolean
+  key_status?: string
   key_info?: any
 }
 

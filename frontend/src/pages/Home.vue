@@ -63,6 +63,7 @@ const promptMode = ref(localStorage.getItem('formState_promptMode') || 'tags')
 const width = ref(parseInt(localStorage.getItem('formState_w') || '512'))
 const height = ref(parseInt(localStorage.getItem('formState_h') || '768'))
 const currentWorkflowPath = ref(localStorage.getItem('currentWorkflow') || '')
+const img2imgUsePreset = ref(false)
 
 // Fork
 const forkedWorkflow = ref<any>(null)
@@ -120,6 +121,7 @@ const cpOld = ref(''), cpNew = ref(''), cpConfirm = ref(''), cpStatus = ref('')
 const accessKeyInput = ref('')
 const accessKeyError = ref('')
 const accessKeySuccess = ref('')
+const keyExpired = ref(false)
 
 // Resolution presets
 const resolutions = ref([
@@ -191,6 +193,8 @@ onMounted(async () => {
   initTooltips()
   initSakuraPetals()
   initTextareaHeightSync()
+  // 检查密钥过期状态
+  if (userStore.currentUser?.key_status === 'expired') keyExpired.value = true
   // Load forked workflow
   try {
     const fw = localStorage.getItem('forkedWorkflow')
@@ -393,6 +397,7 @@ async function actuallyStartRun(g: {direct:string;nl:string;neg:string;w:number;
       height: g.h,
       style_tags: g.style,
       character_tags: g.char,
+      img2img_use_preset: img2imgUsePreset.value,
     }
     if (forkedWorkflow.value) payload.inline_workflow = forkedWorkflow.value
     ws.send(JSON.stringify(payload))
@@ -654,11 +659,11 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
       <div class="flex-1 overflow-y-auto pb-[60px] pt-[52px]">
         <!-- ============ GENERATE ============ -->
         <div v-if="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
-          <div class="max-w-5xl mx-auto space-y-4">
+          <div class="max-w-5xl mx-auto space-y-5">
             <!-- Access Key (only for non-admin, no key, logged-in) -->
             <div v-if="!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn" class="text-center py-12">
               <p class="text-4xl mb-4">🔑</p>
-              <p class="text-sm text-gray-500 mb-4">需要使用管理员分配的访问密钥才能使用生图服务</p>
+              <p class="text-sm text-gray-500 mb-4">{{ keyExpired ? '您的密钥已过期，请输入新密钥或联系管理员获取' : '需要使用管理员分配的访问密钥才能使用生图服务' }}</p>
               <input v-model="accessKeyInput" @keydown.enter="submitKey" type="text" placeholder="输入访问密钥" class="w-full max-w-sm border border-pink-200 rounded-xl px-4 py-2.5 text-sm text-center mx-auto mb-3 outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 block" />
               <button @click="submitKey" class="px-6 py-2 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl text-sm font-semibold hover:from-pink-300 hover:to-rose-300 transition-all cursor-pointer border-0">提交</button>
               <p v-if="accessKeyError" class="text-xs text-red-400 mt-2">{{ accessKeyError }}</p>
@@ -731,6 +736,10 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
               <!-- Img2img upload -->
               <div v-if="mode==='img2img'">
                 <Img2ImgUpload ref="uploadRef" />
+                <label class="flex items-center gap-2 mt-2 text-xs text-gray-400 cursor-pointer select-none">
+                  <input v-model="img2imgUsePreset" type="checkbox" class="accent-pink-500" />
+                  注入上方所选分辨率（默认不勾选，保持原图尺寸）
+                </label>
               </div>
 
               <!-- Run button -->
@@ -774,7 +783,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
               <div class="text-right">
                 <button @click="showLog=!showLog" class="text-[10px] text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">{{ showLog ? '隐藏日志' : '📋 日志' }}</button>
               </div>
-              <pre v-if="showLog || logLines.length" class="text-[10px] text-gray-400 bg-white/50 rounded-xl p-3 max-h-40 overflow-y-auto whitespace-pre-wrap">{{ logLines.join('\n') }}</pre>
+              <pre v-if="showLog" class="text-[10px] text-gray-400 bg-white/50 rounded-xl p-3 max-h-40 overflow-y-auto whitespace-pre-wrap">{{ logLines.join('\n') }}</pre>
             </div>
           </div>
         </div>

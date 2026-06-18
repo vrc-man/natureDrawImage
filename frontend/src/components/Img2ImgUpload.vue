@@ -83,15 +83,15 @@ function pickFile() {
     <div v-if="!images.length" class="border-2 border-dashed border-pink-200 rounded-2xl p-6 text-center text-xs text-gray-400 cursor-pointer hover:bg-pink-50/50 transition-all" @click="pickFile">
       📤 点击上传参考图（支持多张）
     </div>
-    <div v-else id="img-preview" class="grid grid-cols-3 gap-2">
-      <div v-for="(img, i) in images" :key="i" class="relative">
-        <img :src="img.previewUrl" class="w-full aspect-square object-cover rounded-xl border border-pink-100" />
+    <div v-else id="img-preview" class="flex flex-wrap gap-2">
+      <div v-for="(img, i) in images" :key="i" class="relative" style="width:128px;height:128px">
+        <img :src="img.previewUrl" class="w-full h-full object-cover rounded-xl border border-pink-100" style="width:128px;height:128px" />
         <button @click="removeImage(i)" class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] leading-none hover:bg-red-700 cursor-pointer border-0">✕</button>
         <div v-if="!img.done" class="upload-progress">
           <div class="upload-progress-bar" :style="{ width: img.progress + '%' }"></div>
         </div>
       </div>
-      <div class="border-2 border-dashed border-pink-200 rounded-xl flex items-center justify-center text-lg text-gray-300 cursor-pointer hover:bg-pink-50/50 aspect-square" @click="pickFile">+</div>
+      <div class="border-2 border-dashed border-pink-200 rounded-xl flex items-center justify-center text-lg text-gray-300 cursor-pointer hover:bg-pink-50/50" style="width:128px;height:128px" @click="pickFile">+</div>
     </div>
   </div>
 </template>
