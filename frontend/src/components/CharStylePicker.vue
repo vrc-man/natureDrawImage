@@ -96,7 +96,7 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
               <input v-model="charSearch" placeholder="搜索角色..." class="w-full border border-pink-200 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border" />
               <div class="char-picker-grid flex flex-wrap gap-1 mt-2 max-h-[40vh] overflow-y-auto">
                 <div v-for="c in filteredChars" :key="c.tags" :class="['style-card', { selected: selectedChars.includes(c.tags) }]" @click="toggleChar(c.tags)">
-                  <img v-if="c.thumb" :src="'/api/character_thumbnail?name=' + encodeURIComponent(c.name || c.tags)" class="style-thumb" loading="lazy" />
+                  <img v-if="c.image" :src="'/api/character_thumbnail?name=' + encodeURIComponent(c.image)" class="style-thumb" loading="lazy" />
                   <div v-else class="style-thumb flex items-center justify-center text-gray-300 text-base">🎭</div>
                   <span class="style-label">{{ c.name || c.tags }}</span>
                 </div>
@@ -108,7 +108,7 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
               <input v-model="styleSearch" placeholder="搜索画风..." class="w-full border border-pink-200 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border" />
               <div class="char-picker-grid flex flex-wrap gap-1 mt-2 max-h-[40vh] overflow-y-auto">
                 <div v-for="s in filteredStyles" :key="s.tags" :class="['style-card', { selected: selectedStyle === s.tags }]" @click="selectStyle(s.tags)">
-                  <img v-if="s.thumb" :src="'/api/style_thumbnail?name=' + encodeURIComponent(s.name || s.tags)" class="style-thumb" loading="lazy" />
+                  <img v-if="s.image" :src="'/api/style_thumbnail?name=' + encodeURIComponent(s.image)" class="style-thumb" loading="lazy" />
                   <div v-else class="style-thumb flex items-center justify-center text-gray-300 text-base">🖌️</div>
                   <span class="style-label">{{ s.name || s.tags }}</span>
                 </div>

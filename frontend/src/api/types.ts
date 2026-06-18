@@ -20,13 +20,16 @@ export interface WorkflowItem {
 export interface StyleItem {
   name: string
   tags: string
+  image?: string
   thumb?: string
 }
 
 export interface CharacterItem {
   name: string
   tags: string
+  image?: string
   thumb?: string
+  category?: string
 }
 
 export interface ResolutionPreset {
