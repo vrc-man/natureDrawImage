@@ -697,7 +697,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
       </div>
 
         <!-- Tab Pages -->
-      <div class="flex-1 overflow-y-auto pb-[60px] pt-[52px]">
+      <div class="flex-1 overflow-y-auto pb-[80px] pt-[52px]">
         <!-- ============ GENERATE ============ -->
         <div v-if="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
           <div class="max-w-5xl mx-auto space-y-6">
