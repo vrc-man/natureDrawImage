@@ -11,7 +11,7 @@ export const logout = () => apiRaw('/auth/logout', { method: 'POST', headers: { 
 
 // === Workflows ===
 export const loadWorkflows = () =>
-  api<{ all?: WorkflowItem[]; dirs?: any; workflows?: WorkflowItem[] }>('GET', '/api/workflows')
+  api<{ workflows?: WorkflowItem[]; all?: WorkflowItem[]; txt2img_dir?: string; img2img_dir?: string }>('GET', '/api/workflows')
 
 // === Styles & Characters ===
 export const loadStyles = () => api<{ styles?: StyleItem[]; characters?: CharacterItem[] }>('GET', '/api/styles')
@@ -27,7 +27,7 @@ export const myQueue = () => api<{ items: QueueItem[]; total: number }>('GET', '
 export const loadGallery = (params?: { offset?: number; limit?: number }) =>
   api<{ items: any[]; total: number; output_dir?: string }>('GET', '/api/output/list' + (params ? '?' + new URLSearchParams({ offset: String(params.offset || 0), limit: String(params.limit || 30) }) : ''))
 
-export const loadFeatured = () => api<any[]>('GET', '/api/output/featured')
+export const loadFeatured = () => api<{ items: any[]; tip?: string }>('GET', '/api/output/featured')
 
 export const loadMyImages = (params?: { offset?: number; limit?: number }) =>
   api<{ items: any[]; total: number }>('GET', '/api/my-images' + (params ? '?' + new URLSearchParams({ offset: String(params.offset || 0), limit: String(params.limit || 30) }) : ''))

@@ -226,7 +226,6 @@ const wfDirs = ref({ txt2img: '', img2img: '' })
 async function loadList() {
   try {
     const d = await api<any>('GET', '/api/workflows')
-    if (d.dirs) wfDirs.value = d.dirs
     if (d.workflows) allWorkflows.value = d.workflows
     else if (d.all) allWorkflows.value = d.all
   } catch {}

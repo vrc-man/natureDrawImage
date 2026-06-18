@@ -11,10 +11,11 @@ const selectedName = ref(localStorage.getItem('currentWorkflowName') || '')
 const allWorkflows = ref<WorkflowItem[]>([])
 const search = ref('')
 const catExpanded = ref<Record<string, boolean>>({})
-const wfDirs = ref<Record<string, string>>({})
+const txt2imgDir = ref('')
+const img2imgDir = ref('')
 
 const workflows = computed(() => {
-  const dir = props.mode === 'img2img' ? wfDirs.value.img2img : wfDirs.value.txt2img
+  const dir = props.mode === 'img2img' ? img2imgDir.value : txt2imgDir.value
   if (!dir) return allWorkflows.value
   return allWorkflows.value.filter(w => w.path && w.path.startsWith(dir))
 })
@@ -38,13 +39,9 @@ const grouped = computed(() => {
 async function loadAll() {
   try {
     const d = await loadWorkflows()
-    allWorkflows.value = d.all || d.workflows || []
-    if (d.dirs) wfDirs.value = d.dirs
-    const cats = new Set<string>()
-    for (const w of allWorkflows.value) {
-      if (w.category) cats.add(w.category)
-      if (!w.category) cats.add('未分类')
-    }
+    allWorkflows.value = d.workflows || d.all || []
+    txt2imgDir.value = d.txt2img_dir || ''
+    img2imgDir.value = d.img2img_dir || ''
   } catch {}
 }
 

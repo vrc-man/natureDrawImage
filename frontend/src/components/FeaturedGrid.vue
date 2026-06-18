@@ -11,7 +11,7 @@ onMounted(load)
 async function load() {
   try {
     const d = await loadFeatured()
-    items.value = d || []
+    items.value = d.items || []
   } catch {}
 }
 
