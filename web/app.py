@@ -6195,7 +6195,7 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
                 node3["inputs"]["image"] = req.image3_name
                 await emit(ws, {"type": "log", "message": f"图生图: LoadImage -> {req.image3_name}"})
 
-    await emit(ws, {"type": "log", "message": "[3/4] 提交到 生图模块..."})
+    await emit(ws, {"type": "log", "message": "[3/4] 提交到 生图服务模块..."})
     prompt_id = await submit_prompt(prompt_dict)
     await emit(ws, {"type": "log", "message": f"prompt_id={prompt_id[:8]}"})
     await emit(ws, {"type": "prompt_id", "prompt_id": prompt_id, "final_prompt": sd_prompt})
