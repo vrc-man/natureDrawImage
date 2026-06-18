@@ -343,8 +343,8 @@ async function pollNotifications() {
   try {
     const d = await api<any>('GET', '/api/notifications')
     if (d.online_count !== undefined) onlineCount.value = d.online_count
-    if (d.queue_count !== undefined) notifyQueueCount.value = d.queue_count
-    if (d.unread_count !== undefined) notifyUnreadCount.value = d.unread_count
+    if (d.my_queue_count !== undefined) notifyQueueCount.value = d.my_queue_count
+    if (d.unread_notifications !== undefined) notifyUnreadCount.value = d.unread_notifications
   } catch {}
 }
 
