@@ -648,7 +648,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <div v-show="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
           <div class="max-w-5xl mx-auto space-y-4">
             <!-- Access Key -->
-            <div v-if="!userStore.currentUser?.access_granted && userStore.isLoggedIn" class="text-center py-12">
+            <div v-if="!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn" class="text-center py-12">
               <p class="text-4xl mb-4">🔑</p>
               <p class="text-sm text-gray-500 mb-4">需要使用管理员分配的访问密钥才能使用生图服务</p>
               <input v-model="accessKeyInput" @keydown.enter="submitKey" type="text" placeholder="输入访问密钥" class="w-full max-w-sm border border-pink-200 rounded-xl px-4 py-2.5 text-sm text-center mx-auto mb-3 outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 block" />
