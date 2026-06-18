@@ -293,11 +293,13 @@ async function pollMyQueue() {
     const running = items.filter((i: any) => i.status === 'running')
     const hasMyTask = waiting.length || running.length
 
+    // 正在生图中不检查（避免 WS 还没连上、任务还没入队时被恢复逻辑打断）
+    if (_isGenerating.value) return
+
     const noActiveWS = !(activeWS && activeWS.readyState === WebSocket.OPEN)
     if (running.length) _hasRunningBefore = true
     if (!items.length && noActiveWS) {
       _myQueueRunning.value = false
-      _isGenerating.value = false
       // 队列空+无WS → 强制恢复按钮（原版逻辑）
       const btn = document.getElementById('btn-run') as HTMLButtonElement | null
       if (btn && btn.disabled) {
