@@ -32,9 +32,9 @@ async function doCopyLink() {
   if (!current()) return
   try {
     const d = await api<any>('POST', '/api/output/signed-url', { path: current()!.path || current()!.filename || '' })
-    await navigator.clipboard.writeText(d.url || current()!.url)
+    await navigator.clipboard.writeText(location.origin + (d.url || current()!.url))
     alert('链接已复制')
-  } catch { await navigator.clipboard.writeText(current()!.url); alert('链接已复制') }
+  } catch { await navigator.clipboard.writeText(location.origin + current()!.url); alert('链接已复制') }
 }
 
 async function doReport() {
