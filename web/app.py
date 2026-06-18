@@ -8647,12 +8647,18 @@ async def api_admin_deletion_log_clear(request: Request, payload: Dict[str, Any]
 
 # ═══ SPA fallback ═══
 import os as _os
-_SPA_INDEX = _os.path.join(_os.path.dirname(__file__), "static", "dist", "index.html")
+_SPA_DIR = _os.path.join(_os.path.dirname(__file__), "static", "dist")
+_SPA_INDEX = _os.path.join(_SPA_DIR, "index.html")
 if _os.path.isfile(_SPA_INDEX):
     @app.get("/{path:path}")
     async def spa_fallback(path: str):
         if path.startswith(("api/", "ws/", "auth/", "static/", "output/")):
             raise HTTPException(404)
+        # 先尝试在 dist 目录中找静态文件（js/css/图片等）
+        _fp = _os.path.join(_SPA_DIR, path)
+        if _os.path.isfile(_fp):
+            return FileResponse(_fp)
+        # 否则返回 SPA 入口
         resp = FileResponse(_SPA_INDEX, media_type="text/html")
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
