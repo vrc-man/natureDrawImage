@@ -873,13 +873,47 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <!-- ============ MY WORKS ============ -->
         <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><MyWorksGrid ref="myworksRef" /><div class="h-20"></div></div></div>
         <!-- ============ MORE ============ -->
-        <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-4">
-          <div v-if="annTitle" class="bg-amber-50 border border-amber-200 rounded-2xl p-4">
-            <div class="text-sm font-bold text-amber-700 mb-1">{{ annTitle }}</div>
-            <div class="text-xs text-amber-600 whitespace-pre-wrap">{{ annContent }}</div>
+        <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-6">
+          <h1 class="text-xl sm:text-2xl font-bold text-gray-800">⚙️ 更多</h1>
+          <!-- 公告 -->
+          <div v-if="annTitle" class="bg-pink-50 border border-pink-200 rounded-2xl p-4 text-sm text-pink-700">
+            <div class="font-semibold">{{ annTitle }}</div>
+            <div class="mt-1 text-xs whitespace-pre-wrap">{{ annContent }}</div>
           </div>
+          <!-- GPU -->
           <GPUBar />
-          <div class="h-20"></div>
+          <!-- 常用链接 -->
+          <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+            <h2 class="text-base font-semibold mb-3 text-gray-700">🔗 常用链接</h2>
+            <div class="flex flex-col gap-2 text-sm">
+              <a href="https://2x.nz/posts/ai-wife" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">📖 新手教程：从零开始造老婆</a>
+              <a href="https://www.downloadmost.com/NoobAI-XL/danbooru-artist/" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">🎨 danbooru-artist 画师库</a>
+              <a href="https://www.downloadmost.com/NoobAI-XL/danbooru-character/" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">👤 danbooru-character 角色库</a>
+            </div>
+          </div>
+          <!-- 免责声明 -->
+          <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+            <h2 class="text-base font-semibold mb-3 text-gray-700">免责声明</h2>
+            <div class="text-sm text-gray-600 leading-relaxed space-y-2">
+              <p>使用本站服务即表示您同意：</p>
+              <ul class="list-disc list-inside space-y-1">
+                <li>本站通过 GitHub OAuth 或邮箱注册登录，<strong>仅获取您的用户名、用户ID及邮箱信息</strong>，仅用于账户识别与违规追溯，不用于其他用途</li>
+                <li>您的 <strong>IP 地址将被记录</strong>，违规行为将被追溯</li>
+                <li>您应对自己生成的图片内容承担<strong>全部法律责任</strong></li>
+                <li>请遵守当地法律法规，<strong>不得生成违法、侵权或不当内容</strong></li>
+                <li>您的作品<strong>仅自己可见</strong>，本站不会擅自公开</li>
+                <li>本站有权<strong>保留违规用户的相关证据</strong>（IP、用户名、邮箱、违规内容）以保护自身合法权益</li>
+                <li>本站为个人非商业项目，不提供可用性保证</li>
+                <li>本站将尽力保护您的数据安全，但因不可抗力、第三方攻击或法律要求导致的数据泄露，不承担责任</li>
+                <li>本站保留对违规用户进行<strong>封禁</strong>的权利</li>
+              </ul>
+              <p class="text-xs text-gray-500 mt-2">完整条款请查看 <a href="/privacy" target="_blank" class="text-pink-500 hover:text-pink-600 underline">用户协议与隐私政策</a></p>
+            </div>
+          </div>
+          <!-- 来源声明 -->
+          <div class="text-center text-xs text-gray-400 py-2">
+            Powered by <a href="https://github.com/afoim/natureDrawImage" target="_blank" rel="noopener" class="text-gray-500 hover:text-gray-700 underline">natureDrawImage</a> (AGPLv3) | Modified by vrc-man since 2026-05 | <a href="https://github.com/vrc-man/natureDrawImage" target="_blank" rel="noopener" class="text-gray-500 hover:text-gray-700 underline">源码</a>
+          </div>
         </div></div>
       </div>
 
