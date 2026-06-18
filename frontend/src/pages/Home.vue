@@ -122,6 +122,17 @@ const accessKeyInput = ref('')
 const accessKeyError = ref('')
 const accessKeySuccess = ref('')
 const keyExpired = ref(false)
+const uiZoom = ref(parseFloat(localStorage.getItem('uiZoom') || '1'))
+const compactLayout = ref(localStorage.getItem('compactLayout') === 'true')
+
+function setUiZoom(v: number) {
+  uiZoom.value = v; localStorage.setItem('uiZoom', String(v))
+  document.documentElement.style.zoom = String(v)
+}
+function setCompactLayout(v: boolean) {
+  compactLayout.value = v; localStorage.setItem('compactLayout', String(v))
+  document.documentElement.classList.toggle('compact', v)
+}
 
 // Resolution presets
 const resolutions = ref([
@@ -193,6 +204,9 @@ onMounted(async () => {
   initTooltips()
   initSakuraPetals()
   initTextareaHeightSync()
+  // 恢复 UI 设置
+  if (uiZoom.value !== 1) document.documentElement.style.zoom = String(uiZoom.value)
+  if (compactLayout.value) document.documentElement.classList.add('compact')
   // 检查密钥过期状态
   if (userStore.currentUser?.key_status === 'expired') keyExpired.value = true
   // Load forked workflow
@@ -927,6 +941,19 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                     <span class="shrink-0 w-8 text-right">{{ Math.round(soundVol*100) }}%</span>
                   </div>
                 </div>
+                <!-- UI 缩放 -->
+                <div class="px-3 py-2">
+                  <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                    <span>🔍 界面缩放</span>
+                    <span>{{ Math.round(uiZoom * 100) }}%</span>
+                  </div>
+                  <input type="range" min="70" max="130" step="5" :value="Math.round(uiZoom * 100)" @input="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-full accent-pink-500 h-1 cursor-pointer" />
+                </div>
+                <!-- 布局密度 -->
+                <label class="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-pink-50 cursor-pointer transition-all select-none">
+                  <span class="text-sm text-gray-600">📏 紧凑布局</span>
+                  <input type="checkbox" :checked="compactLayout" @change="setCompactLayout(($event.target as HTMLInputElement).checked)" class="w-4 h-4 accent-pink-500 shrink-0" />
+                </label>
                 <button v-if="userStore.currentUser?.is_email_user" @click="settingsView='totp'" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all cursor-pointer border-0 bg-transparent">🔐 两步验证</button>
                 <button v-if="userStore.currentUser?.is_email_user" @click="settingsView='password'" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all cursor-pointer border-0 bg-transparent">🔑 更改密码</button>
                 <button @click="logout" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-red-50 text-sm text-red-500 transition-all cursor-pointer border-0 bg-transparent">🚪 退出登录</button>

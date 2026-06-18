@@ -175,6 +175,13 @@ body {
 .dark .bg-amber-50 { background: rgba(245,158,11,0.1) !important; }
 .dark .bg-gray-50 { background: rgba(30,30,50,0.8) !important; }
 
+/* 紧凑布局 */
+.compact .space-y-6 { space-y-3: 0.75rem; }
+.compact .p-5 { padding: 0.75rem !important; }
+.compact .gap-4 { gap: 0.5rem !important; }
+.compact .py-3 { padding-top: 0.5rem !important; padding-bottom: 0.5rem !important; }
+.compact textarea { min-height: 40px !important; }
+
 @media (max-width: 639px) {
   .tab-page.active > div:first-child { padding-left: 5% !important; padding-right: 5% !important; }
   .tab-page > .p-4 { padding-left: 0 !important; padding-right: 0 !important; }
