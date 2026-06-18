@@ -631,7 +631,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
   <div class="h-full w-full" :class="{dark:darkMode}">
     <div class="h-full w-full flex flex-col" style="background:linear-gradient(135deg,#fef2f4,#fdf2f8,#faf5ff,#fff1f2,#fef2f4);background-size:400% 400%;animation:bgShift 30s ease infinite">
       <!-- Header -->
-      <div class="flex items-center justify-between px-4 pt-3 pb-1 shrink-0 relative z-10">
+      <div class="flex items-center justify-between px-4 pt-3 pb-1 shrink-0 fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md">
         <div class="flex items-center gap-2">
           <h1 class="text-sm font-bold text-pink-500">🎨 二次元绘梦</h1>
           <span class="text-[10px] text-gray-400 bg-white/50 px-2 py-0.5 rounded-full">{{ onlineCount }} 在线</span>
@@ -653,7 +653,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <!-- Tab Pages -->
       <div class="flex-1 overflow-y-auto pb-[60px] relative">
         <!-- ============ GENERATE ============ -->
-        <div v-if="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
+        <div v-if="activeTab === 'generate'" class="tab-page active p-4 sm:p-6 pt-16 sm:pt-20">
           <div class="max-w-5xl mx-auto space-y-4">
             <!-- Access Key (only for non-admin, no key, logged-in) -->
             <div v-if="!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn" class="text-center py-12">
@@ -780,13 +780,13 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         </div>
 
         <!-- ============ GALLERY ============ -->
-        <div v-if="activeTab === 'gallery'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><GalleryGrid ref="galleryRef" /></div></div>
+        <div v-if="activeTab === 'gallery'" class="tab-page active p-4 sm:p-6 pt-16 sm:pt-20"><div class="max-w-5xl mx-auto"><GalleryGrid ref="galleryRef" /></div></div>
         <!-- ============ FEATURED ============ -->
-        <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><FeaturedGrid /></div></div>
+        <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6 pt-16 sm:pt-20"><div class="max-w-5xl mx-auto"><FeaturedGrid /></div></div>
         <!-- ============ MY WORKS ============ -->
-        <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><MyWorksGrid ref="myworksRef" /></div></div>
+        <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6 pt-16 sm:pt-20"><div class="max-w-5xl mx-auto"><MyWorksGrid ref="myworksRef" /></div></div>
         <!-- ============ MORE ============ -->
-        <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-4">
+        <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6 pt-16 sm:pt-20"><div class="max-w-5xl mx-auto space-y-4">
           <div v-if="annTitle" class="bg-amber-50 border border-amber-200 rounded-2xl p-4">
             <div class="text-sm font-bold text-amber-700 mb-1">{{ annTitle }}</div>
             <div class="text-xs text-amber-600 whitespace-pre-wrap">{{ annContent }}</div>
