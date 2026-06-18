@@ -697,7 +697,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
       </div>
 
         <!-- Tab Pages -->
-      <div class="flex-1 overflow-y-auto pb-[80px] pt-[52px]">
+      <div class="flex-1 overflow-y-auto pt-[52px]">
         <!-- ============ GENERATE ============ -->
         <div v-if="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
           <div class="max-w-5xl mx-auto space-y-6">
@@ -848,16 +848,18 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 <button @click="showLog=!showLog" class="text-[10px] text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">{{ showLog ? '隐藏日志' : '📋 日志' }}</button>
               </div>
               <pre v-if="showLog" class="text-[10px] text-gray-400 bg-white/50 rounded-xl p-3 max-h-40 overflow-y-auto whitespace-pre-wrap">{{ logLines.join('\n') }}</pre>
+              <!-- Tab bar spacer -->
+              <div class="h-20"></div>
             </div>
           </div>
         </div>
 
         <!-- ============ GALLERY ============ -->
-        <div v-if="activeTab === 'gallery'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><GalleryGrid ref="galleryRef" /></div></div>
+        <div v-if="activeTab === 'gallery'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><GalleryGrid ref="galleryRef" /><div class="h-20"></div></div></div>
         <!-- ============ FEATURED ============ -->
-        <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><FeaturedGrid /></div></div>
+        <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><FeaturedGrid /><div class="h-20"></div></div></div>
         <!-- ============ MY WORKS ============ -->
-        <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><MyWorksGrid ref="myworksRef" /></div></div>
+        <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><MyWorksGrid ref="myworksRef" /><div class="h-20"></div></div></div>
         <!-- ============ MORE ============ -->
         <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-4">
           <div v-if="annTitle" class="bg-amber-50 border border-amber-200 rounded-2xl p-4">
@@ -865,6 +867,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
             <div class="text-xs text-amber-600 whitespace-pre-wrap">{{ annContent }}</div>
           </div>
           <GPUBar />
+          <div class="h-20"></div>
         </div></div>
       </div>
 
