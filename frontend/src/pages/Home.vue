@@ -297,7 +297,15 @@ async function pollMyQueue() {
     if (running.length) _hasRunningBefore = true
     if (!items.length && noActiveWS) {
       _myQueueRunning.value = false
-      // 队列空+无WS → 任务已完成（_watchingMode=WS断链，_hasRunningBefore=刷新）
+      // 队列空+无WS → 恢复按钮（原版逻辑）
+      if (!_isGenerating.value) {
+        const btn = document.getElementById('btn-run') as HTMLButtonElement | null
+        if (btn && btn.disabled && !_finishing.value) {
+          btn.disabled = false
+          btn.textContent = '▶ 开始生成'
+        }
+      }
+      // 任务完成通知
       if ((_watchingMode.value || _hasRunningBefore) && !_finishing.value && !_doneNotified) {
         _watchingMode.value = false
         _hasRunningBefore = false
@@ -840,11 +848,11 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 <!-- Run button -->
                 <button @click="startRun"
                   class="w-full py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl font-semibold text-base shadow-lg shadow-pink-300/30 transition-all active:scale-[0.98] disabled:from-gray-200 disabled:to-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed border-0"
-                  id="btn-run"
-                  :class="{cooldown: cooldownSec > 0}"
-                  :disabled="_isGenerating || cooldownSec > 0 || (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn)">
-                  {{ _isGenerating ? '⏳ 生成中...' : cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn) ? '🔑 需要访问密钥' : '▶ 开始生成' }}
-                </button>
+                id="btn-run"
+                :class="{cooldown: cooldownSec > 0}"
+                :disabled="_isGenerating || (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn)">
+                {{ _isGenerating ? '⏳ 生成中...' : cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn) ? '🔑 需要访问密钥' : '▶ 开始生成' }}
+              </button>
               </div>
 
               <!-- Progress card -->
