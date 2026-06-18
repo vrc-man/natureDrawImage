@@ -4053,10 +4053,9 @@ async def api_output_file(request: Request, path: str, full: int = 0):
     if full:
         ext = p.suffix.lower().lstrip(".")
         media = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, f"image/{ext}")
-        return FileResponse(str(p), media_type=media,
-            headers={"Cache-Control": "public, max-age=2592000"})
+        return FileResponse(str(p), media_type=media)  # 原图下载不缓存
     resp = _serve_image_maybe_webp(request, p, quality=82, max_side=1600)
-    resp.headers["Cache-Control"] = "public, max-age=2592000"
+    resp.headers["Cache-Control"] = "public, max-age=2592000"  # 1600px 灯箱图缓存30天
     return resp
 
 
@@ -4129,8 +4128,7 @@ async def api_output_file_dl(path: str, exp: int, sig: str, full: int = 1):
         raise HTTPException(400, "not an image")
     ext = p.suffix.lower().lstrip(".")
     media = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, f"image/{ext}")
-    return FileResponse(str(p), media_type=media,
-        headers={"Cache-Control": "public, max-age=86400"})
+    return FileResponse(str(p), media_type=media)  # 签名下载不缓存
 
 
 @app.get("/api/output/thumb")
