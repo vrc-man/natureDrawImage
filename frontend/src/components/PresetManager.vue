@@ -88,7 +88,7 @@ function importPresets() {
 
   <Teleport to="body">
     <div v-if="open" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8" @click.self="open = false">
-      <div class="mx-4 w-full max-w-[calc(100vw-10px)] bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]" @click.stop>
+      <div class="mx-4 w-full max-w-[calc(100vw_-_10px)] bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]" @click.stop>
         <!-- List view -->
         <template v-if="view === 'list'">
           <div class="flex items-center justify-between p-5 pb-3 border-b border-pink-100 shrink-0">
