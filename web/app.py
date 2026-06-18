@@ -4166,7 +4166,7 @@ async def api_output_thumb(request: Request, path: str):
     if not tp.is_file() or tp.resolve() != tp:
         raise HTTPException(404, "缩略图不可用")
     return FileResponse(str(tp), media_type="image/webp",
-                        headers={"Cache-Control": "public, max-age=86400"})
+                        headers={"Cache-Control": "public, max-age=2592000"})
 
 
 def _extract_positive_from_prompt_json(prompt_json: Dict[str, Any]) -> str:
