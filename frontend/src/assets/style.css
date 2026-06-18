@@ -24,8 +24,8 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: rgba(244,114,182,0.35); }
 
 /* Tab 布局 */
-.tab-page { display: none; animation: fadeIn 0.3s ease; }
-.tab-page.active { display: block; }
+.tab-page { position: fixed; top: 52px; bottom: 60px; left: 0; right: 0; overflow-y: auto; display: none; -webkit-overflow-scrolling: touch; }
+.tab-page.active { display: block; animation: fadeIn 0.3s ease; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
 /* Tab Bar */
