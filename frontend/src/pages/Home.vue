@@ -291,20 +291,21 @@ async function pollMyQueue() {
     const hasMyTask = waiting.length || running.length
 
     const noActiveWS = !(activeWS && activeWS.readyState === WebSocket.OPEN)
+    if (running.length) _hasRunningBefore = true
     if (!items.length && noActiveWS) {
       _myQueueRunning.value = false
-      // WS 断链且队列空 → 任务已完成或已取消，但可能没收到通知
-      if (_watchingMode.value && !_finishing.value) {
+      // 队列空+无WS → 任务已完成，弹通知（_watchingMode=WS断链，_hasRunningBefore=刷新）
+      if ((_watchingMode.value || _hasRunningBefore) && !_finishing.value) {
         _watchingMode.value = false
-        showToast(_hasRunningBefore ? '✅ 任务已完成，请到「我的」查看' : '')
-        if (_hasRunningBefore) finishRun()
         _hasRunningBefore = false
+        showToast('✅ 任务已完成，请到「我的」查看')
+        sound.play('done')
+        sound.sendNotification('✅ 生图完成，请到「我的」查看')
+        finishRun()
       }
     } else {
       _myQueueRunning.value = !!running.length
     }
-    // 记录是否有过 running 任务（用于断链检测完成）
-    if (running.length) _hasRunningBefore = true
 
     // WS 断开后轮询检测任务完成（队列中还有项时）
     if (_watchingMode.value) {
