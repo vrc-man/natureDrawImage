@@ -89,7 +89,7 @@ function _highlight(text: string, q: string) {
             </div>
             <div v-show="catExpanded[cat] !== false" class="wf-grid flex flex-wrap gap-1.5">
               <div v-for="w in items" :key="w.path" class="wf-card" :title="w.name || w.path" @click="select(w)">
-                <img v-if="w.thumb" :src="w.thumb" class="wf-thumb" />
+                <img v-if="w.thumbnail" :src="'/api/thumbnail?path=' + encodeURIComponent(w.path)" class="wf-thumb" loading="lazy" />
                 <div v-else class="wf-thumb flex items-center justify-center text-gray-300 text-lg">📄</div>
                 <span class="wf-label" v-html="_highlight(w.name || w.path, search)"></span>
               </div>

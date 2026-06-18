@@ -13,6 +13,7 @@ export interface WorkflowItem {
   path: string
   name?: string
   thumb?: string
+  thumbnail?: boolean
   category?: string
 }
 
