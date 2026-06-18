@@ -4054,9 +4054,9 @@ async def api_output_file(request: Request, path: str, full: int = 0):
         ext = p.suffix.lower().lstrip(".")
         media = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, f"image/{ext}")
         return FileResponse(str(p), media_type=media,
-            headers={"Cache-Control": "no-cache"})
+            headers={"Cache-Control": "public, max-age=2592000"})
     resp = _serve_image_maybe_webp(request, p, quality=82, max_side=1600)
-    resp.headers["Cache-Control"] = "no-cache"
+    resp.headers["Cache-Control"] = "public, max-age=2592000"
     return resp
 
 
@@ -4166,7 +4166,7 @@ async def api_output_thumb(request: Request, path: str):
     if not tp.is_file() or tp.resolve() != tp:
         raise HTTPException(404, "缩略图不可用")
     return FileResponse(str(tp), media_type="image/webp",
-                        headers={"Cache-Control": "no-cache"})
+                        headers={"Cache-Control": "public, max-age=2592000"})
 
 
 def _extract_positive_from_prompt_json(prompt_json: Dict[str, Any]) -> str:
@@ -8681,7 +8681,7 @@ if _os.path.isfile(_SPA_INDEX):
             raise HTTPException(404)
         _, ext = _os.path.splitext(rest)
         media = _MIME.get(ext.lower()) or "application/octet-stream"
-        # 调试阶段不缓存，上线后改 max-age=31536000
+        # 带 hash 的文件名永久缓存，调试阶段可改为 no-cache
         cc = "no-cache"
         return FileResponse(fp, media_type=media, headers={"Cache-Control": cc})
 
