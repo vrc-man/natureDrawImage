@@ -6259,13 +6259,15 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             await emit(ws, {"type": "log", "message": f"[warn] 写映射失败: {e}"})
 
     for img in images:
-        url = f"/api/image?filename={img['filename']}&subfolder={img['subfolder']}&type={img['type']}"
+        _rel = ((img.get("subfolder") or "") + "/" + img["filename"]).replace("\\", "/")
+        url = f"/api/output/file?path={_urlparse.quote(_rel, safe='')}"
         await emit(ws, {
             "type": "image",
             "url": url,
             "filename": img["filename"],
             "subfolder": img["subfolder"],
             "image_type": img["type"],
+            "path": _rel,
         })
 
     await _save_gen_log(github_id, "", sd_prompt, path, len(images), "success", client_ip, negative_prompt=neg_text, file_paths=image_paths)

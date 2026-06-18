@@ -466,7 +466,7 @@ function handleMsg(m: any) {
     } else { progressText.value = `执行: ${m.node}` }
   }
   else if (m.type === 'prompt_id') {}
-  else if (m.type === 'image') { resultImages.value.push({ url: m.url, filename: m.filename }); pushHistory(m) }
+  else if (m.type === 'image') { resultImages.value.push({ url: m.url, filename: m.filename, path: m.path }); pushHistory(m) }
   else if (m.type === 'done') {
     logLines.value.push(`✅ 完成，共 ${m.count} 张`)
     progressText.value = '完成，请到「我的」查看'
@@ -826,7 +826,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
               <div v-if="resultImages.length" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
                 <div class="text-base font-bold text-gray-700 mb-3">🖼️ 结果</div>
                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 justify-items-center">
-                  <img v-for="(img, i) in resultImages" :key="i" :src="img.url" class="w-full rounded-xl shadow-sm border border-pink-100 cursor-pointer" @click="openLb(resultImages.map(r=>({url:r.url,title:r.filename,filename:r.filename})), i)" />
+                  <img v-for="(img, i) in resultImages" :key="i" :src="img.url" class="w-full rounded-xl shadow-sm border border-pink-100 cursor-pointer" @click="openLb(resultImages.map(r=>({url:r.url,title:r.filename,filename:r.filename,path:r.path})), i)" />
                 </div>
               </div>
 
