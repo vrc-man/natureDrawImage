@@ -8659,19 +8659,20 @@ _MEDIA_MAP = {
     ".wasm": "application/wasm", ".map": "application/json",
 }
 if _os.path.isfile(_SPA_INDEX):
-    @app.get("/static/dist/{rest:path}")
-    async def serve_dist(rest: str):
-        fp = _os.path.join(_SPA_DIR, rest).replace("\\", "/")
+    # SPA 资源文件（不走 /static 挂载点，避免 MIME 类型被覆盖）
+    @app.get("/spa-assets/{rest:path}")
+    async def serve_spa_assets(rest: str):
+        fp = _os.path.join(_SPA_DIR, "assets", rest).replace("\\", "/")
         if not _os.path.isfile(fp):
             raise HTTPException(404)
         _, ext = _os.path.splitext(rest)
         media = _MEDIA_MAP.get(ext.lower()) or "application/octet-stream"
-        headers = {"Cache-Control": "public, max-age=31536000, immutable"}
-        return FileResponse(fp, media_type=media, headers=headers)
+        return FileResponse(fp, media_type=media, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
+    # SPA 入口：所有非 API/WS/Auth/Output 路径返回 index.html
     @app.get("/{path:path}")
     async def spa_fallback(path: str):
-        if path.startswith(("api/", "ws/", "auth/", "output/")):
+        if path.startswith(("api/", "ws/", "auth/", "output/", "static/", "spa-assets/")):
             raise HTTPException(404)
         resp = FileResponse(_SPA_INDEX, media_type="text/html")
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
