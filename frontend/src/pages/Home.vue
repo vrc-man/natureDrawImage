@@ -772,7 +772,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
               <!-- Result images -->
               <div v-if="resultImages.length" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <img v-for="(img, i) in resultImages" :key="i" :src="img.url" class="w-full rounded-xl shadow-sm border border-pink-100 cursor-pointer" @click="openLb(resultImages.map(r=>({url:r.url,title:r.filename})), i)" />
+                <img v-for="(img, i) in resultImages" :key="i" :src="img.url" class="w-full rounded-xl shadow-sm border border-pink-100 cursor-pointer" @click="openLb(resultImages.map(r=>({url:r.url,title:r.filename,filename:r.filename})), i)" />
               </div>
 
               <!-- My Queue card -->
