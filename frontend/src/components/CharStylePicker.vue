@@ -9,6 +9,7 @@ const styles = ref<StyleItem[]>([])
 const characters = ref<CharacterItem[]>([])
 const styleSearch = ref('')
 const charSearch = ref('')
+const charCatExpanded = ref<Record<string, boolean>>({})
 
 const filteredStyles = computed(() => {
   if (!styleSearch.value) return styles.value
@@ -19,6 +20,15 @@ const filteredChars = computed(() => {
   if (!charSearch.value) return characters.value
   const q = charSearch.value.toLowerCase()
   return characters.value.filter(c => (c.name || c.tags).toLowerCase().includes(q))
+})
+const charGroups = computed(() => {
+  const map: Record<string, CharacterItem[]> = {}
+  for (const c of filteredChars.value) {
+    const cat = c.category || '未分类'
+    if (!map[cat]) map[cat] = []
+    map[cat].push(c)
+  }
+  return map
 })
 
 const selectedStyle = ref(localStorage.getItem('currentStyle') || '')
@@ -31,6 +41,14 @@ onMounted(async () => {
     styles.value = Array.isArray(sd) ? sd : (sd.styles || [])
     const cd: any = await loadCharacters()
     characters.value = Array.isArray(cd) ? cd : (cd.characters || [])
+    // 初始化分类展开状态：有搜索关键词或已选角色时全部展开
+    const cats = [...new Set(characters.value.map(c => c.category || '未分类'))]
+    const hasSearch = !!charSearch.value
+    const hasSelected = selectedChars.value.length > 0
+    for (const cat of cats) {
+      const hasSel = characters.value.filter(c => (c.category || '未分类') === cat).some(c => selectedChars.value.includes(c.tags))
+      charCatExpanded.value[cat] = hasSearch || hasSel
+    }
   } catch {}
 })
 
@@ -95,11 +113,19 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
               <h4 class="text-sm font-bold text-gray-700 mb-1.5">🎭 角色</h4>
               <input v-model="charSearch" placeholder="搜索角色..." class="w-full border border-pink-200 rounded-xl px-3 py-1.5 text-xs outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border" />
               <div class="char-picker-grid flex flex-wrap gap-1 mt-2 max-h-[40vh] overflow-y-auto">
-                <div v-for="c in filteredChars" :key="c.tags" :class="['style-card', { selected: selectedChars.includes(c.tags) }]" @click="toggleChar(c.tags)">
-                  <img v-if="c.image" :src="'/api/character_thumbnail?name=' + encodeURIComponent(c.image)" class="style-thumb" loading="lazy" />
-                  <div v-else class="style-thumb flex items-center justify-center text-gray-300 text-base">🎭</div>
-                  <span class="style-label">{{ c.name || c.tags }}</span>
-                </div>
+                <template v-for="(items, cat) in charGroups" :key="cat">
+                  <div class="wf-cat-title flex items-center gap-1 cursor-pointer select-none text-xs font-semibold text-gray-400 mt-2 mb-1 w-full" @click="charCatExpanded[cat] = !charCatExpanded[cat]">
+                    <span>{{ charCatExpanded[cat] !== false ? '▾' : '▸' }}</span>
+                    {{ cat }}
+                  </div>
+                  <div v-show="charCatExpanded[cat] !== false" class="flex flex-wrap gap-1 w-full">
+                    <div v-for="c in items" :key="c.tags" :class="['style-card', { selected: selectedChars.includes(c.tags) }]" @click="toggleChar(c.tags)">
+                      <img v-if="c.image" :src="'/api/character_thumbnail?name=' + encodeURIComponent(c.image)" class="style-thumb" loading="lazy" />
+                      <div v-else class="style-thumb flex items-center justify-center text-gray-300 text-base">🎭</div>
+                      <span class="style-label">{{ c.name || c.tags }}</span>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
             <!-- Styles -->
