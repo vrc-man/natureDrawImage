@@ -73,7 +73,7 @@ function _highlight(text: string, q: string) {
   </div>
   <Teleport to="body">
     <div v-if="open" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8" @click.self="open = false">
-      <div class="mx-4 w-full max-w-[calc(100vw-3rem)] bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]">
+      <div class="mx-4 w-full max-w-[calc(100vw-10px)] bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]">
         <div class="flex items-center justify-between p-5 pb-3 border-b border-pink-100 shrink-0">
           <h3 class="text-lg font-bold text-gray-700">📋 选择工作流</h3>
           <button @click="open = false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">✕</button>
