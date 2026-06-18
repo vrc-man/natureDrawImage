@@ -10,8 +10,8 @@ export const claimKey = (key: string) => api('POST', '/api/auth/claim-key', { ke
 export const logout = () => apiRaw('/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
 
 // === Workflows ===
-export const loadWorkflows = (subdir?: string) =>
-  api<{ all?: WorkflowItem[]; dirs?: any; workflows?: WorkflowItem[] }>('GET', '/api/workflows' + (subdir ? `?subdir=${encodeURIComponent(subdir)}` : ''))
+export const loadWorkflows = () =>
+  api<{ all?: WorkflowItem[]; dirs?: any; workflows?: WorkflowItem[] }>('GET', '/api/workflows')
 
 // === Styles & Characters ===
 export const loadStyles = () => api<{ styles?: StyleItem[]; characters?: CharacterItem[] }>('GET', '/api/styles')

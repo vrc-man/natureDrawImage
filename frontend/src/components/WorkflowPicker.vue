@@ -8,10 +8,16 @@ const props = defineProps<{ mode: 'txt2img' | 'img2img' }>()
 
 const open = ref(false)
 const selectedName = ref(localStorage.getItem('currentWorkflowName') || '')
-const workflows = ref<WorkflowItem[]>([])
+const allWorkflows = ref<WorkflowItem[]>([])
 const search = ref('')
-const categories = ref<string[]>([])
 const catExpanded = ref<Record<string, boolean>>({})
+const wfDirs = ref<Record<string, string>>({})
+
+const workflows = computed(() => {
+  const dir = props.mode === 'img2img' ? wfDirs.value.img2img : wfDirs.value.txt2img
+  if (!dir) return allWorkflows.value
+  return allWorkflows.value.filter(w => w.path && w.path.startsWith(dir))
+})
 
 const filtered = computed(() => {
   if (!search.value) return workflows.value
@@ -29,19 +35,20 @@ const grouped = computed(() => {
   return map
 })
 
-onMounted(async () => {
+async function loadAll() {
   try {
-    const d = await loadWorkflows(props.mode === 'img2img' ? 'img2img' : undefined)
-    const items = d.workflows || d.all || []
-    workflows.value = items
+    const d = await loadWorkflows()
+    allWorkflows.value = d.all || d.workflows || []
+    if (d.dirs) wfDirs.value = d.dirs
     const cats = new Set<string>()
-    for (const w of workflows.value) {
+    for (const w of allWorkflows.value) {
       if (w.category) cats.add(w.category)
       if (!w.category) cats.add('未分类')
     }
-    categories.value = Array.from(cats)
   } catch {}
-})
+}
+
+onMounted(loadAll)
 
 function toggle() { open.value = !open.value }
 function select(w: WorkflowItem) {
