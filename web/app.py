@@ -8662,7 +8662,7 @@ if _os.path.isfile(_SPA_INDEX):
     # SPA 资源文件（不走 /static 挂载点，避免 MIME 类型被覆盖）
     @app.get("/spa-assets/{rest:path}")
     async def serve_spa_assets(rest: str):
-        fp = _os.path.join(_SPA_DIR, "assets", rest).replace("\\", "/")
+        fp = _os.path.join(_SPA_DIR, rest).replace("\\", "/")
         if not _os.path.isfile(fp):
             raise HTTPException(404)
         _, ext = _os.path.splitext(rest)
