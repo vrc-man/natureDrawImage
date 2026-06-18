@@ -8670,13 +8670,20 @@ _SPA_DIR = _os.path.join(_os.path.dirname(__file__), "static", "dist")
 _SPA_INDEX = _os.path.join(_SPA_DIR, "index.html")
 if _os.path.isfile(_SPA_INDEX):
     # 为 StaticFiles 提前注册 MIME 类型（Windows 缺少 .js → application/javascript）
-    import mimetypes as _mt
-    _mt.add_type("application/javascript", ".js")
-    _mt.add_type("text/css", ".css")
-    # Vite base = /spa-assets/，所以 dist 下有两层 assets/
-    # 挂载 /static 目录的 dist 子目录
-    from fastapi.staticfiles import StaticFiles as _SM
-    app.mount("/spa-assets", _SM(directory=str(_SPA_DIR)), name="spa")
+    # SPA 静态文件（带 hash 的文件名可永久缓存）
+    _MIME = {".js":"application/javascript",".css":"text/css",".html":"text/html",
+             ".png":"image/png",".jpg":"image/jpeg",".webp":"image/webp",".avif":"image/avif",
+             ".ico":"image/x-icon",".svg":"image/svg+xml",".json":"application/json"}
+    @app.get("/spa-assets/{rest:path}")
+    async def serve_spa_assets(rest: str):
+        fp = _os.path.join(_SPA_DIR, rest).replace("\\", "/")
+        if not _os.path.isfile(fp):
+            raise HTTPException(404)
+        _, ext = _os.path.splitext(rest)
+        media = _MIME.get(ext.lower()) or "application/octet-stream"
+        # 带 hash 的文件名可永久缓存，index.html 不缓存
+        cc = "no-cache" if rest.endswith("index.html") else "public, max-age=31536000, immutable"
+        return FileResponse(fp, media_type=media, headers={"Cache-Control": cc})
 
     # SPA 入口：所有非 API/WS/Auth/Output 路径返回 index.html
     @app.get("/{path:path}")
