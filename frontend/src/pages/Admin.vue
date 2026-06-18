@@ -109,8 +109,8 @@ async function forceUnlock() { if (!confirm('强制解锁？')) return; await fe
 
 // ===== Announcement =====
 const annTitle = ref(''), annContent = ref(''), annEnabled = ref(false)
-async function loadAnn() { try { const d = await fetchJSON('/api/admin/announcement'); if (d) { annTitle.value = d.title || ''; annContent.value = d.content || ''; annEnabled.value = d.enabled || false } } catch {} }
-async function saveAnn() { await fetchJSON('/api/admin/announcement', 'POST', { title: annTitle.value, content: annContent.value, enabled: annEnabled.value }); alert('已保存') }
+async function loadAnn() { try { const d = await fetchJSON('/api/admin/announcement'); if (d?.announcement) { annTitle.value = d.announcement.title || ''; annContent.value = d.announcement.content || ''; annEnabled.value = d.announcement.enabled || false } } catch {} }
+async function saveAnn() { await fetchJSON('/api/admin/announcement', 'POST', { announcement: { title: annTitle.value, content: annContent.value, enabled: annEnabled.value } }); alert('已保存') }
 
 // ===== Resolutions =====
 const adminRes = ref<any[]>([])
@@ -169,10 +169,10 @@ function addWfCat() { const v = prompt('分类名称：'); if (v && !wfCategorie
 const llmConfig = ref<any>({ provider: 'local', local_endpoint: '', google_api_key: '', custom_endpoint: '', custom_api_key: '', custom_model: '' })
 const llmTestResult = ref('')
 const llmModels = ref<string[]>([])
-async function loadLlm() { try { llmConfig.value = await fetchJSON('/api/admin/llm') } catch {} }
-async function saveLlm() { await fetchJSON('/api/admin/llm', 'POST', llmConfig.value); alert('已保存') }
-async function testLlm() { llmTestResult.value = '测试中...'; try { const d = await fetchJSON('/api/admin/llm/test', 'POST', { provider: llmConfig.value.provider }); llmTestResult.value = d.result || '连接成功' } catch (e: any) { llmTestResult.value = e.message } }
-async function detectModels() { try { const d = await fetchJSON('/api/admin/llm/models', 'POST', llmConfig.value); llmModels.value = d.models || [] } catch (e: any) { llmModels.value = [e.message] } }
+async function loadLlm() { try { const d = await fetchJSON('/api/admin/llm'); llmConfig.value = d.llm || d } catch {} }
+async function saveLlm() { await fetchJSON('/api/admin/llm', 'POST', { llm: llmConfig.value }); alert('已保存') }
+async function testLlm() { llmTestResult.value = '测试中...'; try { const d = await fetchJSON('/api/admin/llm/test', 'POST', { llm: llmConfig.value }); llmTestResult.value = d.reply || d.result || '连接成功' } catch (e: any) { llmTestResult.value = e.message } }
+async function detectModels() { try { const d = await fetchJSON('/api/admin/llm/models', 'POST', { llm: llmConfig.value }); llmModels.value = (d.models || []).map((m: any) => m.id || m) } catch (e: any) { llmModels.value = [e.message] } }
 
 // ===== Limits =====
 const limits = ref<any>({})
@@ -183,7 +183,7 @@ async function saveLimits() { await fetchJSON('/api/admin/limits', 'POST', limit
 const bans = ref<any[]>([]), whitelist = ref<any[]>([])
 const banInput = ref(''), wlInput = ref('')
 async function loadBans() {
-  try { bans.value = (await fetchJSON('/api/admin/bans')).bans || []; whitelist.value = (await fetchJSON('/api/admin/ip-whitelist')).whitelist || [] } catch {}
+  try { bans.value = (await fetchJSON('/api/admin/bans')).banned || []; whitelist.value = (await fetchJSON('/api/admin/ip-whitelist')).whitelist || [] } catch {}
 }
 async function banIP() { if (!banInput.value.trim()) return; await fetchJSON('/api/admin/ban', 'POST', { ip: banInput.value.trim() }); banInput.value = ''; loadBans() }
 async function unbanIP(ip: string) { if (!confirm(`解封 ${ip}?`)) return; await fetchJSON('/api/admin/unban', 'POST', { ip }); loadBans() }
@@ -209,12 +209,12 @@ async function reorderFeatured(to: number, from: number) {
   featured.value.splice(to, 0, item)
   try { await fetchJSON('/api/admin/featured/reorder', 'POST', { items: featured.value.map((i: any) => i.path) }) } catch {}
 }
-async function loadFeatured() { try { featured.value = (await fetchJSON('/api/admin/featured')).items || [] } catch {} }
+async function loadFeatured() { try { const d = await fetchJSON('/api/admin/featured'); featured.value = (d.items || []).map((p: any) => typeof p === 'string' ? { path: p } : p) } catch {} }
 async function removeFeatured(path: string) { await fetchJSON('/api/admin/featured/remove', 'POST', { path }); loadFeatured() }
 
 // ===== Access Keys =====
 const accessKeys = ref<any[]>([])
-async function loadAccessKeys() { try { accessKeys.value = Object.values((await fetchJSON('/api/admin/access-keys')).keys || {}) } catch {} }
+async function loadAccessKeys() { try { accessKeys.value = (await fetchJSON('/api/admin/access-keys')).items || [] } catch {} }
 async function genKeys() {
   const type = prompt('密钥类型：normal(普通) / time(按时间) / count(按次数) / both(时间+次数)', 'normal') || 'normal'
   if (!['normal','time','count','both'].includes(type)) return
@@ -223,18 +223,19 @@ async function genKeys() {
   const extra: any = {}
   if (type === 'time' || type === 'both') {
     const days = parseInt(prompt('有效期（天）：', '30') || '30')
-    extra.expires_in_days = days
+    extra.days = days
   }
   if (type === 'count' || type === 'both') {
     const maxUses = parseInt(prompt('最大使用次数：', '100') || '100')
     extra.max_uses = maxUses
   }
   try {
-    const d = await fetchJSON('/api/admin/access-keys/generate', 'POST', { count, key_type: type, ...extra })
-    if (d.keys && d.keys.length > 0) {
-      const txt = d.keys.map((k: any) => k.full_key || k.key).join('\n')
+    const d = await fetchJSON('/api/admin/access-keys/generate', 'POST', { count, type, ...extra })
+    const keys = d.items || d.keys || []
+    if (keys.length > 0) {
+      const txt = keys.map((k: any) => k.full_key || k.key || k).join('\n')
       await navigator.clipboard.writeText(txt)
-      alert(`生成了 ${d.keys.length} 个密钥，已复制到剪贴板`)
+      alert(`生成了 ${keys.length} 个密钥，已复制到剪贴板`)
     } else { alert('生成失败：未返回密钥') }
     loadAccessKeys()
   } catch (e: any) { alert(e.message) }
@@ -267,7 +268,7 @@ async function loadGenLogs(reset = false) {
   if (reset) { glPage.value = 0; glSelected.value = new Set() }
   try {
     let url = `/api/admin/gen-logs?offset=${glPage.value * 24}&limit=24`
-    if (glQ.value) url += '&q=' + encodeURIComponent(glQ.value)
+    if (glQ.value) url += '&login=' + encodeURIComponent(glQ.value)
     if (glDateFrom.value) url += '&date_from=' + encodeURIComponent(new Date(glDateFrom.value).getTime() / 1000)
     if (glDateTo.value) url += '&date_to=' + encodeURIComponent(new Date(glDateTo.value).setHours(23,59,59) / 1000)
     const d = await fetchJSON(url); genLogs.value = d.items || []; glTotal.value = d.total || 0
@@ -279,12 +280,12 @@ function glToggleSelect(id: string) {
   glSelected.value = s
 }
 function glSelectAll() {
-  glSelected.value = new Set(genLogs.value.map((g: any) => g.log_id))
+  glSelected.value = new Set(genLogs.value.map((g: any) => g.id ?? g.log_id))
 }
 async function glDeleteSelected() {
   if (!glSelected.value.size) return
   if (!confirm(`删除 ${glSelected.value.size} 条日志？`)) return
-  try { await fetchJSON('/api/admin/gen-logs/delete', 'POST', { log_ids: Array.from(glSelected.value) }); loadGenLogs(true) } catch {}
+  try { await fetchJSON('/api/admin/gen-logs/delete', 'POST', { ids: Array.from(glSelected.value) }); loadGenLogs(true) } catch {}
 }
 
 // ===== Deletion Log =====
@@ -317,7 +318,10 @@ async function delClearSelected() {
 // ===== Reports =====
 const reports = ref<any[]>([])
 async function loadReports() { try { reports.value = (await fetchJSON('/api/admin/reports')).reports || [] } catch {} }
-async function resolveReport(id: number, action: string) { await fetchJSON('/api/admin/report/resolve', 'POST', { report_id: id, action }); loadReports() }
+async function resolveReport(id: number, action: string) {
+  const actMap: Record<string, string> = { ignore: 'dismiss', delete: 'delete', ban_creator: 'ban_creator', ban_reporter: 'ban_reporter' }
+  await fetchJSON('/api/admin/report/resolve', 'POST', { report_id: id, action: actMap[action] || action }); loadReports()
+}
 
 // ===== Recent =====
 const recentImages = ref<any[]>([]), recentPage = ref(0), recentTotal = ref(0)
@@ -367,14 +371,14 @@ async function fetchAn(url: string) { try { const d = await fetchJSON(url); if (
 // ===== Maintenance =====
 const maintEnabled = ref(false)
 const maintMessage = ref('')
-async function loadMaint() { try { const d = await fetchJSON('/api/admin/maintenance'); maintEnabled.value = d.enabled || false; maintMessage.value = d.message || '' } catch {} }
-async function saveMaint() { await fetchJSON('/api/admin/maintenance', 'POST', { enabled: maintEnabled.value, message: maintMessage.value }); alert('已保存') }
+async function loadMaint() { try { const d = await fetchJSON('/api/admin/maintenance'); const c = d.config || d; maintEnabled.value = c.enabled || false; maintMessage.value = c.message || '' } catch {} }
+async function saveMaint() { await fetchJSON('/api/admin/maintenance', 'POST', { config: { enabled: maintEnabled.value, message: maintMessage.value } }); alert('已保存') }
 
 // ===== Custom Head =====
 const cheadEnabled = ref(false)
 const cheadHtml = ref('')
-async function loadChead() { try { const d = await fetchJSON('/api/admin/custom_head'); cheadEnabled.value = d.enabled || false; cheadHtml.value = d.html || '' } catch {} }
-async function saveChead() { await fetchJSON('/api/admin/custom_head', 'POST', { enabled: cheadEnabled.value, html: cheadHtml.value }); alert('已保存') }
+async function loadChead() { try { const d = await fetchJSON('/api/admin/custom_head'); const c = d.config || d; cheadEnabled.value = c.enabled || false; cheadHtml.value = c.html || '' } catch {} }
+async function saveChead() { await fetchJSON('/api/admin/custom_head', 'POST', { config: { enabled: cheadEnabled.value, html: cheadHtml.value } }); alert('已保存') }
 
 // ===== Email Management =====
 const emailDashboard = ref<any>({})
@@ -393,13 +397,13 @@ const elEditMode = ref(false)
 async function loadEmailAuth() {
   try { emailDashboard.value = await fetchJSON('/api/admin/email-dashboard') } catch {}
   try { const d = await fetchJSON('/api/admin/invite-codes'); inviteCodes.value = d.codes || [] } catch {}
-  try { let euUrl = `/api/admin/email-users?offset=${euPage.value * 24}&limit=24`; if (euSearch.value) euUrl += '&q=' + encodeURIComponent(euSearch.value); const d = await fetchJSON(euUrl); emailUsersList.value = d.users || []; euTotal.value = d.total || 0 } catch {}
+  try { let euUrl = `/api/admin/email-users?offset=${euPage.value * 24}&limit=24`; if (euSearch.value) euUrl += '&search=' + encodeURIComponent(euSearch.value); const d = await fetchJSON(euUrl); emailUsersList.value = d.users || []; euTotal.value = d.total || 0 } catch {}
   try {
     let elUrl = `/api/admin/email-logs?offset=${elPage.value * 24}&limit=24`
-    if (elSearch.value) elUrl += '&q=' + encodeURIComponent(elSearch.value)
+    if (elSearch.value) elUrl += '&search=' + encodeURIComponent(elSearch.value)
     if (elDateFrom.value) elUrl += '&date_from=' + encodeURIComponent(elDateFrom.value)
     if (elDateTo.value) elUrl += '&date_to=' + encodeURIComponent(elDateTo.value)
-    const d = await fetchJSON(elUrl); emailLogsList.value = d.items || []; elTotal.value = d.total || 0
+    const d = await fetchJSON(elUrl); emailLogsList.value = d.logs || d.items || []; elTotal.value = d.total || 0
   } catch {}
   try { const d = await fetchJSON('/api/admin/email-abuse-ips'); abuseIps.value = d.ips || [] } catch {}
   try { rateLimits.value = await fetchJSON('/api/admin/email-config') } catch {}
@@ -408,7 +412,7 @@ function elToggleSelect(id: string) {
   const s = new Set(elSelected.value); s.has(id) ? s.delete(id) : s.add(id); elSelected.value = s
 }
 function elSelectAll() {
-  elSelected.value = new Set(emailLogsList.value.map((l: any) => String(l.id)))
+  elSelected.value = new Set(emailLogsList.value.map((l: any) => String(l.id ?? l.log_id)))
 }
 async function elDeleteSelected() {
   if (!elSelected.value.size) return
@@ -443,7 +447,7 @@ function openSendEmailModal(email: string, gid: string) { sendEmailTo.value = em
 async function doSendEmail() {
   if (!sendEmailSubject.value.trim() || !sendEmailBody.value.trim()) { sendEmailStatus.value = '请填写主题和正文'; return }
   sendEmailStatus.value = '发送中...'
-  try { await fetchJSON('/api/admin/email-users/send-custom-email', 'POST', { github_id: sendEmailGid.value, subject: sendEmailSubject.value, body: sendEmailBody.value }); sendEmailStatus.value = '✅ 已发送' } catch (e: any) { sendEmailStatus.value = '发送失败: ' + e.message }
+  try { await fetchJSON('/api/admin/email-users/send-custom-email', 'POST', { github_id: sendEmailGid.value, subject: sendEmailSubject.value, message: sendEmailBody.value }); sendEmailStatus.value = '✅ 已发送' } catch (e: any) { sendEmailStatus.value = '发送失败: ' + e.message }
 }
 
 const rateLimitLabels: Record<string, string> = {
@@ -657,7 +661,7 @@ function esc(s: string) { return String(s).replace(/[&<>"']/g, (c: string) => ({
         <h2 class="text-sm font-bold text-gray-700 mb-3">🚫 IP 封禁管理</h2>
         <div class="flex gap-2 mb-3"><input v-model="banInput" @keydown.enter="banIP" placeholder="IP 地址" class="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-pink-400" /><button @click="banIP" class="px-3 py-1.5 bg-red-500 text-white rounded-lg text-xs hover:bg-red-600 cursor-pointer border-0">封禁</button></div>
         <div class="text-xs space-y-1 mb-3">
-          <div v-for="b in bans" :key="b.ip" class="flex justify-between py-1"><span>{{ b.ip }}<span class="text-gray-400 ml-1">({{ b.reason||'' }})</span></span><button @click="unbanIP(b.ip)" class="text-red-400 hover:text-red-600 cursor-pointer border-0 bg-transparent text-xs">解封</button></div>
+          <div v-for="b in bans" :key="b" class="flex justify-between py-1"><span>{{ b }}</span><button @click="unbanIP(b)" class="text-red-400 hover:text-red-600 cursor-pointer border-0 bg-transparent text-xs">解封</button></div>
           <div class="text-gray-400" v-if="!bans.length">无封禁 IP</div>
         </div>
         <div class="flex gap-2 mb-3"><input v-model="wlInput" placeholder="白名单 IP" class="flex-1 border border-gray-200 rounded-lg px-3 py-1.5 text-xs outline-none focus:border-pink-400" /><button @click="addWL" class="px-3 py-1.5 bg-emerald-500 text-white rounded-lg text-xs hover:bg-emerald-600 cursor-pointer border-0">添加</button></div>
@@ -710,10 +714,10 @@ function esc(s: string) { return String(s).replace(/[&<>"']/g, (c: string) => ({
       <div v-if="activeSection === 'featured'" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
         <h2 class="text-sm font-bold text-gray-700 mb-3">✨ 精选管理</h2>
         <div class="grid grid-cols-4 sm:grid-cols-6 gap-2">
-          <div v-for="(item, i) in featured" :key="item.path" class="relative group" draggable="true"
+          <div v-for="(item, i) in featured" :key="i" class="relative group" draggable="true"
             @dragstart="dragFeaturedIdx=i" @dragover.prevent @drop="reorderFeatured(i, dragFeaturedIdx)">
-            <img :src="'/api/output/thumb?path=' + encodeURIComponent(item.path||'')" class="w-full aspect-square object-cover rounded-lg" />
-            <button @click="removeFeatured(item.path)" class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] opacity-0 group-hover:opacity-100 cursor-pointer border-0">✕</button>
+            <img :src="'/api/output/thumb?path=' + encodeURIComponent(typeof item === 'string' ? item : (item.path||''))" class="w-full aspect-square object-cover rounded-lg" />
+            <button @click="removeFeatured(typeof item === 'string' ? item : item.path)" class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] opacity-0 group-hover:opacity-100 cursor-pointer border-0">✕</button>
           </div>
         </div>
         <div class="mt-2 text-xs text-gray-400">拖拽图片可排序</div>
@@ -736,10 +740,10 @@ function esc(s: string) { return String(s).replace(/[&<>"']/g, (c: string) => ({
           <div v-for="g in genLogs" :key="g.log_id" class="py-1.5 border-b border-gray-50" :class="{'bg-pink-50/50': glSelected.has(g.log_id)}">
             <div class="flex items-center justify-between gap-2">
               <div class="flex items-center gap-1.5 min-w-0">
-                <input v-if="glEditMode" type="checkbox" :checked="glSelected.has(g.log_id)" @change="glToggleSelect(g.log_id)" class="accent-pink-500 shrink-0" />
-                <span class="font-mono text-gray-400 text-[10px] shrink-0">{{ g.log_id?.toString().slice(0,8) }}</span>
+                <input v-if="glEditMode" type="checkbox" :checked="glSelected.has(g.id ?? g.log_id)" @change="glToggleSelect(g.id ?? g.log_id)" class="accent-pink-500 shrink-0" />
+                <span class="font-mono text-gray-400 text-[10px] shrink-0">{{ (g.id || g.log_id || '').toString().slice(0,8) }}</span>
                 <span :class="g.status==='success'?'text-green-500':'text-red-400'" class="shrink-0">{{ g.status }}</span>
-                <span class="truncate">{{ g.login }}</span>
+                <span class="truncate">{{ g.login || g.github_id }}</span>
               </div>
               <div class="flex gap-1 shrink-0">
                 <button v-if="g.prompt" @click="clipText(g.prompt)" class="text-gray-300 hover:text-pink-400 cursor-pointer border-0 bg-transparent text-[10px]" title="复制正面提示词">📋</button>
@@ -772,12 +776,12 @@ function esc(s: string) { return String(s).replace(/[&<>"']/g, (c: string) => ({
         <div class="text-xs space-y-1 max-h-96 overflow-y-auto">
           <div v-for="d in delLog" :key="d.path" class="flex items-center gap-2 py-1 border-b border-gray-50 text-gray-600">
             <input v-if="delEditMode" type="checkbox" :checked="delSelected.has(d.path)" @change="delToggleSelect(d.path)" class="accent-pink-500 shrink-0" />
-            <img v-if="d.thumb_file" :src="'/api/output/thumb?path=' + encodeURIComponent(d.path||'')" class="w-8 h-8 rounded object-cover shrink-0" />
+            <img v-if="d.thumb_url" :src="'/api/output/thumb?path=' + encodeURIComponent(d.path||'')" class="w-8 h-8 rounded object-cover shrink-0" />
             <div class="flex-1 min-w-0">
               <div class="truncate text-[10px]">{{ d.path }}</div>
-              <div class="text-[10px] text-gray-400">{{ new Date((d.created_at||0)*1000).toLocaleString() }} {{ d.deleted_by ? 'by ' + d.deleted_by : '' }}</div>
+              <div class="text-[10px] text-gray-400">{{ new Date((d.deleted_at||d.time||0)*1000).toLocaleString() }} {{ d.deleted_by_login || d.login ? 'by ' + (d.deleted_by_login || d.login) : '' }}</div>
             </div>
-            <button v-if="!delEditMode" @click="delClearSingle(d.path)" class="text-red-400 hover:text-red-600 cursor-pointer border-0 bg-transparent text-[10px] shrink-0" title="清理记录">✕</button>
+            <button v-if="!delEditMode" @click="delClearSingle(d.path)" class="px-1.5 py-0.5 bg-red-50 text-red-500 rounded hover:bg-red-100 cursor-pointer border-0 text-[10px] shrink-0">清理</button>
           </div>
         </div>
         <div class="flex items-center gap-2 mt-2 text-xs"><button @click="delPage--;loadDeletionLog()" :disabled="delPage<=0" class="text-pink-500 hover:underline disabled:text-gray-300 cursor-pointer border-0 bg-transparent">上一页</button><span>{{ delPage + 1 }}</span><button @click="delPage++;loadDeletionLog()" class="text-pink-500 hover:underline disabled:text-gray-300 cursor-pointer border-0 bg-transparent">下一页</button></div>
@@ -790,12 +794,12 @@ function esc(s: string) { return String(s).replace(/[&<>"']/g, (c: string) => ({
           <div class="flex items-center gap-2">
             <img v-if="r.path" :src="'/api/output/thumb?path=' + encodeURIComponent(r.path||'')" class="w-10 h-10 rounded object-cover shrink-0" />
             <div class="min-w-0 flex-1">
-              <div class="text-gray-600 truncate">{{ r.path }} <span class="text-gray-400">by {{ r.reporter }}</span></div>
+              <div class="text-gray-600 truncate">{{ r.image_path }} <span class="text-gray-400">by {{ r.reporter }}</span></div>
               <div v-if="r.reporter_ip" class="text-[10px] text-gray-400">IP: {{ r.reporter_ip }} {{ r.creator_ip ? '/ 创建者: ' + r.creator_ip : '' }}</div>
               <div class="text-gray-500">{{ r.reason }}</div>
             </div>
           </div>
-          <div class="flex gap-2 mt-1 ml-12"><button @click="resolveReport(r.id,'ignore')" class="text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent text-[10px]">忽略</button><button @click="resolveReport(r.id,'delete')" class="text-red-400 hover:text-red-600 cursor-pointer border-0 bg-transparent text-[10px]">删图</button><button @click="resolveReport(r.id,'ban')" class="text-red-500 hover:text-red-700 cursor-pointer border-0 bg-transparent text-[10px]">封禁创建者</button></div>
+          <div class="flex gap-2 mt-1 ml-12"><button @click="resolveReport(r.id,'ignore')" class="text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent text-[10px]">忽略</button><button @click="resolveReport(r.id,'delete')" class="text-red-400 hover:text-red-600 cursor-pointer border-0 bg-transparent text-[10px]">删图</button><button @click="resolveReport(r.id,'ban_creator')" class="text-red-500 hover:text-red-700 cursor-pointer border-0 bg-transparent text-[10px]">封禁创建者</button><button @click="resolveReport(r.id,'ban_reporter')" class="text-red-500 hover:text-red-700 cursor-pointer border-0 bg-transparent text-[10px]">封禁举报者</button></div>
         </div>
         <div v-if="!reports.length" class="text-xs text-gray-400 py-4 text-center">暂无举报</div>
         <button @click="loadReports" class="mt-2 text-xs text-pink-500 hover:underline cursor-pointer border-0 bg-transparent">🔄 刷新</button>
@@ -809,10 +813,10 @@ function esc(s: string) { return String(s).replace(/[&<>"']/g, (c: string) => ({
             <img :src="'/api/output/thumb?path=' + encodeURIComponent(img.path||'')" class="w-full aspect-square object-cover rounded-lg" />
             <div class="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-0.5 bg-black/40 rounded-lg">
               <button @click="delRecentImage(img.path)" class="text-[10px] px-2 py-0.5 bg-red-500/80 text-white rounded hover:bg-red-600 cursor-pointer border-0">删除</button>
-              <button @click="banIPFromRecent(img.client_ip)" class="text-[10px] px-2 py-0.5 bg-red-500/80 text-white rounded hover:bg-red-600 cursor-pointer border-0">封禁IP</button>
+              <button @click="banIPFromRecent(img.ip || img.client_ip)" class="text-[10px] px-2 py-0.5 bg-red-500/80 text-white rounded hover:bg-red-600 cursor-pointer border-0">封禁IP</button>
               <button @click="addFeaturedFromRecent(img.path)" class="text-[10px] px-2 py-0.5 bg-amber-500/80 text-white rounded hover:bg-amber-600 cursor-pointer border-0">精选</button>
             </div>
-            <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-[9px] text-white px-1 truncate">{{ img.client_ip || img.login || '' }}</div>
+            <div class="absolute bottom-0 left-0 right-0 bg-black/50 text-[9px] text-white px-1 truncate">{{ img.ip || img.client_ip || img.creator_login || img.login || '' }}</div>
           </div>
         </div>
         <div class="flex items-center gap-2 mt-2 text-xs">
@@ -840,9 +844,9 @@ function esc(s: string) { return String(s).replace(/[&<>"']/g, (c: string) => ({
         <h2 class="text-sm font-bold text-gray-700 mb-3">🧹 GC 系统</h2>
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3 text-xs">
           <div class="bg-gray-50 rounded-xl p-3"><div class="text-gray-400">已清理文件</div><div class="text-lg font-bold text-gray-700">{{ gcStats.total_cleaned || 0 }}</div></div>
-          <div class="bg-gray-50 rounded-xl p-3"><div class="text-gray-400">累计生图</div><div class="text-lg font-bold text-gray-700">{{ gcStats.total_generated || 0 }}</div></div>
+          <div class="bg-gray-50 rounded-xl p-3"><div class="text-gray-400">累计生图</div><div class="text-lg font-bold text-gray-700">{{ gcStats.total_images || gcStats.total_generated || 0 }}</div></div>
           <div class="bg-gray-50 rounded-xl p-3"><div class="text-gray-400">重启次数</div><div class="text-lg font-bold text-gray-700">{{ gcStats.restart_count || 0 }}</div></div>
-          <div class="bg-gray-50 rounded-xl p-3"><div class="text-gray-400">上次 GC</div><div class="text-lg font-bold text-gray-700">{{ gcStats.last_gc ? new Date(gcStats.last_gc * 1000).toLocaleDateString() : '从未' }}</div></div>
+          <div class="bg-gray-50 rounded-xl p-3"><div class="text-gray-400">上次 GC</div><div class="text-lg font-bold text-gray-700">{{ gcStats.last_gc_time ? new Date(gcStats.last_gc_time * 1000).toLocaleDateString() : gcStats.last_gc ? new Date(gcStats.last_gc * 1000).toLocaleDateString() : '从未' }}</div></div>
         </div>
         <div class="flex gap-2 mb-3"><button @click="triggerGc(true)" class="px-4 py-1.5 bg-orange-500 text-white rounded-lg text-xs hover:bg-orange-600 cursor-pointer border-0">GC (备份)</button><button @click="triggerGc(false)" class="px-4 py-1.5 bg-red-500 text-white rounded-lg text-xs hover:bg-red-600 cursor-pointer border-0">GC (直接)</button></div>
         <div class="flex gap-1.5 mb-2 flex-wrap">
@@ -852,7 +856,7 @@ function esc(s: string) { return String(s).replace(/[&<>"']/g, (c: string) => ({
           <button @click="gcDateFrom='';gcDateTo='';gcPage=0;loadGcLogs()" class="px-2 py-1 bg-gray-100 text-gray-600 rounded-lg text-[10px] cursor-pointer border-0">重置</button>
         </div>
         <div class="text-xs space-y-1 max-h-48 overflow-y-auto">
-          <div v-for="g in gcLogs" :key="g.id" class="py-1 border-b border-gray-50 text-gray-600"><span class="text-gray-400">{{ new Date((g.created_at||0)*1000).toLocaleString() }}</span> {{ g.message }}</div>
+          <div v-for="g in gcLogs" :key="g.id || g.timestamp" class="py-1 border-b border-gray-50 text-gray-600"><span class="text-gray-400">{{ g.timestamp ? new Date(g.timestamp * 1000).toLocaleString() : new Date((g.created_at||0)*1000).toLocaleString() }}</span> {{ g.message || (g.cleaned ? '清理了 ' + JSON.stringify(g.cleaned) : '') }}</div>
         </div>
         <div class="flex items-center gap-2 mt-2 text-xs">
           <button @click="gcPage--;loadGcLogs()" :disabled="gcPage<=0" class="text-pink-500 hover:underline disabled:text-gray-300 cursor-pointer border-0 bg-transparent">上一页</button>
@@ -954,8 +958,8 @@ function esc(s: string) { return String(s).replace(/[&<>"']/g, (c: string) => ({
             <div v-for="log in emailLogsList" :key="log.id" class="py-1 border-b border-gray-50 text-gray-600 flex items-center gap-2">
               <input v-if="elEditMode" type="checkbox" :checked="elSelected.has(String(log.id))" @change="elToggleSelect(String(log.id))" class="accent-pink-500 shrink-0" />
               <span class="text-[10px] text-gray-400 shrink-0">{{ new Date((log.created_at||0)*1000).toLocaleString() }}</span>
-              <span class="flex-1 truncate">{{ log.email || log.recipient }}</span>
-              <span :class="log.success?'text-green-500':'text-red-400'">{{ log.success ? '✓' : '✗' }}</span>
+              <span class="flex-1 truncate">{{ log.recipient || log.email }}</span>
+              <span :class="log.success || log.status==='ok'?'text-green-500':'text-red-400'">{{ log.success || log.status==='ok' ? '✓' : '✗' }}</span>
             </div>
           </div>
           <div class="flex items-center gap-2 mt-1 text-[10px]">
