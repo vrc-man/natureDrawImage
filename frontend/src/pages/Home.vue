@@ -784,7 +784,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                     <option value="natural">自然英文</option>
                   </select>
                   <div class="flex flex-wrap gap-1.5" id="res-presets">
-                    <button v-for="r in resolutions" :key="r.w+'-'+r.h" @click="width=r.w;height=r.h"
+                    <button v-for="r in resolutions" :key="r.w+'-'+r.h" @click="width=r.w;height=r.h" :title="r.w+'×'+r.h"
                       class="text-xs px-2 py-1 rounded-lg border transition-all cursor-pointer"
                       :class="width===r.w&&height===r.h?'bg-pink-500 text-white border-pink-500':'bg-white text-gray-500 border-pink-100 hover:border-pink-300'">
                       {{ r.label || r.w+'×'+r.h }}
