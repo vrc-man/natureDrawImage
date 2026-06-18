@@ -207,7 +207,7 @@ async function reorderFeatured(to: number, from: number) {
   if (to === from || to < 0 || from < 0) return
   const item = featured.value.splice(from, 1)[0]
   featured.value.splice(to, 0, item)
-  try { await fetchJSON('/api/admin/featured/reorder', 'POST', { items: featured.value.map((i: any) => i.path) }) } catch {}
+  try { await fetchJSON('/api/admin/featured/reorder', 'POST', { items: featured.value.map((i: any) => i.path || i) }) } catch {}
 }
 async function loadFeatured() { try { const d = await fetchJSON('/api/admin/featured'); featured.value = (d.items || []).map((p: any) => typeof p === 'string' ? { path: p } : p) } catch {} }
 async function removeFeatured(path: string) { await fetchJSON('/api/admin/featured/remove', 'POST', { path }); loadFeatured() }
@@ -222,8 +222,9 @@ async function genKeys() {
   if (!count || count < 1) return
   const extra: any = {}
   if (type === 'time' || type === 'both') {
-    const days = parseInt(prompt('有效期（天）：', '30') || '30')
-    extra.days = days
+    extra.days = parseInt(prompt('有效期（天）：', '30') || '30')
+    extra.hours = 0
+    extra.mins = 0
   }
   if (type === 'count' || type === 'both') {
     const maxUses = parseInt(prompt('最大使用次数：', '100') || '100')
@@ -342,7 +343,7 @@ async function loadImages(reset = false) {
 async function batchDeleteImages() {
   if (!imgSelected.value.size) return
   if (!confirm(`删除 ${imgSelected.value.size} 张图片？`)) return
-  await fetchJSON('/api/admin/delete_batch', 'POST', { paths: Array.from(imgSelected.value) })
+  await fetchJSON('/api/admin/mark_delete_batch', 'POST', { paths: Array.from(imgSelected.value) })
   imgSelected.value = new Set(); loadImages(true)
 }
 
@@ -396,7 +397,13 @@ const elEditMode = ref(false)
 
 async function loadEmailAuth() {
   try { emailDashboard.value = await fetchJSON('/api/admin/email-dashboard') } catch {}
-  try { const d = await fetchJSON('/api/admin/invite-codes'); inviteCodes.value = d.codes || [] } catch {}
+  try {
+    const dash = await fetchJSON('/api/admin/email-dashboard')
+    inviteCodes.value = dash.invite_codes || []
+    if (dash.rate_limits) rateLimits.value = dash.rate_limits
+    if (dash.limits) Object.assign(rateLimits.value, dash.limits)
+    if (dash.abuse_ips) abuseIps.value = dash.abuse_ips
+  } catch {}
   try { let euUrl = `/api/admin/email-users?offset=${euPage.value * 24}&limit=24`; if (euSearch.value) euUrl += '&search=' + encodeURIComponent(euSearch.value); const d = await fetchJSON(euUrl); emailUsersList.value = d.users || []; euTotal.value = d.total || 0 } catch {}
   try {
     let elUrl = `/api/admin/email-logs?offset=${elPage.value * 24}&limit=24`
@@ -417,7 +424,7 @@ function elSelectAll() {
 async function elDeleteSelected() {
   if (!elSelected.value.size) return
   if (!confirm(`删除 ${elSelected.value.size} 条日志？`)) return
-  try { await fetchJSON('/api/admin/email-logs/clear', 'POST', { ids: Array.from(elSelected.value).map(Number) }); loadEmailAuth() } catch {}
+  try { await fetchJSON('/api/admin/email-logs/clear', 'POST', { ids: Array.from(elSelected.value) }); loadEmailAuth() } catch {}
 }
 async function genInviteCode() {
   try { const d = await fetchJSON('/api/admin/invite-codes/generate', 'POST', { count: 1 }); alert(`生成成功: ${d.code || d.codes?.[0] || ''}`); loadEmailAuth() } catch (e: any) { alert(e.message) }
