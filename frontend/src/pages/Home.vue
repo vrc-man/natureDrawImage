@@ -298,21 +298,22 @@ async function pollMyQueue() {
     if (!items.length && noActiveWS) {
       _myQueueRunning.value = false
       _isGenerating.value = false
-      // 队列空+无WS → 强制恢复按钮（原版逻辑，不依赖任何变量）
+      // 队列空+无WS → 强制恢复按钮（原版逻辑）
       const btn = document.getElementById('btn-run') as HTMLButtonElement | null
       if (btn && btn.disabled) {
         btn.disabled = false
         btn.textContent = '▶ 开始生成'
       }
-      if (_hasRunningBefore || _watchingMode.value) { _finishing.value = true }
-      // 任务完成通知
-      if ((_watchingMode.value || _hasRunningBefore) && !_finishing.value && !_doneNotified) {
+      // 任务完成通知（先检查再设 _finishing）
+      if ((_watchingMode.value || _hasRunningBefore) && !_doneNotified) {
         _watchingMode.value = false
         _hasRunningBefore = false
-        showToast('✅ 任务已完成，请到「我的」查看')
-        sound.play('done')
-        sound.sendNotification('✅ 生图完成，请到「我的」查看')
-        finishRun()
+        _finishing.value = true
+        if (!_doneNotified) {
+          showToast('✅ 任务已完成，请到「我的」查看')
+          sound.play('done')
+          sound.sendNotification('✅ 生图完成，请到「我的」查看')
+        }
       }
     } else {
       _myQueueRunning.value = !!running.length
