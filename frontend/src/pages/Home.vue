@@ -665,8 +665,8 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
               <p v-if="accessKeySuccess" class="text-xs text-green-500 mt-2">{{ accessKeySuccess }}</p>
             </div>
 
-            <!-- Main generate area (admins, or non-admin with key, or not logged in) -->
-            <div v-if="userStore.isAdmin || userStore.currentUser?.access_granted || !userStore.isLoggedIn">
+            <!-- Main generate area (always visible) -->
+            <div>
               <!-- Fork badge -->
               <div v-if="forkedWorkflow" class="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-700 mb-2">
                 🍴 Fork: {{ forkedMeta?.display_path || '自定义工作流' }}
@@ -738,8 +738,8 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 class="w-full py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl text-sm font-bold shadow-md shadow-pink-300/30 hover:from-pink-300 hover:to-rose-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed border-0"
                 id="btn-run"
                 :class="{cooldown: cooldownSec > 0}"
-                :disabled="_isGenerating || cooldownSec > 0">
-                {{ cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : (_isGenerating ? '⏳ 生成中...' : '▶ 开始生成') }}
+                :disabled="_isGenerating || cooldownSec > 0 || (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn)">
+                {{ _isGenerating ? '⏳ 生成中...' : cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn) ? '🔑 需要访问密钥' : '▶ 开始生成' }}
               </button>
 
               <!-- Progress -->
