@@ -6262,7 +6262,7 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             await emit(ws, {"type": "log", "message": f"[warn] 写映射失败: {e}"})
 
     for img in images:
-        _rel = ((img.get("subfolder") or "") + "/" + img["filename"]).replace("\\", "/")
+        _rel = ((img.get("subfolder") or "") + "/" + img["filename"]).replace("\\", "/").lstrip("/")
         url = f"/api/output/file?path={_urlparse.quote(_rel, safe='')}"
         await emit(ws, {
             "type": "image",
