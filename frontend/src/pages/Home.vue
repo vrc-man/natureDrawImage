@@ -609,34 +609,43 @@ async function loadAnnouncement() {
   } catch {}
 }
 
-// ===== Preset fill =====
-// ===== Textarea height sync =====
-let _thObs: ResizeObserver | null = null
+// ===== Textarea height sync (与原版一致) =====
+let _thTimer: ReturnType<typeof setTimeout> | null = null
+let _lastThSync = 0
 function initTextareaHeightSync() {
-  const ids = ['direct', 'negative_prompt', 'nl']
-  _thObs = new ResizeObserver((entries) => {
-    const map: Record<string, string> = {}
-    for (const entry of entries) {
-      const el = entry.target as HTMLTextAreaElement
-      const h = el.style.height
-      if (h && h !== 'auto' && el.id) map[el.id] = h
-    }
-    if (Object.keys(map).length) localStorage.setItem('taHeights', JSON.stringify(map))
-    // 同步正面和负面的高度
-    const direct = document.getElementById('direct') as HTMLTextAreaElement
-    const neg = document.getElementById('negative_prompt') as HTMLTextAreaElement
-    if (direct && neg && direct.style.height && neg.style.height) {
-      const maxH = direct.style.height > neg.style.height ? direct.style.height : neg.style.height
-      if (maxH.includes('px')) {
-        direct.style.height = maxH; neg.style.height = maxH
-      }
-    }
+  if (!window.ResizeObserver) return
+  ;['direct', 'negative_prompt', 'nl'].forEach(id => {
+    const el = document.getElementById(id) as HTMLTextAreaElement | null
+    if (!el) return
+    new ResizeObserver(() => {
+      if (_thTimer) clearTimeout(_thTimer)
+      _thTimer = setTimeout(() => {
+        const h = el.style.height
+        const saved: Record<string, string> = {}
+        try { Object.assign(saved, JSON.parse(localStorage.getItem('taHeights') || '{}')) } catch {}
+        saved[id] = h
+        if (id === 'direct' || id === 'negative_prompt') {
+          const peer = document.getElementById(id === 'direct' ? 'negative_prompt' : 'direct') as HTMLTextAreaElement | null
+          const now = Date.now()
+          if (peer && h && h !== peer.style.height && now - _lastThSync > 300) {
+            _lastThSync = now
+            peer.style.height = h
+          }
+          saved.direct = h
+          saved.negative_prompt = h
+        }
+        localStorage.setItem('taHeights', JSON.stringify(saved))
+      }, 400)
+    }).observe(el)
   })
-  for (const id of ids) {
-    const el = document.getElementById(id) as HTMLTextAreaElement
-    if (!el) continue
-    _thObs.observe(el)
-  }
+  // 恢复保存的高度
+  try {
+    const saved: Record<string, string> = JSON.parse(localStorage.getItem('taHeights') || '{}')
+    Object.entries(saved).forEach(([id, h]) => {
+      const el = document.getElementById(id) as HTMLTextAreaElement | null
+      if (el && h) el.style.height = h
+    })
+  } catch {}
 }
 
 function clearFork() {
