@@ -642,10 +642,10 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         </div>
       </div>
 
-      <!-- Tab Pages -->
+        <!-- Tab Pages -->
       <div class="flex-1 overflow-y-auto pb-[60px] relative">
         <!-- ============ GENERATE ============ -->
-        <div v-show="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
+        <div v-if="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
           <div class="max-w-5xl mx-auto space-y-4">
             <!-- Access Key -->
             <div v-if="!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn" class="text-center py-12">
@@ -772,13 +772,13 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         </div>
 
         <!-- ============ GALLERY ============ -->
-        <div v-show="activeTab === 'gallery'" class="tab-page p-4 sm:p-6"><div class="max-w-5xl mx-auto"><GalleryGrid ref="galleryRef" /></div></div>
+        <div v-if="activeTab === 'gallery'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><GalleryGrid ref="galleryRef" /></div></div>
         <!-- ============ FEATURED ============ -->
-        <div v-show="activeTab === 'featured'" class="tab-page p-4 sm:p-6"><div class="max-w-5xl mx-auto"><FeaturedGrid /></div></div>
+        <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><FeaturedGrid /></div></div>
         <!-- ============ MY WORKS ============ -->
-        <div v-show="activeTab === 'myworks'" class="tab-page p-4 sm:p-6"><div class="max-w-5xl mx-auto"><MyWorksGrid ref="myworksRef" /></div></div>
+        <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><MyWorksGrid ref="myworksRef" /></div></div>
         <!-- ============ MORE ============ -->
-        <div v-show="activeTab === 'more'" class="tab-page p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-4">
+        <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-4">
           <div v-if="annTitle" class="bg-amber-50 border border-amber-200 rounded-2xl p-4">
             <div class="text-sm font-bold text-amber-700 mb-1">{{ annTitle }}</div>
             <div class="text-xs text-amber-600 whitespace-pre-wrap">{{ annContent }}</div>
