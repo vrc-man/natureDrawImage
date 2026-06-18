@@ -126,6 +126,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Requ
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send, Message
 from pydantic import BaseModel, field_validator
 
 # SQLite 数据层（替代 JSON 文件读写）
@@ -1159,8 +1160,26 @@ async def _creator_map_set(rel: str, ip: str) -> bool:
         return False
 
 app = FastAPI(title="二次元绘梦")
-# 文本响应（JSON / HTML / JS / CSS）做轻量级 gzip 压缩；图片字节走另一条路（webp 转码）
-app.add_middleware(GZipMiddleware, minimum_size=512, compresslevel=4)
+# gzip 压缩，但跳过已压缩的图片
+class _SmartGZip:
+    def __init__(self, app: ASGIApp): self.app = app
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http": return await self.app(scope, receive, send)
+        buf, is_img = [], False
+        async def _buf(msg: Message): buf.append(msg)
+        await self.app(scope, receive, _buf)
+        for msg in buf:
+            if msg["type"] == "http.response.start":
+                for k, v in (msg.get("headers") or []):
+                    if k == b"content-type" and v.startswith(b"image/"): is_img = True; break
+                break
+        if is_img:
+            for msg in buf: await send(msg)
+        else:
+            async def _replay(s, r, sn):
+                for m in buf: await sn(m)
+            await GZipMiddleware(_replay, 512, 4)(scope, receive, send)
+app.add_middleware(_SmartGZip)
 
 # 请求体大小限制（10 MB），防止大 payload DoS
 _MAX_REQUEST_BODY = 10 * 1024 * 1024  # 10 MB
