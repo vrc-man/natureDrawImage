@@ -230,9 +230,18 @@ async function loadList() {
     else if (d.all) allWorkflows.value = d.all
   } catch {}
 }
-function onWorkflowSelect(path: string) {
+async function onWorkflowSelect(path: string) {
   currentWorkflowPath.value = path
   localStorage.setItem('currentWorkflow', path)
+  try {
+    const r = await fetch(`/api/workflows/current?path=${encodeURIComponent(path)}&_t=${Date.now()}`)
+    const d = await r.json()
+    if (d.path && !d.error) {
+      if (d.builtin_prompt) directPrompt.value = d.builtin_prompt.trim()
+      if (d.builtin_negative_prompt) negativePrompt.value = d.builtin_negative_prompt.trim()
+      if (d.default_width && d.default_height) { width.value = d.default_width; height.value = d.default_height }
+    }
+  } catch {}
 }
 
 // ===== Char/Style selection (handled by CharStylePicker via localStorage) =====
