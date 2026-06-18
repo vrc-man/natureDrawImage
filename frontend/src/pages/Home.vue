@@ -609,24 +609,31 @@ async function loadAnnouncement() {
 
 // ===== Preset fill =====
 // ===== Textarea height sync =====
-const _TH_KEY = 'taHeights'
+let _thObs: ResizeObserver | null = null
 function initTextareaHeightSync() {
-  const taEls = ['direct', 'negative_prompt', 'nl']
-  const saved: Record<string, string> = {}
-  try {
-    const raw = localStorage.getItem(_TH_KEY)
-    if (raw) Object.assign(saved, JSON.parse(raw))
-  } catch {}
-  for (const id of taEls) {
+  const ids = ['direct', 'negative_prompt', 'nl']
+  _thObs = new ResizeObserver((entries) => {
+    const map: Record<string, string> = {}
+    for (const entry of entries) {
+      const el = entry.target as HTMLTextAreaElement
+      const h = el.style.height
+      if (h && h !== 'auto' && el.id) map[el.id] = h
+    }
+    if (Object.keys(map).length) localStorage.setItem('taHeights', JSON.stringify(map))
+    // 同步正面和负面的高度
+    const direct = document.getElementById('direct') as HTMLTextAreaElement
+    const neg = document.getElementById('negative_prompt') as HTMLTextAreaElement
+    if (direct && neg && direct.style.height && neg.style.height) {
+      const maxH = direct.style.height > neg.style.height ? direct.style.height : neg.style.height
+      if (maxH.includes('px')) {
+        direct.style.height = maxH; neg.style.height = maxH
+      }
+    }
+  })
+  for (const id of ids) {
     const el = document.getElementById(id) as HTMLTextAreaElement
     if (!el) continue
-    if (saved[id]) el.style.height = saved[id]
-    const ro = new ResizeObserver(() => {
-      if (el.style.height && el.style.height !== 'auto') {
-        localStorage.setItem(_TH_KEY, JSON.stringify(Object.assign(JSON.parse(localStorage.getItem(_TH_KEY) || '{}'), { [id]: el.style.height })))
-      }
-    })
-    ro.observe(el)
+    _thObs.observe(el)
   }
 }
 
@@ -668,13 +675,13 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
       <div class="flex-1 overflow-y-auto pb-[60px] pt-[52px]">
         <!-- ============ GENERATE ============ -->
         <div v-if="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
-          <div class="max-w-5xl mx-auto space-y-5">
+          <div class="max-w-5xl mx-auto space-y-6">
             <!-- Access Key (only for non-admin, no key, logged-in) -->
-            <div v-if="!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn" class="text-center py-12">
+            <div v-if="!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-8 text-center max-w-md mx-auto">
               <p class="text-4xl mb-4">🔑</p>
               <p class="text-sm text-gray-500 mb-4">{{ keyExpired ? '您的密钥已过期，请输入新密钥或联系管理员获取' : '需要使用管理员分配的访问密钥才能使用生图服务' }}</p>
-              <input v-model="accessKeyInput" @keydown.enter="submitKey" type="text" placeholder="输入访问密钥" class="w-full max-w-sm border border-pink-200 rounded-xl px-4 py-2.5 text-sm text-center mx-auto mb-3 outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 block" />
-              <button @click="submitKey" class="px-6 py-2 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl text-sm font-semibold hover:from-pink-300 hover:to-rose-300 transition-all cursor-pointer border-0">提交</button>
+              <input v-model="accessKeyInput" @keydown.enter="submitKey" type="text" placeholder="输入访问密钥" class="w-full border border-pink-200 rounded-xl px-4 py-2.5 text-sm text-center mb-3 outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border" />
+              <button @click="submitKey" class="w-full py-2.5 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl text-sm font-semibold hover:from-pink-300 hover:to-rose-300 transition-all cursor-pointer border-0 shadow-md shadow-pink-300/30">提交</button>
               <p v-if="accessKeyError" class="text-xs text-red-400 mt-2">{{ accessKeyError }}</p>
               <p v-if="accessKeySuccess" class="text-xs text-green-500 mt-2">{{ accessKeySuccess }}</p>
             </div>
@@ -688,95 +695,118 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
               </div>
 
               <!-- Mode switch -->
-              <div class="flex bg-pink-100/50 rounded-2xl p-1 gap-1">
-                <button class="flex-1 py-3 text-sm font-semibold rounded-xl transition-all cursor-pointer border-0" :class="mode==='txt2img'?'bg-white text-pink-500 shadow-sm':'text-gray-400 hover:text-gray-600 bg-transparent'" @click="setMode('txt2img')">📝 文生图</button>
-                <button class="flex-1 py-3 text-sm font-semibold rounded-xl transition-all cursor-pointer border-0" :class="mode==='img2img'?'bg-white text-pink-500 shadow-sm':'text-gray-400 hover:text-gray-600 bg-transparent'" @click="setMode('img2img')">🖼️ 图生图</button>
+              <div class="flex gap-2">
+                <button class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all cursor-pointer border-0 active:scale-[0.98]" :class="mode==='txt2img'?'bg-gradient-to-r from-pink-400 to-rose-400 text-white shadow-lg shadow-pink-300/30':'bg-white/70 text-gray-400 border-2 border-pink-100 hover:border-pink-300 hover:text-gray-600'" @click="setMode('txt2img')">📝 文生图</button>
+                <button class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all cursor-pointer border-0 active:scale-[0.98]" :class="mode==='img2img'?'bg-gradient-to-r from-pink-400 to-rose-400 text-white shadow-lg shadow-pink-300/30':'bg-white/70 text-gray-400 border-2 border-pink-100 hover:border-pink-300 hover:text-gray-600'" @click="setMode('img2img')">🖼️ 图生图</button>
               </div>
 
-              <!-- Workflow selector -->
-              <WorkflowPicker :mode="mode" @select="onWorkflowSelect" />
-
-              <!-- Character & Style -->
-              <CharStylePicker />
-
-              <!-- Prompt grid -->
-              <div class="prompt-grid">
-                <div>
-                  <div class="flex items-center justify-between mb-1">
-                    <span class="prompt-label text-xs text-gray-500 select-none">正面提示词</span>
-                    <PresetManager target="direct" :on-fill="(t:string) => fillPreset(t, 'direct')" />
-                  </div>
-                  <textarea v-model="directPrompt" placeholder="正面提示词（英文标签或自然语言）" rows="3" class="w-full border border-pink-200 rounded-xl px-3 py-2 text-xs bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 min-h-[60px] box-border"></textarea>
+              <!-- Workflow + Char/Style side by side -->
+              <div class="flex flex-col sm:flex-row gap-4 sm:gap-6">
+                <div class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+                  <WorkflowPicker :mode="mode" @select="onWorkflowSelect" />
                 </div>
-                <div>
-                  <div class="flex items-center justify-between mb-1">
-                    <span class="prompt-label text-xs text-gray-500 select-none">负面提示词</span>
-                    <PresetManager target="negative_prompt" :on-fill="(t:string) => fillPreset(t, 'negative_prompt')" />
-                  </div>
-                  <textarea v-model="negativePrompt" placeholder="负面提示词（可留空）" rows="3" class="w-full border border-pink-200 rounded-xl px-3 py-2 text-xs bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 min-h-[60px] box-border"></textarea>
+                <div class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+                  <CharStylePicker />
                 </div>
               </div>
 
-              <!-- NL prompt -->
-              <div class="space-y-1">
-                <textarea v-model="nlPrompt" placeholder="💬 自然语言描述（留空则直接使用标签，填写后可用 LLM 翻译/改写）" rows="2" class="w-full border border-pink-200 rounded-xl px-3 py-2 text-xs bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border"></textarea>
-                <div class="flex items-center gap-4 text-xs text-gray-400">
-                  <label class="flex items-center gap-1 cursor-pointer select-none"><input type="checkbox" v-model="rewrite" class="accent-pink-500" /> 改写已有标签</label>
-                  <select v-model="promptMode" class="border border-pink-200 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-pink-400">
-                    <option value="tags">标签模式</option>
-                    <option value="natural">自然语言</option>
+              <!-- Prompt form card -->
+              <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 space-y-5">
+                <!-- Prompt grid -->
+                <div class="prompt-grid">
+                  <div>
+                    <label class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
+                      <button type="button" title="提示词预设" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit text-base" @click.stop>📝</button>
+                      <span>正面提示词</span>
+                      <span class="ml-auto flex items-center gap-1">
+                        <PresetManager target="direct" :on-fill="(t:string) => fillPreset(t, 'direct')" />
+                        <button @click="directPrompt=''" class="text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all cursor-pointer border-0">清空</button>
+                      </span>
+                    </label>
+                    <textarea id="direct" v-model="directPrompt" placeholder="正面提示词（英文标签或自然语言）" rows="1" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border"></textarea>
+                  </div>
+                  <div>
+                    <label class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
+                      <button type="button" title="提示词预设" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit text-base" @click.stop>📝</button>
+                      <span>负面提示词</span>
+                      <span class="ml-auto flex items-center gap-1">
+                        <PresetManager target="negative_prompt" :on-fill="(t:string) => fillPreset(t, 'negative_prompt')" />
+                        <button @click="negativePrompt=''" class="text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all cursor-pointer border-0">清空</button>
+                      </span>
+                    </label>
+                    <textarea id="negative_prompt" v-model="negativePrompt" placeholder="负面提示词（可留空）" rows="1" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border"></textarea>
+                  </div>
+                </div>
+
+                <!-- NL prompt -->
+                <div>
+                  <label class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
+                    <span>自然语言描述</span>
+                    <span class="text-gray-400 font-normal text-[7px] sm:text-sm">(中文/英文，LLM 翻译生成提示词)</span>
+                    <button @click="nlPrompt=''" class="ml-auto text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all cursor-pointer border-0">清空</button>
+                  </label>
+                  <textarea id="nl" v-model="nlPrompt" placeholder="描述你想要的画面，LLM 会自动翻译为 tags" rows="2" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border"></textarea>
+                </div>
+
+                <!-- Options row -->
+                <div class="flex items-center flex-wrap gap-3">
+                  <label class="flex items-center gap-1.5 text-sm font-medium text-gray-600 cursor-pointer select-none">
+                    <input type="checkbox" v-model="rewrite" class="w-4 h-4 accent-pink-500" /> 改写
+                    <span class="tip-btn text-gray-400 ml-1 text-base cursor-pointer font-bold" title="改写：LLM 基于「直接 Tag」结合「自然语言描述」整体重写 prompt&#10;不勾选：LLM 翻译后追加到原 prompt 后面">?</span>
+                  </label>
+                  <select v-model="promptMode" class="text-xs border border-pink-200 rounded-lg px-2 py-1 bg-white text-gray-600 outline-none focus:border-pink-400">
+                    <option value="tags">Danbooru Tags</option>
+                    <option value="natural">自然英文</option>
                   </select>
-                  <span class="tip-btn cursor-pointer text-gray-400 font-bold" title="标签模式：使用 Danbooru 标签，英文逗号分隔&#10;自然语言模式：LLM 生成流畅英文描述">ⓘ</span>
+                  <div class="flex flex-wrap gap-1.5" id="res-presets">
+                    <button v-for="r in resolutions" :key="r.w+'-'+r.h" @click="width=r.w;height=r.h"
+                      class="text-xs px-2 py-1 rounded-lg border transition-all cursor-pointer"
+                      :class="width===r.w&&height===r.h?'bg-pink-500 text-white border-pink-500':'bg-white text-gray-500 border-pink-100 hover:border-pink-300'">
+                      {{ r.label || r.w+'×'+r.h }}
+                    </button>
+                  </div>
                 </div>
-              </div>
 
-              <!-- Resolution presets -->
-              <div>
-                <div class="text-xs text-gray-400 mb-1.5">📐 分辨率</div>
-                <div id="res-presets" class="flex flex-wrap gap-1.5">
-                  <button v-for="r in resolutions" :key="r.w+'-'+r.h" @click="width=r.w;height=r.h"
-                    class="px-3 py-1.5 text-xs rounded-xl border transition-all cursor-pointer"
-                    :class="width===r.w&&height===r.h?'bg-pink-500 text-white border-pink-500 shadow-md shadow-pink-300/30':'bg-white/75 text-gray-500 border-pink-100 hover:bg-pink-50'">
-                    {{ r.label || r.w+'×'+r.h }}
-                  </button>
+                <!-- Img2img upload -->
+                <div v-if="mode==='img2img'">
+                  <label class="block text-sm font-semibold mb-1.5 text-gray-600">🖼️ 输入图 <span class="text-gray-400 font-normal">(最多3张，单张≤3MB)</span></label>
+                  <Img2ImgUpload ref="uploadRef" />
+                  <label class="flex items-center gap-1.5 text-sm text-gray-500 mt-2 cursor-pointer select-none">
+                    <input v-model="img2imgUsePreset" type="checkbox" class="w-4 h-4 accent-pink-500" />
+                    注入上方所选分辨率（默认不勾选，保持原图尺寸）
+                  </label>
                 </div>
+
+                <!-- Run button -->
+                <button @click="startRun"
+                  class="w-full py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl font-semibold text-base shadow-lg shadow-pink-300/30 transition-all active:scale-[0.98] disabled:from-gray-200 disabled:to-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed border-0"
+                  id="btn-run"
+                  :class="{cooldown: cooldownSec > 0}"
+                  :disabled="_isGenerating || cooldownSec > 0 || (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn)">
+                  {{ _isGenerating ? '⏳ 生成中...' : cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn) ? '🔑 需要访问密钥' : '▶ 开始生成' }}
+                </button>
               </div>
 
-              <!-- Img2img upload -->
-              <div v-if="mode==='img2img'">
-                <Img2ImgUpload ref="uploadRef" />
-                <label class="flex items-center gap-2 mt-2 text-xs text-gray-400 cursor-pointer select-none">
-                  <input v-model="img2imgUsePreset" type="checkbox" class="accent-pink-500" />
-                  注入上方所选分辨率（默认不勾选，保持原图尺寸）
-                </label>
-              </div>
-
-              <!-- Run button -->
-              <button @click="startRun"
-                class="w-full py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl text-sm font-bold shadow-md shadow-pink-300/30 hover:from-pink-300 hover:to-rose-300 transition-all disabled:opacity-50 disabled:cursor-not-allowed border-0"
-                id="btn-run"
-                :class="{cooldown: cooldownSec > 0}"
-                :disabled="_isGenerating || cooldownSec > 0 || (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn)">
-                {{ _isGenerating ? '⏳ 生成中...' : cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn) ? '🔑 需要访问密钥' : '▶ 开始生成' }}
-              </button>
-
-              <!-- Progress -->
-              <div v-if="progressText || _isGenerating || _watchingMode || llmText" class="space-y-2">
-                <div v-if="queueStatus" id="queue-status" class="text-xs text-amber-600 font-medium">{{ queueStatus }}</div>
-                <div v-if="progressPct > 0" class="w-full h-2 bg-pink-100 rounded-full overflow-hidden">
-                  <div id="progress-bar" class="h-full rounded-full" :style="{width:progressPct+'%'}"></div>
+              <!-- Progress card -->
+              <div v-if="progressText || _isGenerating || _watchingMode || llmText" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 space-y-3">
+                <div v-if="queueStatus" id="queue-status" class="text-sm text-amber-600 text-center font-semibold">{{ queueStatus }}</div>
+                <div v-if="progressPct > 0" class="w-full bg-pink-100 rounded-full h-2.5 overflow-hidden">
+                  <div id="progress-bar" class="h-2.5 rounded-full" :style="{width:progressPct+'%'}"></div>
                 </div>
-                <div id="progress-text" class="text-xs text-gray-500">{{ progressText }}</div>
-                <div v-if="llmText" class="bg-white/75 rounded-2xl p-3 text-xs text-gray-500 max-h-40 overflow-y-auto whitespace-pre-wrap">{{ llmText }}</div>
+                <div id="progress-text" class="text-sm text-gray-500 text-center">{{ progressText }}</div>
+                <div v-if="llmText" class="text-xs bg-rose-50 border border-pink-100 p-3 rounded-xl max-h-36 overflow-y-auto whitespace-pre-wrap text-gray-700 leading-relaxed">{{ llmText }}</div>
               </div>
 
-              <!-- Result images -->
-              <div v-if="resultImages.length" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                <img v-for="(img, i) in resultImages" :key="i" :src="img.url" class="w-full rounded-xl shadow-sm border border-pink-100 cursor-pointer" @click="openLb(resultImages.map(r=>({url:r.url,title:r.filename,filename:r.filename})), i)" />
+              <!-- Result images card -->
+              <div v-if="resultImages.length" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+                <div class="text-base font-bold text-gray-700 mb-3">🖼️ 结果</div>
+                <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 justify-items-center">
+                  <img v-for="(img, i) in resultImages" :key="i" :src="img.url" class="w-full rounded-xl shadow-sm border border-pink-100 cursor-pointer" @click="openLb(resultImages.map(r=>({url:r.url,title:r.filename,filename:r.filename})), i)" />
+                </div>
               </div>
 
               <!-- My Queue card -->
-              <div v-if="myQueueItems.length" class="bg-white/75 backdrop-blur rounded-2xl p-3 border border-pink-100 shadow-sm">
+              <div v-if="myQueueItems.length" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
                 <div class="flex items-center justify-between mb-1">
                   <span id="my-queue-status" class="text-xs text-gray-400">{{ myQueueItems.some((i:any)=>i.status==='running') ? '⚡ 正在生成' : myQueueItems.some((i:any)=>i.status==='waiting') ? '⏳ 排队中' : '✅ 空闲' }}</span>
                 </div>
