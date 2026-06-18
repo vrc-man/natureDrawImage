@@ -207,8 +207,10 @@ onMounted(async () => {
   // 恢复 UI 设置
   if (uiZoom.value !== 1) document.documentElement.style.zoom = String(uiZoom.value)
   if (compactLayout.value) document.documentElement.classList.add('compact')
-  // 检查密钥过期状态
+  // 检查密钥过期状态 + 初始化通知圆点
   if (userStore.currentUser?.key_status === 'expired') keyExpired.value = true
+  if (userStore.currentUser?.unread_notifications) notifyUnreadCount.value = userStore.currentUser.unread_notifications
+  if (userStore.currentUser?.my_queue_count) notifyQueueCount.value = userStore.currentUser.my_queue_count
   // Load forked workflow
   try {
     const fw = localStorage.getItem('forkedWorkflow')
@@ -648,7 +650,7 @@ const annContent = ref('')
 async function loadAnnouncement() {
   try {
     const d = await api<any>('GET', '/api/announcement')
-    if (d?.title) { annTitle.value = d.title; annContent.value = d.content }
+    if (d?.announcement?.title) { annTitle.value = d.announcement.title; annContent.value = d.announcement.content }
   } catch {}
 }
 

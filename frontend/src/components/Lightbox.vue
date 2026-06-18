@@ -41,7 +41,7 @@ async function doReport() {
   if (!current() || !reportReason.value.trim()) return
   reportStatus.value = '提交中...'
   try {
-    await api('POST', '/api/report', { path: current()!.path || current()!.filename || '', reason: reportReason.value.trim() })
+    await api('POST', '/api/report', { image_path: current()!.path || current()!.filename || '', reason: reportReason.value.trim() })
     reportStatus.value = '✅ 举报已提交'
     setTimeout(() => { showReport.value = false; reportStatus.value = ''; reportReason.value = '' }, 1500)
   } catch (e: any) { reportStatus.value = '提交失败: ' + e.message }

@@ -6,7 +6,10 @@ export interface UserInfo {
   avatar_url?: string
   is_email_user?: boolean
   access_granted?: boolean
+  key_status?: string
   key_info?: any
+  unread_notifications?: number
+  my_queue_count?: number
 }
 
 export interface WorkflowItem {
@@ -47,9 +50,9 @@ export interface QueueItem {
 }
 
 export interface NotificationResponse {
-  queue_count?: number
+  my_queue_count?: number
+  unread_notifications?: number
   online_count?: number
-  unread_count?: number
 }
 
 export interface ImageItem {
@@ -60,7 +63,5 @@ export interface ImageItem {
 }
 
 export interface AnnouncementData {
-  title?: string
-  content?: string
-  enabled?: boolean
+  announcement?: { title?: string; content?: string; enabled?: boolean }
 }

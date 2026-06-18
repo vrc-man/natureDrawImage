@@ -11,6 +11,8 @@ export interface UserInfo {
   access_granted?: boolean
   key_status?: string
   key_info?: any
+  unread_notifications?: number
+  my_queue_count?: number
 }
 
 export const useUserStore = defineStore('user', {

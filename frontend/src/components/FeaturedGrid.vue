@@ -18,9 +18,9 @@ async function load() {
 function openLightbox(index: number) {
   const lbItems: LbItem[] = items.value.map((img: any) => ({
     url: `/api/output/file?path=${encodeURIComponent(img.path || '')}`,
-    title: img.filename,
+    title: img.filename || img.path?.split('/').pop() || '',
     path: img.path,
-    filename: img.filename,
+    filename: img.filename || img.path?.split('/').pop() || '',
   }))
   open(lbItems, index)
 }
