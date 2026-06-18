@@ -3261,11 +3261,14 @@ function _onCheckboxChange() {
 @app.get("/")
 async def index(request: Request):
     _spa = STATIC_DIR / "dist" / "index.html"
-    if _spa.is_file():
+    user = getattr(request.state, "user", None)
+    # 已登录用户优先返回 SPA
+    if user and _spa.is_file():
         resp = FileResponse(str(_spa), media_type="text/html")
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
-    if not getattr(request.state, "user", None):
+    # 未登录或 SPA 不存在时返回欢迎页
+    if not user or not _spa.is_file():
         _html = _WELCOME_HTML.replace("__CONTACT_EMAIL__", CONTACT_EMAIL or "admin@example.com")
         resp = Response(content=_html, media_type="text/html")
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
