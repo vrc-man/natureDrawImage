@@ -376,17 +376,19 @@ async function actuallyStartRun(g: {direct:string;nl:string;neg:string;w:number;
   _watchingMode.value = false
   _finishing.value = false
   _isGenerating.value = true
-  progressText.value = '等待图片上传...'
   progressPct.value = 0
   resultImages.value = []
   logLines.value = []
 
-  // 等待图生图上传完成
-  if (uploadRef.value) await uploadRef.value.waitAllUploads()
-  const imageNames = uploadRef.value ? uploadRef.value.getImageNames() : []
-  const image1_name = imageNames[0] || ''
-  const image2_name = imageNames[1] || ''
-  const image3_name = imageNames[2] || ''
+  let image1_name = '', image2_name = '', image3_name = ''
+  if (mode.value === 'img2img' && uploadRef.value) {
+    progressText.value = '等待图片上传...'
+    await uploadRef.value.waitAllUploads()
+    const names = uploadRef.value.getImageNames()
+    image1_name = names[0] || ''; image2_name = names[1] || ''; image3_name = names[2] || ''
+  } else {
+    progressText.value = '等待服务器响应...'
+  }
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const ws = new WebSocket(`${proto}//${location.host}/ws/run`)
