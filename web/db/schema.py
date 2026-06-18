@@ -122,11 +122,13 @@ SCHEMA = [
         status           TEXT NOT NULL DEFAULT 'success',
         client_ip        TEXT NOT NULL DEFAULT '',
         created_at       REAL NOT NULL DEFAULT 0,
-        file_paths       TEXT NOT NULL DEFAULT '[]'
+        file_paths       TEXT NOT NULL DEFAULT '[]',
+        error_reason     TEXT NOT NULL DEFAULT ''
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_gen_logs_created ON gen_logs(created_at)",
     "CREATE INDEX IF NOT EXISTS idx_gen_logs_github ON gen_logs(github_id)",
+    "ALTER TABLE gen_logs ADD COLUMN error_reason TEXT NOT NULL DEFAULT ''",
 
     # ── 删除日志（回收站） ──
     """

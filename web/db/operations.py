@@ -312,8 +312,10 @@ def cleanup_stale_user_images(existing_paths_fn) -> int:
     return removed
 
 
-def backfill_user_images_from_gen_logs() -> int:
-    """从 gen_logs.file_paths 回填 user_images 缺失的数据，返回新增条数。"""
+def backfill_user_images_from_gen_logs(exists_fn=None) -> int:
+    """从 gen_logs.file_paths 回填 user_images 缺失的数据，返回新增条数。
+    exists_fn(path) 可选，只回填文件仍存在的记录。
+    """
     import json as _json
     added = 0
     existing = set(
@@ -333,14 +335,14 @@ def backfill_user_images_from_gen_logs() -> int:
         for fp in (fps if isinstance(fps, list) else []):
             fp = str(fp).replace("\\", "/")
             if fp and fp not in existing:
+                if exists_fn and not exists_fn(fp):
+                    continue
                 _db().execute(
                     "INSERT INTO user_images (github_id, path, prompt, time) VALUES (?,?,?,?)",
                     (gid, fp, prompt, ts))
                 existing.add(fp)
                 added += 1
     _db().commit()
-    if added:
-        print(f"[backfill] user_images 从 gen_logs 回填 {added} 条")
     return added
 
 
@@ -387,7 +389,7 @@ def save_deleted_images(data: Dict[str, List[str]]) -> None:
 # 生图日志
 # ═══════════════════════════════════════════
 
-_GEN_LOG_MAX = 100000  # 最大条数
+_GEN_LOG_MAX = 500000  # 50万条上限
 
 
 def load_gen_logs() -> Dict[str, Dict]:
@@ -397,14 +399,16 @@ def load_gen_logs() -> Dict[str, Dict]:
 
 def save_gen_log(github_id: str, login: str, prompt: str, workflow: str,
                  count: int, status: str, client_ip: str,
-                 negative_prompt: str = "", file_paths: list = None) -> None:
+                 negative_prompt: str = "", file_paths: list = None,
+                 error_reason: str = "") -> None:
     log_id = f"{int(_time_module.time() * 1000)}_{secrets.token_hex(4)}"
     fps = json.dumps([p.replace("\\", "/") for p in (file_paths or [])])
     _db().execute(
-        "INSERT INTO gen_logs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO gen_logs (log_id,github_id,login,prompt,negative_prompt,workflow,count,status,client_ip,created_at,file_paths,error_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (log_id, github_id, login or github_id,
          prompt[:25000], negative_prompt[:25000] if negative_prompt else "",
-         workflow or "", count, status, client_ip, _time_module.time(), fps))
+         workflow or "", count, status, client_ip, _time_module.time(), fps,
+         error_reason[:500] if error_reason else ""))
     # 超出上限删最旧
     total = _db().execute("SELECT COUNT(*) as c FROM gen_logs").fetchone()["c"]
     if total > _GEN_LOG_MAX:
@@ -446,6 +450,19 @@ def clean_gen_logs_by_file_paths(deleted_paths: set) -> int:
     if removed:
         _db().commit()
     return removed
+
+
+def get_all_gen_log_file_paths() -> set:
+    """返回所有 gen_logs 中引用的文件路径集合，用于判断缩略图是否可清理。"""
+    rows = _db().execute("SELECT file_paths FROM gen_logs").fetchall()
+    paths = set()
+    for r in rows:
+        try:
+            fps = json.loads(r["file_paths"] or "[]")
+            paths.update(fps)
+        except Exception:
+            pass
+    return paths
 
 
 def query_gen_logs(login: str = "", date_from: float = 0, date_to: float = 0,
@@ -502,7 +519,7 @@ def clear_gen_logs(date_from: float = 0, date_to: float = 0, *, unlink_all: bool
 # 删除日志（回收站）
 # ═══════════════════════════════════════════
 
-_DELETION_LOG_MAX = 100000
+_DELETION_LOG_MAX = 500000  # 50万条上限
 
 
 def load_deletion_log() -> List[Dict]:

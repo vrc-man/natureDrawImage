@@ -977,13 +977,13 @@ async function loadMyWorks(reset = true) {
     for (const it of items) {
       const wrapper = document.createElement('div');
       wrapper.className = 'relative group';
-      const safeTitle = _esc(it.prompt ? it.prompt : it.path);
+      const safeTitle = _esc(it.path);
       const timeStr = it.time ? new Date(it.time * 1000).toLocaleDateString() : '';
       const encPath = encodeURIComponent(it.path);
       const thumbSrc = it.thumb || it.url;
       wrapper.innerHTML = `<a href="${_esc(it.url)}" data-gallery="myworks" data-title="${safeTitle}" data-rel-path="${_esc(it.path)}" class="glightbox block">
         <img src="${_esc(thumbSrc)}" loading="lazy" decoding="async" class="w-full aspect-square object-cover rounded-lg border border-pink-100 bg-pink-50/30 hover:ring-2 hover:ring-emerald-400 hover:shadow-lg transition-all" />
-        ${it.prompt ? `<div class="text-[10px] text-gray-500 truncate mt-1 pr-4">${_esc(it.prompt.slice(0, 30))}</div>` : ''}
+        <div class="text-[10px] text-gray-500 truncate mt-1 pr-4">${safeTitle}</div>
       </a>
       <button data-del-path="${_esc(it.path)}" class="btn-del-mywork absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] leading-none opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700" title="删除">✕</button>`;
       frag.appendChild(wrapper);
@@ -1480,6 +1480,7 @@ function showGenNotice(direct, nl, neg, w, h) {
 }
 
 async function actuallyStartRun(direct, nl, neg, w, h) {
+  _watchingMode = false;
   _finishing = false;
   $('btn-run').disabled = true;
   const hasImg = _accumulatedImages.length > 0;
@@ -1541,8 +1542,8 @@ async function actuallyStartRun(direct, nl, neg, w, h) {
     if (genId !== _activeGenId) return;
     handleMsg(m);
   };
-  ws.onclose = () => { clearTimeout(_connTimer); if (genId === _activeGenId) { activeWS = null; pollMyQueue(); } };
-  ws.onerror = () => { clearTimeout(_connTimer); if (genId === _activeGenId) { appendLog('❌ 连接失败，请稍后重试'); activeWS = null; pollMyQueue(); } };
+  ws.onclose = () => { clearTimeout(_connTimer); if (genId === _activeGenId) { activeWS = null; _watchingMode = true; appendLog('⚠️ 连接断开，任务在后台继续执行...'); $('progress-text').textContent = '连接断开，后台执行中...'; pollMyQueue(); } };
+  ws.onerror = () => { clearTimeout(_connTimer); if (genId === _activeGenId) { activeWS = null; _watchingMode = true; appendLog('❌ 连接失败，请稍后重试'); pollMyQueue(); } };
 }
 
 let _accumulatedImages = [];  // { name, file, previewUrl }
@@ -1748,7 +1749,7 @@ function handleMsg(m) {
 }
 
 let _lastDoneGenId = 0;  // Toast/通知去重
-let _doneNotifyEnabled = localStorage.getItem('doneNotify') === 'true';
+let _doneNotifyEnabled = localStorage.getItem('doneNotify') !== 'false';
 let _soundNotifyEnabled = localStorage.getItem('soundNotify') === 'true';
 let _customSoundData = localStorage.getItem('customSoundData') || '';
 let _customSoundName = localStorage.getItem('customSoundName') || '';
@@ -1992,6 +1993,7 @@ function applyGlobalStatus(s) {
   if (!s.busy) {
     mirroring = false;
     if (!s.queue_size) $('queue-status').classList.add('hidden');
+    $('progress-box').classList.add('hidden');
     return;
   }
   // 忙时不禁用按钮，允许提交到队列
@@ -2231,6 +2233,7 @@ async function pollGPU() {
 }
 let _gpuInterval = 5000;
 let _cooldownDefault = 30;
+let _watchingMode = false;
 // 夜间模式切换
 (function() {
   const btn = $('dark-toggle');
@@ -2686,6 +2689,20 @@ async function pollMyQueue() {
         const pos = i.position ? ` (#${_esc(String(i.position))})` : '';
         return `<div class="flex justify-between text-gray-500"><span>任务 #${_esc(String(i.id))}${pos}</span><span>${st}</span></div>`;
       }).join('');
+    }
+    // 断线轮询：WS 断链后检测任务完成
+    if (_watchingMode) {
+      if (!running.length && !waiting.length) {
+        if (!_finishing) {
+          _watchingMode = false;
+          showToast('✅ 任务已完成，请到「我的」查看');
+          finishRun();
+        }
+      } else {
+        $('progress-box').classList.remove('hidden');
+        if (running.length) $('progress-text').textContent = '⚡ 生图中...';
+        else if (waiting.length) $('progress-text').textContent = '⏳ ' + (waiting[0].position ? `排队第 ${waiting[0].position} 位` : '排队中');
+      }
     }
   } catch(e){console.error(e)}
 }

@@ -2222,7 +2222,7 @@ async function loadWfMeta() {
       thumbnail: (metaMap[f] || {}).thumbnail || '',
       lora_link: (metaMap[f] || {}).lora_link || '',
       category: (metaMap[f] || {}).category || '',
-    }));
+    })).sort((a, b) => a.workflow.localeCompare(b.workflow));
     renderWfMetaEntries();
     renderWfCatTags();
     $('wfmeta-status').textContent = '';
@@ -2640,14 +2640,15 @@ $('btn-ip-images-close').addEventListener('click', () => {
 const lbState = { items: [], index: 0 };
 
 function collectLightboxItems() {
-  const imgs = document.querySelectorAll('.lb-thumb');
-  return Array.from(imgs).map(img => ({
-    url: img.dataset.delThumb
-      ? img.dataset.delThumb
-      : '/api/output/file?path=' + encodeURIComponent(img.dataset.path || ''),
-    path: img.dataset.path || '',
-    mtime: img.dataset.mtime || '',
-    ip: img.dataset.ip || '',
+  const els = document.querySelectorAll('.lb-thumb');
+  return Array.from(els).map(el => ({
+    url: el.dataset.delThumb
+      ? el.dataset.delThumb
+      : (el.tagName === 'A' ? el.getAttribute('href') : '/api/output/file?path=' + encodeURIComponent(el.dataset.path || '')),
+    path: el.dataset.path || '',
+    mtime: el.dataset.mtime || '',
+    ip: el.dataset.ip || '',
+    isGenlog: !!el.dataset.genlog,
   }));
 }
 
@@ -2672,7 +2673,12 @@ function showLightbox() {
       }
     }).catch(() => {});
   }
-  $('lb-download').href = it.url + (it.url.includes('?') ? '&' : '?') + 'full=1';
+  if (it.isGenlog) {
+    $('lb-download').style.display = 'none';
+  } else {
+    $('lb-download').style.display = '';
+    $('lb-download').href = it.url + (it.url.includes('?') ? '&' : '?') + 'full=1';
+  }
   $('lb-root').classList.add('open');
   document.body.style.overflow = 'hidden';
 }
@@ -3300,7 +3306,7 @@ async function loadGenLogs(reset = true) {
       $('gen-logs-pages').textContent = '';
       return;
     }
-    $('gen-logs-list').innerHTML = items.map(it => {
+    $('gen-logs-list').innerHTML = '<div class="grid grid-cols-2 gap-2">' + items.map(it => {
       const t = new Date((it.created_at || 0) * 1000).toLocaleString('zh-CN');
       const stColor = it.status === 'success' ? 'text-green-600' : 'text-red-600';
       const stLabel = it.status === 'success' ? '✓' : '✗';
@@ -3311,24 +3317,32 @@ async function loadGenLogs(reset = true) {
       const negPromptText = escHtml(negPromptFull.substring(0, 80));
       const wf = escHtml((it.workflow || '').split('/').pop() || '-');
       const lid = escHtml(it.id||'');
-      return `<div class="border-b border-gray-100 py-1.5 text-[10px] relative">
-        <input type="checkbox" class="gl-log-check absolute top-1 left-1 w-3 h-3 cursor-pointer z-10" data-log-id="${lid}" />
-        <div class="flex justify-between items-center text-gray-400">
-          <div class="flex items-center gap-2">
-            <span>${t}</span>
-            <button data-copy-text="${escHtml(promptFull)}" title="复制正面提示词" class="btn-copy-positive text-[9px] px-1.5 py-0.5 bg-pink-50 hover:bg-pink-100 text-pink-500 rounded whitespace-nowrap">📋正面</button>
-            ${negPromptFull ? `<button data-copy-text="${escHtml(negPromptFull)}" title="复制负面提示词" class="btn-copy-negative text-[9px] px-1.5 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded whitespace-nowrap">📋负面</button>` : ''}
+      const thumbImg = (it.images && it.images[0]) || '';
+      const thumbPath = thumbImg ? new URLSearchParams(thumbImg.split('?')[1]).get('path') || '' : '';
+      return `<div class="border border-gray-200 rounded p-1 text-[10px] relative flex gap-1 bg-white">
+        <input type="checkbox" class="gl-log-check absolute top-0.5 left-0.5 w-3 h-3 cursor-pointer z-10" data-log-id="${lid}" />
+        <div class="flex-1 min-w-0">
+          <div class="flex justify-between items-center text-gray-400">
+            <div class="flex items-center gap-1">
+              <span>${t}</span>
+              <button data-copy-text="${escHtml(promptFull)}" title="复制正面提示词" class="btn-copy-positive text-[8px] px-1 py-0.5 bg-pink-50 hover:bg-pink-100 text-pink-500 rounded whitespace-nowrap">📋正面</button>
+              ${negPromptFull ? `<button data-copy-text="${escHtml(negPromptFull)}" title="复制负面提示词" class="btn-copy-negative text-[8px] px-1 py-0.5 bg-rose-50 hover:bg-rose-100 text-rose-500 rounded whitespace-nowrap">📋负面</button>` : ''}
+            </div>
+            <span class="${stColor} shrink-0">${stLabel}</span>
           </div>
-          <span class="${stColor} shrink-0">${stLabel} ${it.count}张</span>
+          <div class="flex justify-between">
+            <span class="text-gray-700">👤 ${loginInfo}</span>
+            <span class="text-gray-400 shrink-0">📁 ${wf}</span>
+          </div>
+          <div class="text-gray-500 truncate">💬 ${promptText}</div>
+          ${negPromptFull ? `<div class="text-gray-500 truncate">⚠️ ${negPromptText}</div>` : ''}
+          ${it.status !== 'success' && it.error_reason ? `<div class="flex items-center gap-1 text-red-500 truncate"><span>❗ ${escHtml(it.error_reason)}</span><button data-copy-text="${escHtml(it.error_reason)}" title="复制错误信息" class="text-[8px] px-1 py-0.5 bg-red-50 hover:bg-red-100 text-red-500 rounded shrink-0">📋</button></div>` : ''}
         </div>
-        <div class="flex justify-between">
-          <span class="text-gray-700">👤 ${loginInfo}</span>
-          <span class="text-gray-400">📁 ${wf}</span>
-        </div>
-        <div class="text-gray-500 truncate">💬 ${promptText}</div>
-        ${negPromptFull ? `<div class="text-gray-500 truncate">⚠️ ${negPromptText}</div>` : ''}
+        ${thumbImg ? `<a href="${thumbImg}" class="lb-thumb flex-shrink-0 self-stretch w-14" data-path="${escHtml(thumbPath)}" data-genlog="1">
+          <img src="${thumbImg}" loading="lazy" class="h-full w-full object-cover rounded border border-gray-200 hover:ring-1 hover:ring-blue-400" />
+        </a>` : ''}
       </div>`;
-    }).join('');
+    }).join('') + '</div>';
     const start = _glPage * _GL_PAGE_SIZE + 1;
     const end = Math.min(start + items.length - 1, _glTotal);
     $('gen-logs-status').textContent = `显示 ${start}-${end} / ${_glTotal} 条`;

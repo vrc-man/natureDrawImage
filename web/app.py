@@ -190,13 +190,14 @@ def _load_gen_logs() -> Dict[str, Any]:
 
 async def _save_gen_log(github_id: str, _login: str, prompt: str, workflow: str,
                        count: int, status: str, client_ip: str,
-                       negative_prompt: str = "", file_paths: list = None):
+                       negative_prompt: str = "", file_paths: list = None,
+                       error_reason: str = ""):
     """追加一条生图日志（SQLite 自动管理上限）。"""
     login = _login
     if not login and github_id:
         u = _load_users().get(github_id, {})
         login = u.get("login", github_id)
-    db.save_gen_log(github_id, login or github_id, prompt, workflow, count, status, client_ip, negative_prompt, file_paths)
+    db.save_gen_log(github_id, login or github_id, prompt, workflow, count, status, client_ip, negative_prompt, file_paths, error_reason)
     global _gen_logs_path_cache
     _gen_logs_path_cache = None
 
@@ -451,7 +452,7 @@ _maintenance_lock = asyncio.Lock()
 _custom_head_lock = asyncio.Lock()
 _REPORT_RATE: Dict[str, List[float]] = {}
 _report_rate_lock = asyncio.Lock()
-_RATE_LAST_TS: Dict[str, float] = {}  # client_ip -> 上次开始生图的时间戳（用于生图冷却）
+_RATE_LAST_TS: Dict[str, float] = {}  # github_id -> 上次开始生图的时间戳（用于生图冷却）
 _user_last_seen: Dict[str, float] = {}  # github_id -> 最后一次请求时间戳（用于在线状态判断）
 _session_refresh_tracker: Dict[str, float] = {}  # token -> 上次续期时间戳（限流用）
 _cooldown_lock = asyncio.Lock()
@@ -1623,9 +1624,10 @@ async def _run_gc():
         pass
     cleaned["orphan_creator_entries"] = orphan_count
 
-    # 3b. 清理孤儿缩略图（原图已不存在的缓存）
+    # 3b. 清理孤儿缩略图（原图不存在且无 gen_log 引用的才是真孤儿）
     orphan_thumbs = 0
     if THUMB_CACHE_DIR.exists():
+        gen_log_paths = db.get_all_gen_log_file_paths()
         for tp in THUMB_CACHE_DIR.rglob("*.webp"):
             if not tp.is_file():
                 continue
@@ -1639,12 +1641,13 @@ async def _run_gc():
                         found = True
                         break
                 if not found:
-                    tp.unlink()
-                    orphan_thumbs += 1
+                    if not any(f"{rel_str}{ext}" in gen_log_paths for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                        tp.unlink()
+                        orphan_thumbs += 1
             except Exception:
                 pass
-    if orphan_thumbs:
-        print(f"[gc] 清理孤儿缩略图: {orphan_thumbs} 个")
+        if orphan_thumbs:
+            print(f"[gc] 清理孤儿缩略图: {orphan_thumbs} 个")
     cleaned["orphan_thumbs"] = orphan_thumbs
 
     # 4. 重试清理标记删除但残留的文件（首次删除失败 / 服务重启丢失后台任务）
@@ -1663,7 +1666,6 @@ async def _run_gc():
             try:
                 if fp.is_file():
                     fp.unlink()
-                    _clean_thumb_for_path(rel_path)
                     print(f"[GC] 补删标记文件: {rel_path}")
                     gc_deleted += 1
                     ok = True
@@ -1691,13 +1693,6 @@ async def _run_gc():
                             db.add_deleted_image(gid, p)
             except Exception:
                 pass
-        # 同步清理 gen_log 中对应文件路径的记录
-        try:
-            gen_log_removed = db.clean_gen_logs_by_file_paths(del_set)
-            if gen_log_removed:
-                cleaned["gen_log_cleaned"] = gen_log_removed
-        except Exception:
-            pass
     cleaned["retry_delete_success"] = gc_deleted
     cleaned["retry_delete_failed"] = sum(len(v) for v in still_failed.values())
 
@@ -1872,22 +1867,25 @@ async def _ensure_thumb_cache():
     """启动时扫描 OUTPUT_DIR，为缺失缩略图的文件批量生成，mtime 倒序优先处理最新"""
     if not OUTPUT_DIR.exists():
         return
-    # 先清理孤儿缩略图（原图已不存在的缓存）
+    # 先清理孤儿缩略图（原图不存在且无 gen_log 引用的才是真孤儿）
     if THUMB_CACHE_DIR.exists():
+        gen_log_paths = db.get_all_gen_log_file_paths()
         orphan = 0
         for tp in THUMB_CACHE_DIR.rglob("*.webp"):
             if not tp.is_file():
                 continue
             try:
                 rel_no_ext = tp.relative_to(THUMB_CACHE_DIR).with_suffix("")
+                rel_str = str(rel_no_ext).replace("\\", "/")
                 found = False
                 for ext in (".png", ".jpg", ".jpeg", ".gif"):
                     if (OUTPUT_DIR / str(rel_no_ext)).with_suffix(ext).is_file():
                         found = True
                         break
                 if not found:
-                    tp.unlink()
-                    orphan += 1
+                    if not any(f"{rel_str}{ext}" in gen_log_paths for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp")):
+                        tp.unlink()
+                        orphan += 1
             except Exception:
                 pass
         if orphan:
@@ -1977,11 +1975,7 @@ async def _start_gc():
         migrate_from_json(data_dir)
     except Exception:
         pass  # 已迁移则跳过
-    # 从 gen_logs 回填 user_images 缺失的历史数据
-    try:
-        db.backfill_user_images_from_gen_logs()
-    except Exception:
-        pass
+
     global _gc_task
     _safe_task(_cleanup_expired_access_keys(), "cleanup_expired_access_keys")
     _safe_task(_cleanup_stale_user_images(), "cleanup_stale_user_images")
@@ -2094,7 +2088,7 @@ async def _record_deletion(rel_path: str, github_id: str, login: str,
         if src_thumb.is_file():
             DELETION_THUMBS_DIR.mkdir(parents=True, exist_ok=True)
             dst = DELETION_THUMBS_DIR / f"{uid}.webp"
-            _shutil.move(str(src_thumb), str(dst))
+            _shutil.copy2(str(src_thumb), str(dst))
     except Exception:
         dst = None
     # 始终查 creator_ip（不论调用方是否传入 creator_gid）
@@ -3385,7 +3379,7 @@ async def api_whoami(request: Request):
         # 冷却剩余秒数
         cooldown_sec = float(_limits.get("gen_cooldown_sec", 30))
         async with _cooldown_lock:
-            last_ts = _RATE_LAST_TS.get(ip, 0.0)
+            last_ts = _RATE_LAST_TS.get(str(user.get("github_id", "")), 0.0)
         cd_remain = max(0, int(cooldown_sec - (_time_module.time() - last_ts) + 0.5)) if not (user.get("role") == "admin") else 0
         # 自动认领已绑定的密钥 + 状态检测（一次加锁完成）
         key_status = "none"
@@ -4938,7 +4932,7 @@ _MAX_QUEUE_SIZE = 500  # 任务队列上限，防止恶意提交耗尽内存
 _status_subscribers: "set[WebSocket]" = set()
 _ws_user_map: "dict[int, str]" = {}  # id(ws) → github_id，封禁时用于断开 WS
 _ws_ip_map: "dict[int, str]" = {}    # id(ws) → client_ip，IP 封禁时用于断开 WS
-_cooldown_tasks: Dict[str, asyncio.Task] = {}  # client_ip → 冷却到期推送任务
+_cooldown_tasks: Dict[str, asyncio.Task] = {}  # github_id → 冷却到期推送任务
 _headless_completed: "dict[str, dict]" = {}  # github_id → 最近一次 headless 完成信息
 _ws_per_ip_lock = asyncio.Lock()  # 保护以下两个计数器
 _ws_sub_lock = asyncio.Lock()  # 保护 _status_subscribers / _ws_user_map / _ws_ip_map
@@ -5080,29 +5074,29 @@ async def _broadcast(msg: Dict[str, Any]) -> None:
 _PUBLIC_EVENT_TYPES: set = set()
 
 
-async def _notify_cooldown_expired(client_ip: str) -> None:
-    """冷却到期后推送解锁消息给对应 IP 的状态 WebSocket。"""
+async def _notify_cooldown_expired(github_id: str) -> None:
+    """冷却到期后推送解锁消息给对应用户的状态 WebSocket。"""
     async with _ws_sub_lock:
-        snapshot = [(sub, _ws_ip_map.get(id(sub))) for sub in _status_subscribers]
-    for sub, sub_ip in snapshot:
-        if sub_ip == client_ip:
+        snapshot = [(sub, _ws_user_map.get(id(sub))) for sub in _status_subscribers]
+    for sub, sub_uid in snapshot:
+        if sub_uid == github_id:
             try:
                 await asyncio.wait_for(sub.send_json({"type": "cooldown_done"}), timeout=5)
             except (Exception, asyncio.TimeoutError):
                 pass
 
 
-def _schedule_cooldown_notify(client_ip: str, delay_sec: int) -> None:
+def _schedule_cooldown_notify(github_id: str, delay_sec: int) -> None:
     """在 delay_sec 秒后通过状态 WS 通知前端冷却已结束。"""
-    old = _cooldown_tasks.pop(client_ip, None)
+    old = _cooldown_tasks.pop(github_id, None)
     if old and not old.done():
         old.cancel()
 
     async def _wait_and_notify():
         await asyncio.sleep(delay_sec)
-        await _notify_cooldown_expired(client_ip)
+        await _notify_cooldown_expired(github_id)
 
-    _cooldown_tasks[client_ip] = _safe_task(_wait_and_notify(), f"cooldown_{client_ip}")
+    _cooldown_tasks[github_id] = _safe_task(_wait_and_notify(), f"cooldown_{github_id}")
 
 
 async def emit(ws: Optional[WebSocket], msg: Dict[str, Any]) -> None:
@@ -5384,9 +5378,10 @@ async def ws_status(ws: WebSocket):
         await _broadcast({"type": "online", "count": online_count})
         try:
             cd_remain = 0
-            if ws_ip and user.get("role") != "admin":
+            uid = str(user.get("github_id", ""))
+            if uid and user.get("role") != "admin":
                 async with _cooldown_lock:
-                    cd_last_ts = _RATE_LAST_TS.get(ws_ip, 0.0)
+                    cd_last_ts = _RATE_LAST_TS.get(uid, 0.0)
                     if cd_last_ts:
                         cd_remain = max(0, int(float(_limits.get("gen_cooldown_sec", 30)) - (_time_module.time() - cd_last_ts) + 0.5))
             await ws.send_json({"type": "status", "online": online_count, "cooldown_remaining": cd_remain, **(_active_status or _idle_snapshot())})
@@ -5505,7 +5500,9 @@ async def _process_queue() -> None:
         except asyncio.CancelledError:
             pass
         except Exception as e:
-            print(f"[ERROR] 生图任务异常: {type(e).__name__}: {e}")
+            err_msg = f"{type(e).__name__}: {e}"
+            print(f"[ERROR] 生图任务异常: {err_msg}")
+            user_msg = "服务器与 ComfyUI 通信失败"
             try:
                 await _save_gen_log(
                     next_item.get("github_id", ""), "",
@@ -5513,6 +5510,7 @@ async def _process_queue() -> None:
                     (next_item.get("params") or {}).get("workflow", ""),
                     0, "failed",
                     next_item.get("client_ip", "unknown"),
+                    error_reason=user_msg,
                 )
             except Exception:
                 pass
@@ -5779,7 +5777,7 @@ async def ws_run(ws: WebSocket):
             wait_msg = ""
             async with _cooldown_lock:
                 now = _time.time()
-                last = _RATE_LAST_TS.get(client_ip, 0.0)
+                last = _RATE_LAST_TS.get(github_id, 0.0)
                 cooldown = float(_limits.get("gen_cooldown_sec", 30))
                 wait = 0 if ws_user.get("role") == "admin" else cooldown - (now - last)
                 if wait > 0:
@@ -5788,9 +5786,9 @@ async def ws_run(ws: WebSocket):
                     wait_sec = int(wait) + 1
                 elif ws_user.get("role") != "admin":
                     # 管理员不更新冷却计时器，避免阻塞同 IP 普通用户排队
-                    _RATE_LAST_TS[client_ip] = now
-                    # 取消该 IP 的旧冷却推送（新提交意味着冷却周期重新开始）
-                    old_cd = _cooldown_tasks.pop(client_ip, None)
+                    _RATE_LAST_TS[github_id] = now
+                    # 取消该用户的旧冷却推送（新提交意味着冷却周期重新开始）
+                    old_cd = _cooldown_tasks.pop(github_id, None)
                     if old_cd and not old_cd.done():
                         old_cd.cancel()
             if should_reject:
@@ -6187,20 +6185,20 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             })
 
     if not images:
-        await _save_gen_log(github_id, "", sd_prompt, path, 0, "failed", client_ip, negative_prompt=neg_text, file_paths=[])
+        await _save_gen_log(github_id, "", sd_prompt, path, 0, "failed", client_ip, negative_prompt=neg_text, file_paths=[], error_reason="ComfyUI 返回空结果，无图片输出")
         # 无图片输出也计入冷却（已消耗 GPU）
         cooldown_sec = float(_limits.get("gen_cooldown_sec", 30))
         _role = _load_users().get(github_id, {}).get("role", "") if github_id else ""
         if _role != "admin":
             now = _time_module.time()
             async with _cooldown_lock:
-                _RATE_LAST_TS[client_ip] = now
+                _RATE_LAST_TS[github_id] = now
             cd_remain = int(cooldown_sec + 0.5)
         else:
             cd_remain = 0
         await emit(ws, {"type": "error", "message": "无图片输出", "cooldown_remaining": cd_remain})
-        if cd_remain > 0 and client_ip:
-            _schedule_cooldown_notify(client_ip, cd_remain)
+        if cd_remain > 0 and github_id:
+            _schedule_cooldown_notify(github_id, cd_remain)
         return
 
     # 写入映射：<相对路径> -> <IP> 和 <GitHub用户>
@@ -6248,13 +6246,13 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
         # 冷却从完成时刻重新算，保证完整冷却时长
         now = _time_module.time()
         async with _cooldown_lock:
-            _RATE_LAST_TS[client_ip] = now
+            _RATE_LAST_TS[github_id] = now
         cd_remain = int(cooldown_sec + 0.5)
     await emit(ws, {"type": "done", "final_prompt": sd_prompt, "count": len(images),
                      "cooldown_remaining": cd_remain})
     # 服务端冷却到期推送：到期后通过状态 WS 解锁前端按钮
-    if cd_remain > 0 and client_ip:
-        _schedule_cooldown_notify(client_ip, cd_remain)
+    if cd_remain > 0 and github_id:
+        _schedule_cooldown_notify(github_id, cd_remain)
 
     # 异步生成缩略图（不阻塞 done 响应）
     thumb_rels = []
@@ -8486,6 +8484,12 @@ async def api_admin_gen_logs(request: Request, limit: int = 20, offset: int = 0,
         "status": r.get("status", "success"),
         "client_ip": r.get("client_ip", ""),
         "created_at": r.get("created_at", 0),
+        "error_reason": r.get("error_reason", "") or "",
+        "file_paths": json.loads(r.get("file_paths", "[]")),
+        "images": [
+            f"/api/admin/gen-log/thumb?path={_urlparse.quote(fp, safe='')}"
+            for fp in json.loads(r.get("file_paths", "[]"))
+        ],
     } for r in rows]
     return {"items": items, "total": total}
 
@@ -8512,6 +8516,26 @@ async def api_admin_gen_logs_delete(request: Request, payload: Dict[str, Any] = 
         raise HTTPException(400, "ids (list) required")
     removed = db.delete_gen_logs_by_ids(ids)
     return {"ok": True, "removed": removed}
+
+
+@app.get("/api/admin/gen-log/thumb")
+async def api_admin_gen_log_thumb(request: Request, path: str):
+    """返回生图日志中引用的图片缩略图（不过滤删除表），仅管理员可访问。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    if not _validate_rel_path(path):
+        raise HTTPException(400, "invalid path")
+    tp = _thumb_cache_path(path)
+    if not tp.is_file():
+        src = _resolve_output_path(path)
+        if src.is_file():
+            ok = await asyncio.to_thread(_generate_thumb, src, path)
+            if not ok or not tp.is_file():
+                raise HTTPException(404, "thumb not found")
+        else:
+            raise HTTPException(404, "thumb not found")
+    return FileResponse(str(tp), media_type="image/webp",
+                        headers={"Cache-Control": "public, max-age=15552000, immutable"})
 
 
 # ==================== 删除记录（回收站） ====================
