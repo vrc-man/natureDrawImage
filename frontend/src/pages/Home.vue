@@ -698,10 +698,10 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         </div>
         <div class="flex items-center gap-1">
           <button @click="toggleDark" class="text-base px-1.5 py-1 rounded-xl hover:bg-pink-50 transition-all cursor-pointer border-0" title="夜间模式">{{ darkMode ? '☀️' : '🌙' }}</button>
-          <button id="notify-bell" @click="onNotifyBellClick" class="relative w-5 h-5 rounded-full cursor-pointer border-0 bg-transparent" :class="notifyUnreadCount>0?'bg-green-500 shadow':notifyQueueCount>0?'bg-yellow-400 shadow':'bg-gray-300'" title="通知">
+          <div @click="onNotifyBellClick" class="relative w-[18px] h-[18px] rounded-full cursor-pointer" :class="notifyUnreadCount>0?'bg-green-500 shadow':notifyQueueCount>0?'bg-yellow-400 shadow':'bg-gray-400'" title="通知">
             <span v-if="notifyUnreadCount > 0" class="absolute -top-1.5 -right-2.5 bg-gradient-to-b from-green-400 to-green-600 text-white text-[9px] rounded-full min-w-[16px] h-4 flex items-center justify-center font-bold shadow-md px-0.5">{{ notifyUnreadCount }}</span>
             <span v-else-if="notifyQueueCount > 0" class="absolute -top-1.5 -right-2.5 bg-gradient-to-b from-yellow-400 to-yellow-600 text-white text-[9px] rounded-full min-w-[16px] h-4 flex items-center justify-center font-bold shadow-md px-0.5">{{ notifyQueueCount }}</span>
-          </button>
+          </div>
           <a v-if="userStore.isAdmin" href="/admin" class="text-xs px-2 py-1 rounded-full bg-pink-50 text-pink-600 font-medium hover:bg-pink-100 transition-all no-underline">管理</a>
           <span v-if="userStore.isLoggedIn" class="px-2 py-1 rounded-full bg-pink-50 text-pink-600 cursor-pointer relative font-medium text-xs select-none" @click="openSettings">
             {{ userStore.currentUser?.login }} ▾
