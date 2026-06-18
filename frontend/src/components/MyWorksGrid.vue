@@ -51,7 +51,7 @@ defineExpose({ load, items, total, loadedCount: items })
     <div v-if="items.length" id="myworks-gallery" class="grid grid-cols-3 sm:grid-cols-4 gap-2">
       <div v-for="(img, i) in items" :key="img.path || i" class="relative group">
         <img :src="img.thumbnail_url || img.url || '/api/output/file?path=' + encodeURIComponent(img.path || '')" loading="lazy" class="w-full aspect-square object-cover rounded-lg border border-pink-100 bg-pink-50/30 cursor-pointer gal-img" @click="openLightbox(i)" />
-        <button @click.stop="del(img.path)" class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] leading-none opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-700 cursor-pointer border-0">✕</button>
+        <button @click.stop="del(img.path)" class="absolute top-0.5 right-0.5 w-6 h-6 rounded-full bg-red-500/80 text-white text-xs leading-none sm:opacity-0 sm:group-hover:opacity-100 transition-opacity hover:bg-red-700 cursor-pointer border-0 flex items-center justify-center">✕</button>
       </div>
     </div>
     <div v-else-if="!loading" class="text-center text-xs text-gray-400 py-8">暂无作品</div>
