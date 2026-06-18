@@ -277,6 +277,7 @@ async function loadResolutions() {
 
 // ===== Polling =====
 let _notifiedTaskIds = new Set<number>()
+let _hasRunningBefore = false
 function startPolling() { pollTimer = setInterval(pollMyQueue, 1000) }
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
 
@@ -289,13 +290,23 @@ async function pollMyQueue() {
     const running = items.filter((i: any) => i.status === 'running')
     const hasMyTask = waiting.length || running.length
 
-    if (!items.length && !(activeWS && activeWS.readyState === WebSocket.OPEN)) {
+    const noActiveWS = !(activeWS && activeWS.readyState === WebSocket.OPEN)
+    if (!items.length && noActiveWS) {
       _myQueueRunning.value = false
+      // WS 断链且队列空 → 任务已完成或已取消，但可能没收到通知
+      if (_watchingMode.value && !_finishing.value) {
+        _watchingMode.value = false
+        showToast(_hasRunningBefore ? '✅ 任务已完成，请到「我的」查看' : '')
+        if (_hasRunningBefore) finishRun()
+        _hasRunningBefore = false
+      }
     } else {
       _myQueueRunning.value = !!running.length
     }
+    // 记录是否有过 running 任务（用于断链检测完成）
+    if (running.length) _hasRunningBefore = true
 
-    // WS 断开后轮询检测任务完成
+    // WS 断开后轮询检测任务完成（队列中还有项时）
     if (_watchingMode.value) {
       if (!running.length && !waiting.length) {
         if (!_finishing.value) {
@@ -303,20 +314,23 @@ async function pollMyQueue() {
           const failedItem = items.find((i: any) => i.status === 'failed')
           const errMsg = failedItem?.error_message || ''
           showToast(errMsg ? '❌ ' + errMsg : '✅ 任务已完成，请到「我的」查看')
+          sound.play(errMsg ? 'error' : 'done')
+          sound.sendNotification(errMsg ? '❌ ' + errMsg : '✅ 生图完成，请到「我的」查看')
           finishRun()
         }
       } else {
         progressText.value = running.length ? '⚡ 生图中...' : '⏳ ' + (waiting[0]?.position ? `排队第 ${waiting[0].position} 位` : '排队中')
       }
     }
-    // 页面刷新后检测已完成/失败的任务（WS 重连场景）
+    // 页面刷新后检测已完成/失败的任务
     const doneItems = items.filter((i: any) => i.status === 'done' || i.status === 'failed')
     for (const item of doneItems) {
       if (!_notifiedTaskIds.has(item.id)) {
         _notifiedTaskIds.add(item.id)
-        if (!_finishing.value && !activeWS) {
+        if (!_finishing.value && noActiveWS) {
           const errMsg = item.error_message || ''
-          showToast(item.status === 'failed' ? '❌ ' + (errMsg || '生图失败') : '✅ 任务已完成，请到「我的」查看')
+          showToast(errMsg ? '❌ ' + errMsg : '✅ 任务已完成，请到「我的」查看')
+          sound.play(item.status === 'done' ? 'done' : 'error')
           finishRun()
         }
       }
