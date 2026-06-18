@@ -640,11 +640,17 @@ async function loadAnnouncement() {
 // ===== Textarea height sync (与原版一致) =====
 let _thTimer: ReturnType<typeof setTimeout> | null = null
 let _lastThSync = 0
+function _autoGrow(ta: HTMLTextAreaElement) {
+  ta.style.height = 'auto'
+  ta.style.height = ta.scrollHeight + 'px'
+}
 function initTextareaHeightSync() {
   if (!window.ResizeObserver) return
   ;['direct', 'negative_prompt', 'nl'].forEach(id => {
     const el = document.getElementById(id) as HTMLTextAreaElement | null
     if (!el) return
+    // 输入时自动撑高
+    el.addEventListener('input', () => _autoGrow(el))
     new ResizeObserver(() => {
       if (_thTimer) clearTimeout(_thTimer)
       _thTimer = setTimeout(() => {
@@ -657,10 +663,10 @@ function initTextareaHeightSync() {
           const now = Date.now()
           if (peer && h && h !== peer.style.height && now - _lastThSync > 300) {
             _lastThSync = now
-            peer.style.height = h
+            _autoGrow(peer)
           }
-          saved.direct = h
-          saved.negative_prompt = h
+          saved.direct = h || peer?.style.height || ''
+          saved.negative_prompt = h || peer?.style.height || ''
         }
         localStorage.setItem('taHeights', JSON.stringify(saved))
       }, 400)
