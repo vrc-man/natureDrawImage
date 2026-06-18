@@ -388,6 +388,7 @@ async function actuallyStartRun(g: {direct:string;nl:string;neg:string;w:number;
   ws.onopen = () => {
     const payload: any = {
       workflow_path: currentWorkflowPath.value,
+      mode: mode.value,
       direct_prompt: g.direct,
       nl_prompt: g.nl,
       negative_prompt: g.neg,

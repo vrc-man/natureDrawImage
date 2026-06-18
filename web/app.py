@@ -4898,6 +4898,7 @@ class RunRequest(BaseModel):
     image3_name: str = ""
     img2img_use_preset: bool = False  # 图生图是否强制注入预设分辨率
     prompt_mode: str = "tags"
+    mode: str = "txt2img"  # "txt2img" | "img2img"
 
     @field_validator("direct_prompt", "nl_prompt", "style_tags", "negative_prompt")
     @classmethod
@@ -5982,12 +5983,11 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
 
     # 校验工作流路径是否匹配当前模式目录
     if path and not inline:
-        _is_img2img = bool(req.image1_name)
+        _is_img2img = req.mode == "img2img"
         _allowed_dir = WF_DIR_IMG2IMG if _is_img2img else WF_DIR_TXT2IMG
-        # 标准化路径分隔符
-        _norm_path = path.replace("\\", "/")
+        _norm_path = path.replace("\\", "/").replace("workflows/", "", 1)
         _norm_dir = _allowed_dir.replace("\\", "/")
-        if _norm_dir and not _norm_path.startswith("workflows/" + _norm_dir) and not _norm_path.startswith(_norm_dir):
+        if _norm_dir and not _norm_path.startswith(_norm_dir):
             await emit(ws, {"type": "error", "message": f"当前模式仅允许使用「{_allowed_dir}」目录下的工作流"})
             return
 
