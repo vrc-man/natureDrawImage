@@ -107,7 +107,7 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
             <h3 class="text-lg font-bold text-gray-700">🎭 选择角色 & 画风</h3>
             <button @click="open = false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">✕</button>
           </div>
-          <div class="flex gap-4" style="min-height:200px">
+          <div class="flex gap-4 flex-1 overflow-y-auto min-h-0 px-5 py-3" style="min-height:200px">
             <!-- Characters -->
             <div class="char-picker-col">
               <h4 class="flex items-center gap-1.5 text-sm font-bold text-gray-700 mb-1.5">🎭 角色</h4>
