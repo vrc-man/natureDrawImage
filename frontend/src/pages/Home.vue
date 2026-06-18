@@ -280,6 +280,7 @@ async function loadResolutions() {
 // ===== Polling =====
 let _notifiedTaskIds = new Set<number>()
 let _hasRunningBefore = false
+let _doneNotified = false  // WS done/error 已通知过，防止 pollMyQueue 重复
 function startPolling() { pollTimer = setInterval(pollMyQueue, 1000) }
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
 
@@ -296,8 +297,8 @@ async function pollMyQueue() {
     if (running.length) _hasRunningBefore = true
     if (!items.length && noActiveWS) {
       _myQueueRunning.value = false
-      // 队列空+无WS → 任务已完成，弹通知（_watchingMode=WS断链，_hasRunningBefore=刷新）
-      if ((_watchingMode.value || _hasRunningBefore) && !_finishing.value) {
+      // 队列空+无WS → 任务已完成（_watchingMode=WS断链，_hasRunningBefore=刷新）
+      if ((_watchingMode.value || _hasRunningBefore) && !_finishing.value && !_doneNotified) {
         _watchingMode.value = false
         _hasRunningBefore = false
         showToast('✅ 任务已完成，请到「我的」查看')
@@ -312,7 +313,7 @@ async function pollMyQueue() {
     // WS 断开后轮询检测任务完成（队列中还有项时）
     if (_watchingMode.value) {
       if (!running.length && !waiting.length) {
-        if (!_finishing.value) {
+        if (!_finishing.value && !_doneNotified) {
           _watchingMode.value = false
           const failedItem = items.find((i: any) => i.status === 'failed')
           const errMsg = failedItem?.error_message || ''
@@ -330,7 +331,7 @@ async function pollMyQueue() {
     for (const item of doneItems) {
       if (!_notifiedTaskIds.has(item.id)) {
         _notifiedTaskIds.add(item.id)
-        if (!_finishing.value && noActiveWS) {
+        if (!_finishing.value && !_doneNotified && noActiveWS) {
           const errMsg = item.error_message || ''
           showToast(errMsg ? '❌ ' + errMsg : '✅ 任务已完成，请到「我的」查看')
           sound.play(item.status === 'done' ? 'done' : 'error')
@@ -420,6 +421,7 @@ function cancelGenNotice() {
 async function actuallyStartRun(g: {direct:string;nl:string;neg:string;w:number;h:number;style:string;char:string;}) {
   _watchingMode.value = false
   _finishing.value = false
+  _doneNotified = false
   _isGenerating.value = true
   progressPct.value = 0
   resultImages.value = []
@@ -506,6 +508,7 @@ function handleMsg(m: any) {
     sound.sendNotification('✅ 生图完成，请到「我的」查看')
     _pendingCooldown.value = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1
     flashGreen()
+    _doneNotified = true
     finishRun()
   }
   else if (m.type === 'error') {
@@ -520,6 +523,7 @@ function handleMsg(m: any) {
     const tc = document.getElementById('toast-container')
     if (tc) tc.appendChild(el)
     _pendingCooldown.value = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1
+    _doneNotified = true
     finishRun()
   }
 }
