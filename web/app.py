@@ -8646,15 +8646,20 @@ async def api_admin_deletion_log_clear(request: Request, payload: Dict[str, Any]
     return {"ok": True, "message": f"已清理 {removed} 条记录"}
 
 # ═══ SPA fallback ═══
+# 用 exception_handler 拦截 404，先查 dist 静态文件，再返回 index.html
 import os as _os
 _SPA_DIR = _os.path.join(_os.path.dirname(__file__), "static", "dist")
 _SPA_INDEX = _os.path.join(_SPA_DIR, "index.html")
 if _os.path.isfile(_SPA_INDEX):
-    @app.get("/{path:path}")
-    async def spa_fallback(path: str):
+    @app.exception_handler(HTTPException)
+    async def spa_404_handler(request: Request, exc: HTTPException):
+        if exc.status_code != 404:
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        path = request.url.path.lstrip("/")
+        # API/WS/静态路径继续返回 404
         if path.startswith(("api/", "ws/", "auth/", "static/", "output/")):
-            raise HTTPException(404)
-        # 先尝试在 dist 目录中找静态文件（js/css/图片等）
+            raise exc
+        # 尝试匹配 dist 目录中的静态文件
         _fp = _os.path.join(_SPA_DIR, path)
         if _os.path.isfile(_fp):
             return FileResponse(_fp)
