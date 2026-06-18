@@ -276,6 +276,7 @@ async function loadResolutions() {
 }
 
 // ===== Polling =====
+let _notifiedTaskIds = new Set<number>()
 function startPolling() { pollTimer = setInterval(pollMyQueue, 1000) }
 function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
 
@@ -294,6 +295,7 @@ async function pollMyQueue() {
       _myQueueRunning.value = !!running.length
     }
 
+    // WS 断开后轮询检测任务完成
     if (_watchingMode.value) {
       if (!running.length && !waiting.length) {
         if (!_finishing.value) {
@@ -305,6 +307,18 @@ async function pollMyQueue() {
         }
       } else {
         progressText.value = running.length ? '⚡ 生图中...' : '⏳ ' + (waiting[0]?.position ? `排队第 ${waiting[0].position} 位` : '排队中')
+      }
+    }
+    // 页面刷新后检测已完成/失败的任务（WS 重连场景）
+    const doneItems = items.filter((i: any) => i.status === 'done' || i.status === 'failed')
+    for (const item of doneItems) {
+      if (!_notifiedTaskIds.has(item.id)) {
+        _notifiedTaskIds.add(item.id)
+        if (!_finishing.value && !activeWS) {
+          const errMsg = item.error_message || ''
+          showToast(item.status === 'failed' ? '❌ ' + (errMsg || '生图失败') : '✅ 任务已完成，请到「我的」查看')
+          finishRun()
+        }
       }
     }
   } catch {}
