@@ -25,7 +25,7 @@ export const myQueue = () => api<{ items: QueueItem[]; total: number }>('GET', '
 
 // === Gallery ===
 export const loadGallery = (params?: { offset?: number; limit?: number }) =>
-  api<{ files: any[]; total: number }>('GET', '/api/output/list' + (params ? '?' + new URLSearchParams({ offset: String(params.offset || 0), limit: String(params.limit || 30) }) : ''))
+  api<{ items: any[]; total: number; output_dir?: string }>('GET', '/api/output/list' + (params ? '?' + new URLSearchParams({ offset: String(params.offset || 0), limit: String(params.limit || 30) }) : ''))
 
 export const loadFeatured = () => api<any[]>('GET', '/api/output/featured')
 

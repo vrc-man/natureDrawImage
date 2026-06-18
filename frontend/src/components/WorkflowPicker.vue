@@ -7,6 +7,7 @@ const emit = defineEmits<{ select: [path: string, name: string] }>()
 const props = defineProps<{ mode: 'txt2img' | 'img2img' }>()
 
 const open = ref(false)
+const selectedName = ref(localStorage.getItem('currentWorkflowName') || '')
 const workflows = ref<WorkflowItem[]>([])
 const search = ref('')
 const categories = ref<string[]>([])
@@ -45,6 +46,8 @@ onMounted(async () => {
 function toggle() { open.value = !open.value }
 function select(w: WorkflowItem) {
   localStorage.setItem('currentWorkflow', w.path)
+  selectedName.value = w.name || w.path
+  localStorage.setItem('currentWorkflowName', selectedName.value)
   emit('select', w.path, w.name || w.path)
   open.value = false
 }
@@ -58,6 +61,12 @@ function _highlight(text: string, q: string) {
 </script>
 
 <template>
+  <!-- Trigger -->
+  <div class="flex items-center gap-2 px-4 py-2.5 bg-white/75 backdrop-blur rounded-2xl border border-pink-100 shadow-sm cursor-pointer hover:bg-pink-50/50 transition-all select-none" @click="toggle">
+    <span class="text-xs text-gray-400 font-medium">📋</span>
+    <span class="flex-1 text-xs text-gray-600 truncate">{{ selectedName || '选择工作流' }}</span>
+    <span class="text-pink-300 text-xl leading-none">▾</span>
+  </div>
   <Teleport to="body">
     <div v-if="open" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8" @click.self="open = false">
       <div class="mx-4 w-full max-w-[calc(100vw-3rem)] bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]">

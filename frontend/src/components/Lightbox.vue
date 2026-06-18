@@ -60,14 +60,14 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
       <div id="lb-img-wrap" class="flex-1 flex items-center justify-center overflow-hidden p-2 min-h-0" @click.self="close">
         <img v-if="current()" :src="current()!.url" id="lb-img" class="max-w-full max-h-full w-auto h-auto object-contain select-auto" alt="" />
       </div>
-      <div id="lb-bar" class="text-white px-3 py-2 flex items-center gap-2 flex-wrap" style="background:rgba(15,23,42,.85);backdrop-filter:blur(12px)">
-        <span id="lb-title" class="text-xs mr-auto break-all">{{ current()?.title || '' }}</span>
-        <span v-if="current()?.time" class="text-xs text-white/30">{{ current()!.time }}</span>
+      <div id="lb-bar" class="text-white px-4 py-3 flex items-center gap-3 flex-wrap text-sm" style="background:rgba(15,23,42,.85);backdrop-filter:blur(12px)">
+        <span id="lb-title" class="text-sm mr-auto break-all">{{ current()?.title || '' }}</span>
+        <span v-if="current()?.time" class="text-xs text-white/40">{{ current()!.time }}</span>
         <span v-if="current()?.creator" class="text-xs text-amber-300">{{ current()!.creator }}</span>
-        <a v-if="current()?.filename" :href="'/api/output/file?filename=' + encodeURIComponent(current()!.filename || '') + '&type=output'" target="_blank" class="text-xs text-white/50 hover:text-white no-underline" title="下载原图">⬇️</a>
-        <button @click="doFork" class="text-xs text-pink-300 hover:text-pink-100 cursor-pointer border-0 bg-transparent" title="Fork 工作流">🍴</button>
-        <button @click="doCopyLink" class="text-xs text-white/50 hover:text-white cursor-pointer border-0 bg-transparent" title="复制链接">🔗</button>
-        <button @click="showReport=true" class="text-xs text-white/50 hover:text-red-400 cursor-pointer border-0 bg-transparent" title="举报">📮</button>
+        <a v-if="current()?.filename" :href="'/api/output/file-dl?path=' + encodeURIComponent(current()!.path || current()!.filename || '')" target="_blank" class="text-white/60 hover:text-white no-underline text-base" title="下载原图">⬇️</a>
+        <button @click="doFork" class="text-pink-300 hover:text-pink-100 cursor-pointer border-0 bg-transparent text-base" title="Fork 工作流">🍴</button>
+        <button @click="doCopyLink" class="text-white/50 hover:text-white cursor-pointer border-0 bg-transparent text-base" title="复制链接">🔗</button>
+        <button @click="showReport=true" class="text-white/50 hover:text-red-400 cursor-pointer border-0 bg-transparent text-base" title="举报">📮</button>
       </div>
     </div>
 
