@@ -5980,6 +5980,17 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
     if not path and not inline and req.image1_name:
         pass
 
+    # 校验工作流路径是否匹配当前模式目录
+    if path and not inline:
+        _is_img2img = bool(req.image1_name)
+        _allowed_dir = WF_DIR_IMG2IMG if _is_img2img else WF_DIR_TXT2IMG
+        # 标准化路径分隔符
+        _norm_path = path.replace("\\", "/")
+        _norm_dir = _allowed_dir.replace("\\", "/")
+        if _norm_dir and not _norm_path.startswith("workflows/" + _norm_dir) and not _norm_path.startswith(_norm_dir):
+            await emit(ws, {"type": "error", "message": f"当前模式仅允许使用「{_allowed_dir}」目录下的工作流"})
+            return
+
     if not path and not inline:
         await emit(ws, {"type": "error", "message": "未指定工作流（前端未传 workflow_path 或 inline_workflow）"})
         return
