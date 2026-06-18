@@ -8649,28 +8649,18 @@ async def api_admin_deletion_log_clear(request: Request, payload: Dict[str, Any]
     return {"ok": True, "message": f"已清理 {removed} 条记录"}
 
 # ═══ SPA fallback ═══
-import os as _os, json as _json
+import os as _os
 _SPA_DIR = _os.path.join(_os.path.dirname(__file__), "static", "dist")
 _SPA_INDEX = _os.path.join(_SPA_DIR, "index.html")
-# MIME 类型映射
-_MEDIA_MAP = {
-    ".js": "application/javascript", ".css": "text/css", ".html": "text/html",
-    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp",
-    ".avif": "image/avif", ".ico": "image/x-icon", ".json": "application/json",
-    ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf",
-    ".wasm": "application/wasm", ".map": "application/json",
-}
 if _os.path.isfile(_SPA_INDEX):
-    # SPA 资源文件（不走 /static 挂载点，避免 MIME 类型被覆盖）
-    @app.get("/spa-assets/{rest:path}")
-    async def serve_spa_assets(rest: str):
-        fp = _os.path.join(_SPA_DIR, rest).replace("\\", "/")
-        if not _os.path.isfile(fp):
-            raise HTTPException(404)
-        _, ext = _os.path.splitext(rest)
-        media = _MEDIA_MAP.get(ext.lower()) or "application/octet-stream"
-        return FileResponse(fp, media_type=media, headers={"Cache-Control": "public, max-age=31536000, immutable"})
+    # 为 StaticFiles 提前注册 MIME 类型（Windows 缺少 .js → application/javascript）
+    import mimetypes as _mt
+    _mt.add_type("application/javascript", ".js")
+    _mt.add_type("text/css", ".css")
+    # Vite base = /spa-assets/，所以 dist 下有两层 assets/
+    # 挂载 /static 目录的 dist 子目录
+    from fastapi.staticfiles import StaticFiles as _SM
+    app.mount("/spa-assets", _SM(directory=str(_SPA_DIR)), name="spa")
 
     # SPA 入口：所有非 API/WS/Auth/Output 路径返回 index.html
     @app.get("/{path:path}")
