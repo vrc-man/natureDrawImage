@@ -126,7 +126,6 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Requ
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
-import mimetypes; mimetypes.add_type("application/javascript", ".js"); mimetypes.add_type("text/css", ".css"); mimetypes.add_type("image/webp", ".webp"); mimetypes.add_type("image/avif", ".avif")
 from pydantic import BaseModel, field_validator
 
 # SQLite 数据层（替代 JSON 文件读写）
@@ -8647,24 +8646,33 @@ async def api_admin_deletion_log_clear(request: Request, payload: Dict[str, Any]
     return {"ok": True, "message": f"已清理 {removed} 条记录"}
 
 # ═══ SPA fallback ═══
-# 用 exception_handler 拦截 404，先查 dist 静态文件，再返回 index.html
-import os as _os
+import os as _os, json as _json
 _SPA_DIR = _os.path.join(_os.path.dirname(__file__), "static", "dist")
 _SPA_INDEX = _os.path.join(_SPA_DIR, "index.html")
+# MIME 类型映射
+_MEDIA_MAP = {
+    ".js": "application/javascript", ".css": "text/css", ".html": "text/html",
+    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+    ".gif": "image/gif", ".svg": "image/svg+xml", ".webp": "image/webp",
+    ".avif": "image/avif", ".ico": "image/x-icon", ".json": "application/json",
+    ".woff2": "font/woff2", ".woff": "font/woff", ".ttf": "font/ttf",
+    ".wasm": "application/wasm", ".map": "application/json",
+}
 if _os.path.isfile(_SPA_INDEX):
-    @app.exception_handler(HTTPException)
-    async def spa_404_handler(request: Request, exc: HTTPException):
-        if exc.status_code != 404:
-            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
-        path = request.url.path.lstrip("/")
-        # API/WS/静态路径继续返回 404
-        if path.startswith(("api/", "ws/", "auth/", "static/", "output/")):
-            raise exc
-        # 尝试匹配 dist 目录中的静态文件
-        _fp = _os.path.join(_SPA_DIR, path)
-        if _os.path.isfile(_fp):
-            return FileResponse(_fp)
-        # 否则返回 SPA 入口
+    @app.get("/static/dist/{rest:path}")
+    async def serve_dist(rest: str):
+        fp = _os.path.join(_SPA_DIR, rest).replace("\\", "/")
+        if not _os.path.isfile(fp):
+            raise HTTPException(404)
+        _, ext = _os.path.splitext(rest)
+        media = _MEDIA_MAP.get(ext.lower()) or "application/octet-stream"
+        headers = {"Cache-Control": "public, max-age=31536000, immutable"}
+        return FileResponse(fp, media_type=media, headers=headers)
+
+    @app.get("/{path:path}")
+    async def spa_fallback(path: str):
+        if path.startswith(("api/", "ws/", "auth/", "output/")):
+            raise HTTPException(404)
         resp = FileResponse(_SPA_INDEX, media_type="text/html")
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
