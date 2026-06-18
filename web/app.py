@@ -126,6 +126,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Requ
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
+import mimetypes; mimetypes.add_type("application/javascript", ".js"); mimetypes.add_type("text/css", ".css"); mimetypes.add_type("image/webp", ".webp"); mimetypes.add_type("image/avif", ".avif")
 from pydantic import BaseModel, field_validator
 
 # SQLite 数据层（替代 JSON 文件读写）
