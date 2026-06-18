@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { fetchGPU } from '@/api/endpoints'
 
 const gpuContent = ref('')
+const gpuTime = ref('')
 let timer: ReturnType<typeof setInterval> | null = null
 
 function gpuBar(value: number, max: number, color: string) {
@@ -14,6 +15,7 @@ async function poll() {
   try {
     const d = await fetchGPU()
     if (d && d.gpus && Array.isArray(d.gpus)) {
+      gpuTime.value = new Date().toLocaleTimeString()
       gpuContent.value = d.gpus.map((g: any, i: number) => {
         const utilPct = g['utilization.gpu'] ?? 0
         const memU = g['memory.used'] ?? 0, memT = g['memory.total'] ?? 1
@@ -52,7 +54,11 @@ onUnmounted(() => { if (timer) clearInterval(timer) })
 </script>
 
 <template>
-  <div class="bg-white/75 backdrop-blur rounded-2xl p-4 border border-pink-100">
+  <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 text-sm text-gray-600">
+    <div class="flex items-center justify-between mb-2">
+      <span class="font-semibold text-gray-700">🎮 GPU 状态</span>
+      <span class="text-xs text-gray-400">{{ gpuTime }}</span>
+    </div>
     <div class="text-xs text-gray-500 space-y-1" v-html="gpuContent"></div>
   </div>
 </template>
