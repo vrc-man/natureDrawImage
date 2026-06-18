@@ -646,7 +646,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <!-- ============ GENERATE ============ -->
         <div v-if="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
           <div class="max-w-5xl mx-auto space-y-4">
-            <!-- Access Key -->
+            <!-- Access Key (only for non-admin, no key, logged-in) -->
             <div v-if="!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn" class="text-center py-12">
               <p class="text-4xl mb-4">🔑</p>
               <p class="text-sm text-gray-500 mb-4">需要使用管理员分配的访问密钥才能使用生图服务</p>
@@ -656,8 +656,8 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
               <p v-if="accessKeySuccess" class="text-xs text-green-500 mt-2">{{ accessKeySuccess }}</p>
             </div>
 
-            <!-- Main generate area -->
-            <div v-else>
+            <!-- Main generate area (admins, or non-admin with key, or not logged in) -->
+            <div v-if="userStore.isAdmin || userStore.currentUser?.access_granted || !userStore.isLoggedIn">
               <!-- Fork badge -->
               <div v-if="forkedWorkflow" class="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-700 mb-2">
                 🍴 Fork: {{ forkedMeta?.display_path || '自定义工作流' }}
