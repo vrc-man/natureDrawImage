@@ -297,14 +297,14 @@ async function pollMyQueue() {
     if (running.length) _hasRunningBefore = true
     if (!items.length && noActiveWS) {
       _myQueueRunning.value = false
-      // 队列空+无WS → 恢复按钮（原版逻辑）
-      if (!_isGenerating.value) {
-        const btn = document.getElementById('btn-run') as HTMLButtonElement | null
-        if (btn && btn.disabled && !_finishing.value) {
-          btn.disabled = false
-          btn.textContent = '▶ 开始生成'
-        }
+      _isGenerating.value = false
+      // 队列空+无WS → 强制恢复按钮（原版逻辑，不依赖任何变量）
+      const btn = document.getElementById('btn-run') as HTMLButtonElement | null
+      if (btn && btn.disabled) {
+        btn.disabled = false
+        btn.textContent = '▶ 开始生成'
       }
+      if (_hasRunningBefore || _watchingMode.value) { _finishing.value = true }
       // 任务完成通知
       if ((_watchingMode.value || _hasRunningBefore) && !_finishing.value && !_doneNotified) {
         _watchingMode.value = false
@@ -321,6 +321,9 @@ async function pollMyQueue() {
     // WS 断开后轮询检测任务完成（队列中还有项时）
     if (_watchingMode.value) {
       if (!running.length && !waiting.length) {
+        _isGenerating.value = false
+        const btn = document.getElementById('btn-run') as HTMLButtonElement | null
+        if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
         if (!_finishing.value && !_doneNotified) {
           _watchingMode.value = false
           const failedItem = items.find((i: any) => i.status === 'failed')
@@ -336,6 +339,11 @@ async function pollMyQueue() {
     }
     // 页面刷新后检测已完成/失败的任务
     const doneItems = items.filter((i: any) => i.status === 'done' || i.status === 'failed')
+    if (doneItems.length) {
+      _isGenerating.value = false
+      const btn = document.getElementById('btn-run') as HTMLButtonElement | null
+      if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
+    }
     for (const item of doneItems) {
       if (!_notifiedTaskIds.has(item.id)) {
         _notifiedTaskIds.add(item.id)
