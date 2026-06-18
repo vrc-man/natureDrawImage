@@ -4054,9 +4054,9 @@ async def api_output_file(request: Request, path: str, full: int = 0):
         ext = p.suffix.lower().lstrip(".")
         media = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, f"image/{ext}")
         return FileResponse(str(p), media_type=media,
-            headers={"Cache-Control": "public, max-age=86400"})
+            headers={"Cache-Control": "public, max-age=2592000"})
     resp = _serve_image_maybe_webp(request, p, quality=82, max_side=1600)
-    resp.headers["Cache-Control"] = "public, max-age=86400"
+    resp.headers["Cache-Control"] = "public, max-age=2592000"
     return resp
 
 
