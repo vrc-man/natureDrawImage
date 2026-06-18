@@ -293,25 +293,17 @@ async function pollMyQueue() {
     const running = items.filter((i: any) => i.status === 'running')
     const hasMyTask = waiting.length || running.length
 
-    // 正在生图中不检查（避免 WS 还没连上、任务还没入队时被恢复逻辑打断）
-    if (_isGenerating.value) return
-
     const noActiveWS = !(activeWS && activeWS.readyState === WebSocket.OPEN)
-    if (running.length) _hasRunningBefore = true
+    if (running.length) { _hasRunningBefore = true; _isGenerating.value = true }
     if (!items.length && noActiveWS) {
       _myQueueRunning.value = false
-      // 队列空+无WS → 强制恢复按钮（原版逻辑）
-      const btn = document.getElementById('btn-run') as HTMLButtonElement | null
-      if (btn && btn.disabled) {
-        btn.disabled = false
-        btn.textContent = '▶ 开始生成'
-      }
-      // 任务完成通知（先检查再设 _finishing）
-      if ((_watchingMode.value || _hasRunningBefore) && !_doneNotified) {
-        _watchingMode.value = false
-        _hasRunningBefore = false
-        _finishing.value = true
+      // 队列空+无WS → 有运行时任务记录则恢复（原版逻辑）
+      if (_watchingMode.value || _hasRunningBefore) {
+        _isGenerating.value = false
+        const btn = document.getElementById('btn-run') as HTMLButtonElement | null
+        if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
         if (!_doneNotified) {
+          _doneNotified = true; _watchingMode.value = false; _hasRunningBefore = false; _finishing.value = true
           showToast('✅ 任务已完成，请到「我的」查看')
           sound.play('done')
           sound.sendNotification('✅ 生图完成，请到「我的」查看')
