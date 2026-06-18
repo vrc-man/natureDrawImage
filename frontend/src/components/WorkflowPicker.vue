@@ -1,0 +1,89 @@
+<script setup lang="ts">
+import { ref, onMounted, computed } from 'vue'
+import { loadWorkflows } from '@/api/endpoints'
+import type { WorkflowItem } from '@/api/types'
+
+const emit = defineEmits<{ select: [path: string, name: string] }>()
+const props = defineProps<{ mode: 'txt2img' | 'img2img' }>()
+
+const open = ref(false)
+const workflows = ref<WorkflowItem[]>([])
+const search = ref('')
+const categories = ref<string[]>([])
+const catExpanded = ref<Record<string, boolean>>({})
+
+const filtered = computed(() => {
+  if (!search.value) return workflows.value
+  const q = search.value.toLowerCase()
+  return workflows.value.filter(w => (w.name || w.path).toLowerCase().includes(q))
+})
+
+const grouped = computed(() => {
+  const map: Record<string, WorkflowItem[]> = {}
+  for (const w of filtered.value) {
+    const cat = w.category || '未分类'
+    if (!map[cat]) map[cat] = []
+    map[cat].push(w)
+  }
+  return map
+})
+
+onMounted(async () => {
+  try {
+    const d = await loadWorkflows(props.mode === 'img2img' ? 'img2img' : undefined)
+    const items = d.workflows || d.all || []
+    workflows.value = items
+    const cats = new Set<string>()
+    for (const w of workflows.value) {
+      if (w.category) cats.add(w.category)
+      if (!w.category) cats.add('未分类')
+    }
+    categories.value = Array.from(cats)
+  } catch {}
+})
+
+function toggle() { open.value = !open.value }
+function select(w: WorkflowItem) {
+  localStorage.setItem('currentWorkflow', w.path)
+  emit('select', w.path, w.name || w.path)
+  open.value = false
+}
+
+function _highlight(text: string, q: string) {
+  if (!q) return text
+  const idx = text.toLowerCase().indexOf(q.toLowerCase())
+  if (idx === -1) return text
+  return text.slice(0, idx) + '<mark class="bg-pink-200 rounded px-0.5">' + text.slice(idx, idx + q.length) + '</mark>' + text.slice(idx + q.length)
+}
+</script>
+
+<template>
+  <Teleport to="body">
+    <div v-if="open" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8" @click.self="open = false">
+      <div class="mx-4 w-full max-w-[calc(100vw-3rem)] bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]">
+        <div class="flex items-center justify-between p-5 pb-3 border-b border-pink-100 shrink-0">
+          <h3 class="text-lg font-bold text-gray-700">📋 选择工作流</h3>
+          <button @click="open = false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">✕</button>
+        </div>
+        <div class="px-5 pt-2 pb-1">
+          <input v-model="search" placeholder="搜索工作流..." class="w-full border border-pink-200 rounded-xl px-4 py-2 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 transition-all box-border" />
+        </div>
+        <div class="wf-scroll flex-1 p-5 pt-2 space-y-1">
+          <div v-for="(items, cat) in grouped" :key="cat">
+            <div class="wf-cat-title flex items-center gap-1 cursor-pointer select-none text-xs font-semibold text-gray-400 mt-3 mb-2" @click="catExpanded[cat] = !catExpanded[cat]">
+              <span>{{ catExpanded[cat] === false ? '▸' : '▾' }}</span>
+              {{ cat }}
+            </div>
+            <div v-show="catExpanded[cat] !== false" class="wf-grid flex flex-wrap gap-1.5">
+              <div v-for="w in items" :key="w.path" class="wf-card" :title="w.name || w.path" @click="select(w)">
+                <img v-if="w.thumb" :src="w.thumb" class="wf-thumb" />
+                <div v-else class="wf-thumb flex items-center justify-center text-gray-300 text-lg">📄</div>
+                <span class="wf-label" v-html="_highlight(w.name || w.path, search)"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+</template>

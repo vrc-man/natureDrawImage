@@ -3260,6 +3260,11 @@ function _onCheckboxChange() {
 
 @app.get("/")
 async def index(request: Request):
+    _spa = STATIC_DIR / "dist" / "index.html"
+    if _spa.is_file():
+        resp = FileResponse(str(_spa), media_type="text/html")
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        return resp
     if not getattr(request.state, "user", None):
         _html = _WELCOME_HTML.replace("__CONTACT_EMAIL__", CONTACT_EMAIL or "admin@example.com")
         resp = Response(content=_html, media_type="text/html")
@@ -5501,8 +5506,13 @@ async def _process_queue() -> None:
             pass
         except Exception as e:
             err_msg = f"{type(e).__name__}: {e}"
+            err_str = str(e)
             print(f"[ERROR] 生图任务异常: {err_msg}")
-            user_msg = "服务器与 ComfyUI 通信失败"
+            # 按异常类型区分用户消息
+            if "ComfyUI" in err_str or type(e).__name__ in ("ConnectError", "TimeoutError", "WebSocketException", "ClientConnectorError") or "连接" in err_str or "connect" in err_str.lower():
+                user_msg = "生图模块通信失败，请联系管理员"
+            else:
+                user_msg = f"生成失败: {err_str[:200]}"
             try:
                 await _save_gen_log(
                     next_item.get("github_id", ""), "",
@@ -5510,12 +5520,14 @@ async def _process_queue() -> None:
                     (next_item.get("params") or {}).get("workflow", ""),
                     0, "failed",
                     next_item.get("client_ip", "unknown"),
-                    error_reason=user_msg,
+                    error_reason=err_msg,
                 )
             except Exception:
                 pass
+            next_item["error_message"] = user_msg
+            next_item["status"] = "failed"
             try:
-                await emit(ws, {"type": "error", "message": "生成任务出错，请稍后重试"})
+                await emit(ws, {"type": "error", "message": user_msg, "error_message": user_msg})
             except Exception:
                 pass
             # 任务失败，回滚预扣的密钥次数
@@ -5523,34 +5535,33 @@ async def _process_queue() -> None:
             if ck and ws is not None:
                 await _rollback_key_reservation(id(ws), ck)
         finally:
+            _cancel_flag = None
+            _current_task_info = {}
+            _current_run_task = None
+            # 先删除队列项，再关 WS，避免 onclose → pollMyQueue 读到旧状态
+            async with _queue_lock:
+                if _shutting_down:
+                    next_item["status"] = "waiting"
+                    next_item["ws"] = None
+                elif next_item.get("status") != "failed":
+                    _task_queue[:] = [qi for qi in _task_queue if qi["id"] != next_item["id"]]
+                _save_queue_state()
+                await _broadcast_queue()
+            await _push_status(reset=True)
             if not headless:
                 try:
                     await asyncio.wait_for(ws.close(), timeout=5)
                 except (Exception, asyncio.TimeoutError):
                     pass
-            # 记录 headless 完成的任务，供用户重连时通知
+            # 记录 headless 完成的任务
             if headless:
                 gid = str(next_item.get("github_id", ""))
                 if gid:
                     async with _headless_lock:
                         _headless_completed[gid] = {"time": _time.time()}
-                        # 限制内存：最多保留 200 条
                         if len(_headless_completed) > 200:
                             oldest = min(_headless_completed, key=lambda k: _headless_completed[k]["time"])
                             del _headless_completed[oldest]
-            _cancel_flag = None
-            _current_task_info = {}
-            _current_run_task = None
-            async with _queue_lock:
-                if _shutting_down:
-                    # 优雅重启中：不删除队列项，重置为 waiting 以便恢复
-                    next_item["status"] = "waiting"
-                    next_item["ws"] = None
-                else:
-                    _task_queue[:] = [qi for qi in _task_queue if qi["id"] != next_item["id"]]
-                _save_queue_state()
-                await _broadcast_queue()
-            await _push_status(reset=True)
             # 清理密钥预扣跟踪（任务已完成，预扣已确认或已回滚）
             if not headless and ws is not None:
                 ck = next_item.get("claimed_key", "")
@@ -6003,28 +6014,45 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
 
     llm_negative = ""
     if req.nl_prompt:
-        await emit(ws, {"type": "log", "message": f"[2/4] LLM {'改写' if req.rewrite else '翻译'}中..."})
-        await emit(ws, {"type": "llm_start"})
-        await _push_status({"stage": "llm"})
+        try:
+            await emit(ws, {"type": "log", "message": f"[2/4] LLM {'改写' if req.rewrite else '翻译'}中..."})
+            await emit(ws, {"type": "llm_start"})
+            await _push_status({"stage": "llm"})
 
-        async def _on_chunk(piece: str):
-            await emit(ws, {"type": "llm_chunk", "delta": piece})
+            async def _on_chunk(piece: str):
+                await emit(ws, {"type": "llm_chunk", "delta": piece})
 
-        base = req.direct_prompt
-        if req.rewrite and base:
-            llm_positive, llm_negative = await translate_prompt(
-                req.nl_prompt, original_prompt=base, negative_prompt=req.negative_prompt, on_chunk=_on_chunk,
-                mode=req.prompt_mode,
-            )
-            sd_prompt = llm_positive
-        else:
-            llm_positive, llm_negative = await translate_prompt(
-                req.nl_prompt, negative_prompt=req.negative_prompt, on_chunk=_on_chunk,
-                mode=req.prompt_mode,
-            )
-            parts = [p for p in (req.direct_prompt, llm_positive) if p]
-            sd_prompt = sep.join(parts)
-        await emit(ws, {"type": "llm_done", "text": llm_positive, "negative": llm_negative})
+            base = req.direct_prompt
+            if req.rewrite and base:
+                llm_positive, llm_negative = await translate_prompt(
+                    req.nl_prompt, original_prompt=base, negative_prompt=req.negative_prompt, on_chunk=_on_chunk,
+                    mode=req.prompt_mode,
+                )
+                sd_prompt = llm_positive
+            else:
+                llm_positive, llm_negative = await translate_prompt(
+                    req.nl_prompt, negative_prompt=req.negative_prompt, on_chunk=_on_chunk,
+                    mode=req.prompt_mode,
+                )
+                parts = [p for p in (req.direct_prompt, llm_positive) if p]
+                sd_prompt = sep.join(parts)
+            await emit(ws, {"type": "llm_done", "text": llm_positive, "negative": llm_negative})
+        except Exception as e:
+            real_err = f"LLM {type(e).__name__}: {e}"
+            print(f"[ERROR] LLM 链接异常: {real_err}")
+            try:
+                await _save_gen_log(
+                    github_id, "",
+                    (req.direct_prompt or "")[:500],
+                    path or "",
+                    0, "failed",
+                    client_ip,
+                    error_reason=real_err,
+                )
+            except Exception:
+                pass
+            await emit(ws, {"type": "error", "message": "LLM API链接失败，请联系管理员"})
+            return
     else:
         sd_prompt = req.direct_prompt
         await emit(ws, {"type": "log", "message": "[2/4] 跳过 LLM"})
@@ -6425,6 +6453,11 @@ async def api_report(payload: Dict[str, Any], request: Request):
 async def admin_page(request: Request):
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
+    _spa = STATIC_DIR / "dist" / "index.html"
+    if _spa.is_file():
+        resp = FileResponse(str(_spa), media_type="text/html")
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        return resp
     return _serve_html(STATIC_DIR / "admin.html", nonce=getattr(request.state, "csp_nonce", ""))
 
 
@@ -6588,6 +6621,7 @@ async def api_my_queue(request: Request):
                 "status": qi["status"],
                 "created_at": qi.get("created_at", 0),
                 "position": pos if qi["status"] == "waiting" else None,
+                "error_message": qi.get("error_message", ""),
             })
     return {"items": items, "total": len(items)}
 
@@ -8610,6 +8644,18 @@ async def api_admin_deletion_log_clear(request: Request, payload: Dict[str, Any]
     # 3 再删库（与查询使用相同条件，避免不一致）
     removed = db.clear_deletion_logs(path=target_path, date_from=date_from, date_to=date_to)
     return {"ok": True, "message": f"已清理 {removed} 条记录"}
+
+# ═══ SPA fallback ═══
+import os as _os
+_SPA_INDEX = _os.path.join(_os.path.dirname(__file__), "static", "dist", "index.html")
+if _os.path.isfile(_SPA_INDEX):
+    @app.get("/{path:path}")
+    async def spa_fallback(path: str):
+        if path.startswith(("api/", "ws/", "auth/", "static/", "output/")):
+            raise HTTPException(404)
+        resp = FileResponse(_SPA_INDEX, media_type="text/html")
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        return resp
 
 # ═══ 邮箱认证模块 ═══
 from email_auth import init_email_auth

@@ -355,7 +355,7 @@
 </div>
 
 <!-- TOTP 两步验证 -->
-<div id="totp-modal" class="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm items-center justify-center p-4 hidden">
+<div id="totp-modal" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm items-center justify-center p-4 hidden">
   <div class="bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 max-w-sm w-full p-5">
     <h3 class="text-lg font-bold mb-3 text-pink-500">🔐 两步验证 (2FA)</h3>
     <div id="totp-setup-step">
@@ -1691,6 +1691,7 @@ function handleMsg(m) {
     $('progress-text').textContent = '排队中...';
     pollMyQueue();
     showToast('⏳ 任务已提交，排队中');
+    playSound('queued');
   }
   else if (m.type === 'queue_start') {
     $('queue-status').classList.add('hidden');
@@ -1740,6 +1741,14 @@ function handleMsg(m) {
     appendLog('❌ ' + m.message);
     playSound('error');
     $('progress-text').textContent = '失败: ' + m.message;
+    sendNotification('❌ ' + m.message);
+    // 错误 Toast 不自动消失，手动点击关闭
+    const el = document.createElement('div');
+    el.className = 'toast-el bg-white/95 backdrop-blur border border-red-200 rounded-2xl shadow-xl px-5 py-4 text-sm sm:text-base text-red-700 cursor-pointer select-none';
+    el.textContent = '❌ ' + m.message;
+    el.onclick = () => { el.style.animation = 'toastOut 0.25s ease-in'; setTimeout(() => el.remove(), 250); };
+    const tc = document.getElementById('toast-container');
+    if (tc) tc.appendChild(el);
     _pendingCooldownSec = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1;
     finishRun();
   }
@@ -1751,9 +1760,23 @@ function handleMsg(m) {
 let _lastDoneGenId = 0;  // Toast/通知去重
 let _doneNotifyEnabled = localStorage.getItem('doneNotify') !== 'false';
 let _soundNotifyEnabled = localStorage.getItem('soundNotify') === 'true';
-let _customSoundData = localStorage.getItem('customSoundData') || '';
-let _customSoundName = localStorage.getItem('customSoundName') || '';
 let _soundVolume = parseFloat(localStorage.getItem('soundVolume') || '0.7');
+function _loadCustomSound(type) {
+  return {
+    data: localStorage.getItem('customSound_' + type + '_data') || '',
+    name: localStorage.getItem('customSound_' + type + '_name') || '',
+  };
+}
+function _saveCustomSound(type, data, name) {
+  if (data) { localStorage.setItem('customSound_' + type + '_data', data); localStorage.setItem('customSound_' + type + '_name', name); }
+  else { localStorage.removeItem('customSound_' + type + '_data'); localStorage.removeItem('customSound_' + type + '_name'); }
+}
+// 迁移旧版单个自定义提示音 -> done
+if (!localStorage.getItem('customSound_done_data') && localStorage.getItem('customSoundData')) {
+  localStorage.setItem('customSound_done_data', localStorage.getItem('customSoundData'));
+  localStorage.setItem('customSound_done_name', localStorage.getItem('customSoundName') || '');
+  localStorage.removeItem('customSoundData'); localStorage.removeItem('customSoundName');
+}
 
 function showToast(text, duration) {
   if (!_doneNotifyEnabled) return;
@@ -1778,9 +1801,10 @@ async function playSound(type) {
     if (ctx.state === 'suspended') await ctx.resume();
     const now = ctx.currentTime;
     const vol = Math.max(0, Math.min(1, _soundVolume));
-    if (type === 'done' && _customSoundData) {
+    const cs = _loadCustomSound(type);
+    if (cs.data) {
       try {
-        const b64 = _customSoundData.split(',')[1];
+        const b64 = cs.data.split(',')[1];
         const bin = atob(b64);
         const buf = new Uint8Array(bin.length);
         for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
@@ -1800,7 +1824,8 @@ async function playSound(type) {
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(ctx.destination);
-    gain.gain.setValueAtTime(vol, now);
+    // 默认预设音提高增益，因为合成音比音频文件轻
+    gain.gain.setValueAtTime(Math.min(1, vol * 1.5), now);
     if (type === 'done') {
       osc.frequency.value = 880;
       osc.type = 'sine';
@@ -1813,6 +1838,13 @@ async function playSound(type) {
       osc.start(now + 0.05);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
       osc.stop(now + 0.45);
+    } else if (type === 'queued') {
+      osc.frequency.value = 660;
+      osc.type = 'sine';
+      osc.start(now + 0.05);
+      gain.gain.setValueAtTime(Math.min(1, vol * 1.5), now + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 1);
+      osc.stop(now + 1.05);
     }
   } catch(e) { console.warn('[sound]', e); }
 }
@@ -2349,16 +2381,27 @@ $('btn-clear-neg').addEventListener('click', () => { $('negative_prompt').value 
 $('btn-clear-nl').addEventListener('click', () => { $('nl').value = ''; saveFormState(); $('nl').focus(); });
 
 // ==================== 用户设置弹窗 ====================
+function _soundRowHtml(type, icon) {
+  const s = _loadCustomSound(type);
+  const nm = s.name ? _esc(s.name) : '未设置';
+  return '<div class="flex items-center justify-between text-xs text-gray-400"><span>' + icon + ' <span id="sound-name-' + type + '">' + nm + '</span></span><div class="flex gap-2 shrink-0">' +
+    '<button class="btn-sound-upload text-pink-500 hover:underline" data-type="' + type + '">选择音频</button>' +
+    '<button class="btn-sound-reset text-gray-400 hover:text-gray-600" data-type="' + type + '">重置</button></div></div>';
+}
 function _renderSettingsBody() {
   const d = _currentUser;
   if (!d) return;
   const body = $('settings-body');
   const avatarHtml = d.avatar_url ? '<img src="' + _esc(d.avatar_url) + '" class="w-10 h-10 rounded-full">' : '<span class="w-10 h-10 rounded-full bg-pink-100 flex items-center justify-center text-lg">' + _esc(d.login[0]) + '</span>';
   const loginBadge = d.is_email_user ? '<span class="text-xs bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">📧 邮箱登录</span>' : '<span class="text-xs bg-gray-800 text-white px-2 py-0.5 rounded-full">🐙 GitHub</span>';
-  body.innerHTML = '<div class="flex items-center gap-3 pb-3 border-b border-pink-100"><div class="shrink-0">' + avatarHtml + '</div><div class="min-w-0"><div class="font-bold text-gray-700">' + _esc(d.login) + '</div><div class="text-xs text-gray-400 truncate">' + (d.email ? _esc(d.email) : '') + '</div><div class="mt-1">' + loginBadge + '</div></div></div><div id="settings-key-info" class="text-sm bg-gray-50 rounded-xl px-4 py-3 text-gray-600">加载中...</div><div class="pt-1 space-y-1"><label class="flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 cursor-pointer select-none transition-all"><input type="checkbox" id="settings-done-notify" class="w-4 h-4 accent-pink-500 shrink-0" ' + (_doneNotifyEnabled ? 'checked' : '') + '><span class="text-sm text-gray-600">🔔 任务完成提醒</span></label><label class="flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 cursor-pointer select-none transition-all"><input type="checkbox" id="settings-sound" class="w-4 h-4 accent-pink-500 shrink-0" ' + (_soundNotifyEnabled ? 'checked' : '') + '><span class="text-sm text-gray-600">🔊 声音提示</span></label><div id="settings-sound-row" class="' + (_soundNotifyEnabled ? '' : 'hidden') + '"><div class="flex items-center justify-between px-3 py-2 text-xs text-gray-400"><span>自定义提示音：<span id="sound-file-name">' + (_customSoundName ? _esc(_customSoundName) : '未设置') + '</span></span><div class="flex gap-2 shrink-0"><button id="btn-sound-upload" class="text-pink-500 hover:underline">选择音频</button><button id="btn-sound-reset" class="text-gray-400 hover:text-gray-600">重置默认</button></div></div><div class="flex items-center gap-2 px-3 pb-2 text-xs text-gray-400"><span class="shrink-0">音量</span><input type="range" id="settings-volume" min="0" max="100" value="' + Math.round(_soundVolume * 100) + '" class="flex-1 accent-pink-500 h-1 cursor-pointer"><span id="sound-volume-label" class="shrink-0 w-8 text-right">' + Math.round(_soundVolume * 100) + '%</span></div></div>' + (d.is_email_user ? '<button id="settings-totp" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all">🔐 两步验证</button><button id="settings-changepwd" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all">🔑 更改密码</button>' : '') + '<button id="settings-logout" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-red-50 text-sm text-red-500 transition-all">🚪 退出登录</button></div>';
+  body.innerHTML = '<div class="flex items-center gap-3 pb-3 border-b border-pink-100"><div class="shrink-0">' + avatarHtml + '</div><div class="min-w-0"><div class="font-bold text-gray-700">' + _esc(d.login) + '</div><div class="text-xs text-gray-400 truncate">' + (d.email ? _esc(d.email) : '') + '</div><div class="mt-1">' + loginBadge + '</div></div></div><div id="settings-key-info" class="text-sm bg-gray-50 rounded-xl px-4 py-3 text-gray-600">加载中...</div><div class="pt-1 space-y-1"><label class="flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 cursor-pointer select-none transition-all"><input type="checkbox" id="settings-done-notify" class="w-4 h-4 accent-pink-500 shrink-0" ' + (_doneNotifyEnabled ? 'checked' : '') + '><span class="text-sm text-gray-600">🔔 任务完成提醒</span></label><label class="flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 cursor-pointer select-none transition-all"><input type="checkbox" id="settings-sound" class="w-4 h-4 accent-pink-500 shrink-0" ' + (_soundNotifyEnabled ? 'checked' : '') + '><span class="text-sm text-gray-600">🔊 声音提示</span></label><div id="settings-sound-row" class="' + (_soundNotifyEnabled ? '' : 'hidden') + '"><div class="flex items-center justify-between px-3 py-2 text-xs text-gray-400"><div class="space-y-1 pt-1 px-3">' +
+    _soundRowHtml('done', '✅') +
+    _soundRowHtml('error', '❌') +
+    _soundRowHtml('queued', '⏳') +
+'</div><div class="flex items-center gap-2 px-3 pb-2 text-xs text-gray-400"><span class="shrink-0">音量</span><input type="range" id="settings-volume" min="0" max="100" value="' + Math.round(_soundVolume * 100) + '" class="flex-1 accent-pink-500 h-1 cursor-pointer"><span id="sound-volume-label" class="shrink-0 w-8 text-right">' + Math.round(_soundVolume * 100) + '%</span></div></div></div>' + (d.is_email_user ? '<button id="settings-totp" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all">🔐 两步验证</button><button id="settings-changepwd" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all">🔑 更改密码</button>' : '') + '<button id="settings-logout" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-red-50 text-sm text-red-500 transition-all">🚪 退出登录</button></div>';
   $('settings-logout').onclick = async () => { await fetch('/auth/logout', {method:'POST', body: '{}', headers: {'Content-Type': 'application/json'}}); location.href = '/'; };
   const btnTotp = $('settings-totp');
-  if (btnTotp) btnTotp.onclick = () => { closeSettings(); showTotpModal(); };
+  if (btnTotp) btnTotp.onclick = showTotpSettings;
   const btnChgpwd = $('settings-changepwd');
   if (btnChgpwd) btnChgpwd.onclick = () => {
     body.innerHTML = '<div class="flex items-center gap-2 pb-3 border-b border-pink-100"><button id="settings-back" class="text-lg text-gray-400 hover:text-gray-600">&larr;</button><h3 class="text-base font-bold text-gray-700">🔑 更改密码</h3></div><div class="space-y-3 pt-2"><input id="cp-old" type="password" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all" placeholder="当前密码" autocomplete="current-password"><input id="cp-new" type="password" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all" placeholder="新密码（至少6位）" autocomplete="new-password"><input id="cp-confirm" type="password" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all" placeholder="确认新密码" autocomplete="new-password"><button id="cp-submit" class="w-full py-2.5 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl hover:from-pink-300 hover:to-rose-300 text-sm font-semibold transition-all">保存</button><span id="cp-status" class="text-xs block text-center min-h-[18px]"></span></div>';
@@ -2398,9 +2441,11 @@ function _renderSettingsBody() {
       if (_soundNotifyEnabled) playSound('done');
     };
   }
-  const btnUpload = $('btn-sound-upload');
-  if (btnUpload) {
-    btnUpload.onclick = () => {
+  // 自定义提示音（事件委托）
+  body.addEventListener('click', (e) => {
+    const uploadBtn = e.target.closest('.btn-sound-upload');
+    if (uploadBtn) {
+      const type = uploadBtn.dataset.type;
       const inp = document.createElement('input');
       inp.type = 'file';
       inp.accept = 'audio/*';
@@ -2408,31 +2453,25 @@ function _renderSettingsBody() {
         const f = inp.files[0];
         if (!f) return;
         const reader = new FileReader();
-        reader.onload = (e) => {
-          _customSoundData = e.target.result;
-          _customSoundName = f.name;
-          localStorage.setItem('customSoundData', _customSoundData);
-          localStorage.setItem('customSoundName', _customSoundName);
-          const fn = $('sound-file-name');
-          if (fn) fn.textContent = _customSoundName;
-          new Audio(_customSoundData).play().catch(() => {});
+        reader.onload = (ev) => {
+          _saveCustomSound(type, ev.target.result, f.name);
+          const el = $('sound-name-' + type);
+          if (el) el.textContent = f.name;
+          new Audio(ev.target.result).play().catch(() => {});
         };
         reader.readAsDataURL(f);
       };
       inp.click();
-    };
-  }
-  const btnReset = $('btn-sound-reset');
-  if (btnReset) {
-    btnReset.onclick = () => {
-      _customSoundData = '';
-      _customSoundName = '';
-      localStorage.removeItem('customSoundData');
-      localStorage.removeItem('customSoundName');
-      const fn = $('sound-file-name');
-      if (fn) fn.textContent = '未设置';
-    };
-  }
+      return;
+    }
+    const resetBtn = e.target.closest('.btn-sound-reset');
+    if (resetBtn) {
+      const type = resetBtn.dataset.type;
+      _saveCustomSound(type, '', '');
+      const el = $('sound-name-' + type);
+      if (el) el.textContent = '未设置';
+    }
+  });
   const volSlider = $('settings-volume');
   if (volSlider) {
     volSlider.oninput = () => {
@@ -2617,6 +2656,67 @@ async function showTotpModal() {
   modal.classList.add('flex');
 }
 
+async function showTotpSettings() {
+  const body = $('settings-body');
+  let enabled = false;
+  let secret = '';
+  try {
+    const r = await fetch('/api/auth/totp-status');
+    const d = await r.json();
+    enabled = d.totp_enabled;
+  } catch(e){console.error(e)}
+  let html = '<div class="flex items-center gap-2 pb-3 border-b border-pink-100"><button id="totp-settings-back" class="text-lg text-gray-400 hover:text-gray-600">&larr;</button><h3 class="text-base font-bold text-gray-700">🔐 两步验证 (2FA)</h3></div>';
+  if (enabled) {
+    html += '<div class="pt-3 space-y-3"><p class="text-sm text-green-600">✅ 两步验证已启用</p><p class="text-xs text-gray-500">每次登录时需要输入 6 位验证码。</p><button id="totp-settings-disable" class="w-full py-2.5 bg-red-100 text-red-500 rounded-xl hover:bg-red-200 text-sm font-medium transition-all">关闭 2FA</button></div>';
+  } else {
+    try {
+      const r = await fetch('/api/auth/totp-setup', {method:'POST'});
+      const d = await r.json();
+      if (d.enabled) {
+        html += '<div class="pt-3 space-y-3"><p class="text-sm text-green-600">✅ 两步验证已启用</p><button id="totp-settings-disable" class="w-full py-2.5 bg-red-100 text-red-500 rounded-xl hover:bg-red-200 text-sm font-medium transition-all">关闭 2FA</button></div>';
+        body.innerHTML = html;
+        _bindTotpSettings(secret);
+        return;
+      }
+      secret = d.secret;
+      const label = encodeURIComponent(_currentUser.email || _currentUser.login);
+      const uri = 'otpauth://totp/' + label + '?secret=' + secret + '&issuer=%E4%BA%8C%E6%AC%A1%E5%85%83%E7%BB%98%E6%A2%A6';
+      html += '<div id="totp-setup-settings"><p class="text-sm text-gray-600 pt-3 pb-2">请在 Google Authenticator / Microsoft Authenticator 等 App 中手动输入以下密钥：</p><div class="flex justify-center mb-3"><img src="/api/auth/totp-qrcode?t=' + Date.now() + '" alt="QR" class="rounded-xl border border-pink-100" style="width:180px;height:180px" /></div><p class="text-xs text-gray-400 mb-2">扫描二维码，或手动输入密钥：</p><div class="bg-gray-100 rounded-xl px-4 py-3 text-center font-mono text-sm tracking-widest text-gray-800 select-all mb-3">' + _esc(secret) + '</div><p class="text-xs text-center mb-2"><a href="' + _esc(uri) + '" class="text-pink-500 text-xs">📱 在手机上打开此链接添加账号</a></p><label class="text-sm text-gray-600">输入 App 中显示的 6 位验证码：</label><input id="totp-verify-settings" type="text" inputmode="numeric" maxlength="6" placeholder="000000" class="w-full border border-pink-200 rounded-xl px-4 py-3 text-sm mt-1 mb-3 text-center tracking-widest bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all" /><button id="totp-settings-enable" class="w-full py-2.5 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl hover:from-pink-300 hover:to-rose-300 text-sm font-semibold transition-all">验证并启用</button><span id="totp-status-settings" class="text-xs text-red-400 mt-2 block"></span></div>';
+    } catch(e) {
+      html += '<p class="text-sm text-red-400 pt-3">获取密钥失败: ' + _esc(e.message) + '</p>';
+    }
+  }
+  body.innerHTML = html;
+  _bindTotpSettings(secret);
+}
+
+function _bindTotpSettings(secret) {
+  const back = $('totp-settings-back');
+  if (back) back.onclick = _renderSettingsBody;
+  const enableBtn = $('totp-settings-enable');
+  if (enableBtn) {
+    enableBtn.onclick = async () => {
+      const code = $('totp-verify-settings').value.trim();
+      if (code.length !== 6) { $('totp-status-settings').textContent = '请输入6位验证码'; return; }
+      $('totp-status-settings').textContent = '';
+      try {
+        const r = await fetch('/api/auth/totp-enable', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({code})});
+        if (!r.ok) { const e = await r.json(); throw new Error(e.detail); }
+        showTotpSettings();
+      } catch(e) { $('totp-status-settings').textContent = '验证失败: ' + e.message; }
+    };
+  }
+  const disableBtn = $('totp-settings-disable');
+  if (disableBtn) {
+    disableBtn.onclick = async () => {
+      try {
+        await fetch('/api/auth/totp-disable', {method:'POST'});
+        showTotpSettings();
+      } catch(e){console.error(e)}
+    };
+  }
+}
+
 function hideTotpModal() {
   const modal = $('totp-modal');
   modal.classList.add('hidden');
@@ -2687,7 +2787,8 @@ async function pollMyQueue() {
       list.innerHTML = items.map(i => {
         const st = { waiting: '⏳ 等待', running: '⚡ 生成中', done: '✅ 完成', failed: '❌ 失败', cancelled: '✕ 取消' }[i.status] || _esc(i.status || '');
         const pos = i.position ? ` (#${_esc(String(i.position))})` : '';
-        return `<div class="flex justify-between text-gray-500"><span>任务 #${_esc(String(i.id))}${pos}</span><span>${st}</span></div>`;
+        const err = i.status === 'failed' && i.error_message ? ` <span class="text-red-400 text-[10px]">${_esc(i.error_message)}</span>` : '';
+        return `<div class="flex justify-between text-gray-500"><span>任务 #${_esc(String(i.id))}${pos}</span><span>${st}${err}</span></div>`;
       }).join('');
     }
     // 断线轮询：WS 断链后检测任务完成
@@ -2695,7 +2796,9 @@ async function pollMyQueue() {
       if (!running.length && !waiting.length) {
         if (!_finishing) {
           _watchingMode = false;
-          showToast('✅ 任务已完成，请到「我的」查看');
+          const failedItem = items.find(i => i.status === 'failed');
+          const errMsg = failedItem && failedItem.error_message ? failedItem.error_message : '';
+          showToast(errMsg ? '❌ ' + errMsg : '✅ 任务已完成，请到「我的」查看');
           finishRun();
         }
       } else {

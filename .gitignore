@@ -77,3 +77,9 @@ tools/
 
 # ── 未使用的 CDN 资源 ──
 web/static/tailwind.min.css
+
+# ── Vue 前端构建产物 ──
+web/static/dist/
+frontend/dist/
+frontend/src/**/*.tsbuildinfo
+frontend/*.tsbuildinfo
