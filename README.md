@@ -127,19 +127,42 @@
 ## 前置要求
 
 - Python 3.10+
+- Node.js 18+（前端构建）
 - ComfyUI 已安装并正常运行
 - NVIDIA GPU（用于 nvidia-smi 状态显示）
 - LLM 服务（可选）：LM Studio / Google AI Studio / 任意 OpenAI 兼容 API
 
 ## 部署步骤
 
-### 1. 安装依赖
+### 1. 安装后端依赖
 
 ```bash
+# 创建虚拟环境（推荐）
+python -m venv .venv
+.venv\Scripts\activate
+
+# 安装依赖
 pip install fastapi uvicorn[standard] httpx websockets pydantic pillow
 ```
 
-### 2. 配置 .env
+或使用 `requirements.txt`（如存在）。
+
+### 2. 安装前端依赖
+
+```bash
+cd frontend
+npm install
+```
+
+### 3. 构建前端
+
+```bash
+cd frontend
+npm run build
+# 输出到 web/static/dist/
+```
+
+### 4. 配置 .env
 
 将 `.env.example` 复制为 `.env`，编辑以下内容：
 
@@ -155,13 +178,29 @@ SMTP_USER=你的邮箱
 SMTP_PASS=邮箱授权码
 ```
 
-### 3. 启动
+### 5. 启动
 
 ```bash
+# 方式一：双击 start.bat（自动重启）
+start.bat
+
+# 方式二：手动启动
 .venv\Scripts\python.exe -m uvicorn web.app:app --host 127.0.0.1 --port 8080
+
+# 方式三：开发模式（热重载）
+.venv\Scripts\python.exe -m uvicorn web.app:app --host 127.0.0.1 --port 8080 --reload
 ```
 
-或双击 `start.bat`（自动重启）。打开 http://127.0.0.1:8080。
+打开 http://127.0.0.1:8080。管理后台：http://127.0.0.1:8080/admin
+
+### 6. 前端开发（修改 Vue 后）
+
+```bash
+cd frontend
+npm run build          # 构建
+# 输出到 web/static/dist/
+# 刷新浏览器即可，无需重启 Python 后端
+```
 
 ### 4. 反向代理鉴权（生产必须）
 
@@ -197,27 +236,49 @@ location / {
 ## 目录结构
 
 ```
-web/
-├── app.py                   主程序
-├── email_auth.py            邮箱认证模块
+web/                          # Python 后端
+├── app.py                   主程序（~8900 行）
+├── email_auth.py            邮箱认证模块（含管理 API）
 ├── db/
 │   ├── __init__.py           模块入口
 │   ├── schema.py             数据库表结构
 │   └── operations.py         数据操作层
 ├── static/
-│   ├── index.html            用户前端
-│   ├── admin.html            管理控制台
+│   ├── index.html            用户前端（Vue SPA）
+│   ├── admin.html            前代管理后台（参考用）
 │   ├── email-login.html      邮箱登录页
 │   ├── privacy.html          隐私政策
 │   ├── maintenance.html      维护模式页面
-│   ├── favicon.avif          站点图标
-│   └── chiz.webp             站点头像
+│   ├── dist/                 Vue 构建输出（自动生成）
+│   └── ...
 ├── thumbnails/               工作流缩略图（运行时）
 ├── style_thumbnails/         画风缩略图（运行时）
-├── lora_links/               Lora 链接（运行时）
-├── uploads/                  图生图上传（运行时）
 ├── deletion_thumbs/          删除缩略图（运行时）
 └── db/natureDrawImage.db     SQLite 数据库（运行时）
+
+frontend/                     # Vue 3 前端
+├── src/
+│   ├── pages/
+│   │   ├── Admin.vue         管理后台（手风琴式，21 个子组件）
+│   │   ├── Home.vue          用户首页（5 Tab 页）
+│   │   └── ...
+│   ├── components/
+│   │   ├── admin/            21 个管理板块组件
+│   │   │   ├── useAdminApi.ts     共享 API 工具
+│   │   │   ├── AdminLightbox.vue  灯箱
+│   │   │   ├── QueueSection.vue   队列管理
+│   │   │   ├── AnnSection.vue     公告管理
+│   │   │   └── ...                （每板块独立组件）
+│   │   ├── MyWorksGrid.vue   我的作品（多选删除）
+│   │   └── ...
+│   └── api/
+│       ├── endpoints.ts       API 封装
+│       └── types.ts           类型定义
+├── package.json
+└── vite.config.ts
+
+documentation/
+└── Project-documentation.md  项目文档
 ```
 
 ## API
@@ -246,24 +307,60 @@ web/
 | `WS /ws/run` | 提交生图 + 接收进度 |
 | `WS /ws/status` | 订阅全局任务状态 |
 
-### 管理（需管理员权限）
+### 管理（需管理员权限，Vue SPA 管理后台）
+
+管理后台已重构为 Vue 3 SPA，21 个功能板块独立组件，手风琴式导航。访问 `/admin` 即可。
 
 | 路径 | 说明 |
 |---|---|
-| `GET /admin` | 管理面板 |
+| `GET /admin` | 管理面板（Vue SPA） |
 | `GET/POST /api/admin/limits` | 限流配置 |
-| `GET/POST /api/admin/styles` | 画风管理 |
+| `GET/POST /api/admin/styles` | 画风管理（含缩略图上传） |
+| `GET/POST /api/admin/characters` | 角色管理 |
 | `GET/POST /api/admin/resolutions` | 分辨率预设 |
 | `GET/POST /api/admin/workflow_meta` | 工作流缩略图 & Lora 链接 |
+| `GET/POST /api/admin/workflow_files` | 工作流文件列表 |
+| `POST /api/admin/workflow_rename` | 工作流重命名 |
 | `GET/POST /api/admin/llm` | LLM 配置 |
+| `POST /api/admin/llm/test` | 测试 LLM 连接 |
+| `POST /api/admin/llm/models` | 探测 LLM 模型 |
 | `GET/POST /api/admin/announcement` | 公告管理 |
+| `GET/POST /api/admin/maintenance` | 维护模式 |
+| `GET/POST /api/admin/custom_head` | 自定义 Head 注入 |
 | `POST /api/admin/ban` / `unban` | 加/解封 IP |
-| `POST /api/admin/delete` / `delete_batch` | 删图 |
+| `GET/POST /api/admin/ip-whitelist` | IP 白名单 |
+| `POST /api/admin/delete` | 单图删除 |
+| `POST /api/admin/delete_batch` | 批量删除 |
+| `POST /api/admin/mark_delete_batch` | 批量标记删除（GC 处理） |
+| `POST /api/admin/images/delete-by-query` | 按条件筛选删除（日期/创建者） |
 | `POST /api/admin/featured/*` | 精选维护 |
 | `POST /api/admin/report/resolve` | 处理举报 |
 | `GET/DELETE /api/admin/gen-logs` | 生图日志 |
-| `GET /api/admin/deletion-log` | 删除记录回收站 |
+| `GET/POST /api/admin/deletion-log` | 删除记录回收站 |
 | `POST /api/admin/gc` | 手动 GC |
+| `GET /api/admin/gc/stats` | GC 统计 |
+| `GET /api/admin/gc/status` | GC 状态轮询 |
+| `GET/POST /api/admin/access-keys` | 访问密钥管理 |
+| `GET/POST /api/admin/email-dashboard` | 邮箱管理仪表盘 |
+| `GET /api/admin/email-users` | 邮箱用户列表（分页） |
+| `GET /api/admin/email-logs` | 发信日志 |
+| `POST /api/admin/email-log/clear` | 清空发信日志 |
+| `GET/POST /api/admin/email-config` | 邮箱注册限流配置 |
+| `GET/POST /api/admin/rate-limits` | 速率限制 |
+| `GET/POST /api/admin/invite-codes/*` | 邀请码管理 |
+| `GET /api/admin/email-abuse-ips` | 恶意 IP 列表 |
+| `POST /api/admin/email-abuse-ips/clear` | 清空恶意 IP |
+| `POST /api/admin/email-users/resend-verify` | 重发验证邮件 |
+| `POST /api/admin/email-users/reset-totp` | 重置 2FA |
+| `POST /api/admin/email-users/reset-password` | 重置密码 |
+| `POST /api/admin/email-users/send-custom-email` | 发送自定义邮件 |
+| `GET /api/admin/users` | 用户列表 |
+| `POST /api/admin/users/ban` / `unban` | 封禁/解封用户 |
+| `DELETE /api/admin/gen-logs` | 清空生图日志（可带筛选） |
+| `POST /api/admin/gen-logs/delete` | 批量删除生图日志 |
+| `POST /api/admin/force-restart` | 强制重启服务 |
+| `POST /api/admin/graceful-restart` | 优雅重启 |
+| `POST /api/admin/scan-thumbnails` | 扫描缩略图 |
 | `POST /api/admin/auth-elevate` | 管理员提权 |
 
 ### 邮箱认证
@@ -275,9 +372,18 @@ web/
 | `POST /api/auth/forgot-password` | 忘记密码 |
 | `POST /api/auth/reset-password` | 提交新密码 |
 | `GET /api/auth/verify-email` | 邮箱验证 |
+| `POST /api/auth/change-password` | 修改密码 |
 | `GET/POST /api/auth/totp-*` | TOTP 双因素认证 |
-| `GET/POST /api/admin/invite-codes/*` | 邀请码管理 |
-| `GET/POST /api/admin/email-*` | 邮箱用户/日志/限流管理 |
+
+### 用户端图片管理
+
+| 路径 | 说明 |
+|---|---|
+| `GET /api/my-images` | 我的作品列表 |
+| `DELETE /api/my-images` | 单图标记删除 |
+| `POST /api/my-images/delete-batch` | 批量标记删除 |
+| `POST /api/my-images/delete-all` | 全部标记删除 |
+| `GET /api/my-queue` | 我的队列 |
 
 ## 安全
 
