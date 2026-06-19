@@ -184,7 +184,7 @@ _gen_log_lock = asyncio.Lock()
 # 跟踪已预扣密钥次数的 WS 连接，用于断开/失败时回滚。key: id(ws)
 _key_usage_reserved_ws: Dict[int, str] = {}
 # 生图日志 {log_id: {github_id, login, prompt, workflow, count, status, client_ip, created_at}}
-# gen_log → SQLite  # 最多保留 100000 条日志
+# gen_log → SQLite  # 最多保留 500000 条日志（50 万，db/operations.py _GEN_LOG_MAX）
 
 def _load_gen_logs() -> Dict[str, Any]:
     return db.load_gen_logs()
@@ -1672,7 +1672,6 @@ async def _run_gc():
     # 4. 重试清理标记删除但残留的文件（首次删除失败 / 服务重启丢失后台任务）
     deleted = _load_deleted_images()
     gc_deleted = 0
-    del_set: set = set()  # 成功删除的路径，用于同步清理 gen_log
     still_failed: Dict[str, List[str]] = {}
     for github_id, paths in deleted.items():
         for rel_path in paths:
@@ -1691,8 +1690,6 @@ async def _run_gc():
             except Exception as e:
                 print(f"[GC] 补删失败: {rel_path} — {e}")
             if ok:
-                del_set.add(rel_path.replace("\\", "/"))
-                # 清理 creator 映射
                 async with _creator_map_lock:
                     db.remove_creator_ip(rel_path)
             else:
@@ -6810,7 +6807,89 @@ async def api_delete_my_image(request: Request, payload: DeleteImagePayload):
     # 文件由 GC / 启动清理统一处理，此处仅标记
     return {"ok": True}
 
+class DeleteImagesPayload(BaseModel):
+    paths: List[str]
 
+@app.post("/api/my-images/delete-batch")
+async def api_delete_my_images_batch(request: Request, payload: DeleteImagesPayload):
+    """批量标记删除用户自己生成的图片，文件由 GC 统一清理。"""
+    user = _get_user_from_session(request)
+    if not user:
+        raise HTTPException(401, "请先登录")
+    github_id = str(user.get("github_id", ""))
+    creator_login = user.get("login", github_id)
+    paths = payload.paths or []
+    if not paths:
+        return {"ok": True, "deleted": 0}
+    valid = []
+    for rel in paths:
+        rel = str(rel).strip()
+        if rel and _validate_rel_path(rel):
+            valid.append(rel.replace("\\", "/"))
+    if not valid:
+        return {"ok": True, "deleted": 0}
+    async with _user_images_lock:
+        data = _load_user_images()
+        owned = {i.get("path", "") for i in data.get(github_id, [])}
+        allowed = [p for p in valid if p in owned]
+        if not allowed:
+            return {"ok": True, "deleted": 0}
+        for p in allowed:
+            db.remove_user_image(github_id, p)
+    for p in allowed:
+        try:
+            db.add_deleted_image(github_id, p)
+            db.remove_creator_ip(p)
+            db.dismiss_reports_for_image(p)
+            await _record_deletion(p, github_id, creator_login,
+                                  creator_gid=github_id, creator_login=creator_login)
+        except Exception:
+            pass
+    # 清理精选
+    feats = _read_featured()
+    changed = False
+    for p in allowed:
+        if p in feats:
+            feats = [x for x in feats if x != p]
+            changed = True
+    if changed:
+        await _write_featured(feats)
+    return {"ok": True, "deleted": len(allowed)}
+
+@app.post("/api/my-images/delete-all")
+async def api_delete_my_images_all(request: Request):
+    """标记删除当前用户所有已生成的图片，文件由 GC 统一清理。"""
+    user = _get_user_from_session(request)
+    if not user:
+        raise HTTPException(401, "请先登录")
+    github_id = str(user.get("github_id", ""))
+    creator_login = user.get("login", github_id)
+    async with _user_images_lock:
+        data = _load_user_images()
+        paths = [i.get("path", "") for i in data.get(github_id, []) if i.get("path")]
+        if not paths:
+            return {"ok": True, "deleted": 0}
+        for p in paths:
+            db.remove_user_image(github_id, p)
+    for p in paths:
+        try:
+            db.add_deleted_image(github_id, p)
+            db.remove_creator_ip(p)
+            db.dismiss_reports_for_image(p)
+            await _record_deletion(p, github_id, creator_login,
+                                  creator_gid=github_id, creator_login=creator_login)
+        except Exception:
+            pass
+    # 清理精选
+    feats = _read_featured()
+    changed = False
+    for p in paths:
+        if p in feats:
+            feats = [x for x in feats if x != p]
+            changed = True
+    if changed:
+        await _write_featured(feats)
+    return {"ok": True, "deleted": len(paths)}
 
 # ---------------- 用户管理 (admin only) ----------------
 
@@ -7177,7 +7256,8 @@ async def api_admin_delete(request: Request, payload: Dict[str, Any]):
     # 自动忽略该图所有待处理举报
     await _auto_dismiss_reports_for_image(rel)
     # 同步清理 user_images
-    db.remove_user_image_by_path(rel)
+    async with _user_images_lock:
+        db.remove_user_image_by_path(rel)
     return {"ok": True}
 
 
@@ -7248,7 +7328,8 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
         if changed:
             await _write_featured(feats)
         db.dismiss_reports_for_image_paths(del_set)
-        db.remove_user_images_by_paths(del_set)
+        async with _user_images_lock:
+            db.remove_user_images_by_paths(del_set)
     return {"ok": True, "deleted": len(deleted), "failed": len(failed)}
 
 
@@ -7350,10 +7431,12 @@ async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any])
         except Exception:
             pass
     # 1. 添加到 deleted_images
-    for p in valid:
-        db.add_deleted_image("__admin__", p)
+    async with _deleted_images_lock:
+        for p in valid:
+            db.add_deleted_image("__admin__", p)
     # 2. 清理 user_images
-    db.remove_user_images_by_paths(del_set)
+    async with _user_images_lock:
+        db.remove_user_images_by_paths(del_set)
     # 3. 清理 creator 映射
     for p in del_set:
         db.remove_creator_ip(p)
@@ -7369,6 +7452,97 @@ async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any])
     # 5. 自动 dismiss 待处理举报
     db.dismiss_reports_for_image_paths(del_set)
     return {"ok": True, "marked": len(valid)}
+
+class DeleteByQueryPayload(BaseModel):
+    date_from: Optional[float] = None
+    date_to: Optional[float] = None
+    creator: Optional[str] = None
+
+@app.post("/api/admin/images/delete-by-query")
+async def api_admin_images_delete_by_query(request: Request, payload: DeleteByQueryPayload):
+    """按条件查询图片并批量标记删除。支持 date_from/date_to(epoch秒)/creator(login或IP)。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    date_from = payload.date_from
+    date_to = payload.date_to
+    creator = (payload.creator or "").strip().lower()
+    # 扫描 output 目录
+    if not OUTPUT_DIR.exists():
+        return {"ok": True, "marked": 0}
+    base = OUTPUT_DIR.resolve()
+    # 预加载用户映射
+    _users_cache = _load_users()
+    matched = []
+    for p in OUTPUT_DIR.rglob("*"):
+        if not p.is_file() or p.suffix.lower() not in OUTPUT_IMAGE_EXTS:
+            continue
+        try:
+            rel = p.resolve().relative_to(base).as_posix()
+        except Exception:
+            continue
+        if not _validate_rel_path(rel):
+            continue
+        try:
+            mt = p.stat().st_mtime
+        except Exception:
+            continue
+        # 日期过滤
+        if date_from is not None and mt < date_from:
+            continue
+        if date_to is not None and mt > date_to:
+            continue
+        # 创建者过滤
+        if creator:
+            ip = _creator_map_get(rel) or ""
+            if creator in ip.lower():
+                matched.append(rel)
+                continue
+            gid, login_from_log = _gen_logs_lookup(rel)
+            u = _users_cache.get(gid, {}) if gid else {}
+            login = (u.get("login", "") or login_from_log or "").lower()
+            if creator in login:
+                matched.append(rel)
+                continue
+            # 直接查 email
+            email = (u.get("email", "") or "").lower()
+            if creator in email:
+                matched.append(rel)
+                continue
+        else:
+            matched.append(rel)
+    if not matched:
+        return {"ok": True, "marked": 0}
+    # 过滤已标记删除的
+    deleted_paths: set[str] = set()
+    for paths in _load_deleted_images().values():
+        for dp in paths:
+            deleted_paths.add(dp.replace("\\", "/"))
+    matched = [m for m in matched if m not in deleted_paths]
+    if not matched:
+        return {"ok": True, "marked": 0}
+    # 批量标记删除
+    for p in matched:
+        try:
+            await _record_deletion(p, "__admin__", "admin")
+        except Exception:
+            pass
+    async with _deleted_images_lock:
+        for p in matched:
+            db.add_deleted_image("__admin__", p)
+    async with _user_images_lock:
+        db.remove_user_images_by_paths(set(matched))
+    for p in matched:
+        db.remove_creator_ip(p)
+    feats = _read_featured()
+    changed = False
+    for p in matched:
+        if p in feats:
+            feats = [x for x in feats if x != p]
+            changed = True
+    if changed:
+        await _write_featured(feats)
+    db.dismiss_reports_for_image_paths(set(matched))
+    return {"ok": True, "marked": len(matched)}
 
 
 @app.get("/api/admin/featured")
@@ -8303,7 +8477,8 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
         if image_path in feats:
             feats = [x for x in feats if x != image_path]
             await _write_featured(feats)
-        db.remove_user_image_by_path(key)
+        async with _user_images_lock:
+            db.remove_user_image_by_path(key)
         db.dismiss_reports_for_image(image_path)
     elif action == "ban_creator":
         creator_ip = _creator_map_get(image_path)
@@ -8702,6 +8877,10 @@ if _os.path.isfile(_SPA_INDEX):
         cc = "no-cache"
         return FileResponse(fp, media_type=media, headers={"Cache-Control": cc})
 
+    # ═══ 邮箱认证模块（必须在 SPA 兜底之前注册 ═══
+    from email_auth import init_email_auth
+    init_email_auth()
+
     # SPA 入口：所有非 API/WS/Auth/Output 路径返回 index.html
     @app.get("/{path:path}")
     async def spa_fallback(path: str):
@@ -8710,8 +8889,4 @@ if _os.path.isfile(_SPA_INDEX):
         resp = FileResponse(_SPA_INDEX, media_type="text/html")
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
-
-# ═══ 邮箱认证模块 ═══
-from email_auth import init_email_auth
-init_email_auth()
 

@@ -35,6 +35,12 @@ export const loadMyImages = (params?: { offset?: number; limit?: number }) =>
 export const deleteMyImage = (path: string) =>
   api('DELETE', '/api/my-images', { path })
 
+export const deleteMyImages = (paths: string[]) =>
+  api('POST', '/api/my-images/delete-batch', { paths })
+
+export const deleteAllMyImages = () =>
+  api('POST', '/api/my-images/delete-all')
+
 // === Notifications ===
 export const fetchNotifications = () => api<NotificationResponse>('GET', '/api/notifications')
 export const markNotificationsRead = () => api('POST', '/api/whoami/read-notifications')
