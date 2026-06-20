@@ -4713,12 +4713,7 @@ async def api_admin_auth_elevate(request: Request, payload: Dict[str, Any]):
         raise HTTPException(403, "提权密码错误")
     token = request.cookies.get("session") or ""
     if token:
-        async with _sessions_lock:
-            sessions = _load_sessions()
-            sess = sessions.get(_session_hash(token))
-            if sess:
-                sess["_elevated_at"] = _time_module.time()
-                await _save_sessions(sessions)
+        db.state_set(_admin_elevation_state_key(token), _time_module.time())
     return {"ok": True, "message": f"提权成功，有效期 {_ADMIN_ELEVATION_TTL // 60} 分钟"}
 
 
@@ -4733,9 +4728,7 @@ async def api_admin_auth_elevate_status(request: Request):
     remaining = 0
     if elevated:
         token = request.cookies.get("session") or ""
-        sessions = _load_sessions()
-        sess = sessions.get(_session_hash(token), {})
-        et = sess.get("_elevated_at", 0)
+        et = float(db.state_get(_admin_elevation_state_key(token), 0) or 0)
         remaining = max(0, int(_ADMIN_ELEVATION_TTL - (_time_module.time() - et)))
     return {"required": True, "elevated": elevated, "remaining_sec": remaining}
 
@@ -5199,6 +5192,10 @@ def _verify_elevation_password(password: str) -> bool:
 _elevation_lock = asyncio.Lock()
 
 
+def _admin_elevation_state_key(token: str) -> str:
+    return f"admin_elevation:{_session_hash(token)}"
+
+
 def _is_admin_elevated(request: Request) -> bool:
     """检查当前管理员 session 是否已提权（15 分钟内有效）。"""
     if not _ADMIN_ELEVATION_PW:
@@ -5210,7 +5207,7 @@ def _is_admin_elevated(request: Request) -> bool:
     sess = sessions.get(_session_hash(token))
     if not sess:
         return False
-    elevated_at = sess.get("_elevated_at", 0)
+    elevated_at = float(db.state_get(_admin_elevation_state_key(token), 0) or 0)
     return elevated_at > 0 and (_time_module.time() - elevated_at) < _ADMIN_ELEVATION_TTL
 
 
