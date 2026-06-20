@@ -221,7 +221,7 @@ def disable_access_key(key: str, now: float) -> None:
 
 
 def enable_access_key(key: str) -> None:
-    _db().execute("UPDATE access_keys SET disabled_at=NULL WHERE key=?", (key,))
+    _db().execute("UPDATE access_keys SET disabled_at=0 WHERE key=?", (key,))
     _db().commit()
 
 
@@ -713,6 +713,7 @@ def save_featured(paths: List[str]) -> None:
             _db().execute("DELETE FROM featured WHERE path=?", (p,))
     for i, p in enumerate(paths):
         _db().execute("INSERT OR REPLACE INTO featured (path, sort_order) VALUES (?,?)", (p, i))
+    _db().commit()
 
 
 # ═══════════════════════════════════════════
@@ -733,6 +734,7 @@ def save_banned_ips(ips: List[str]) -> None:
     for ip in ips:
         if ip not in old:
             _db().execute("INSERT OR IGNORE INTO banned_ips VALUES (?)", (ip,))
+    _db().commit()
 
 
 # ═══════════════════════════════════════════
