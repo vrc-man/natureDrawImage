@@ -3415,7 +3415,13 @@ async def privacy_page(request: Request):
 @app.get("/access")
 async def access_page(request: Request):
     """访问密钥输入页面（与首页相同的 SPA，前端 JS 根据状态显示密钥输入框）。"""
-    return _serve_html(STATIC_DIR / "index.html", nonce=getattr(request.state, "csp_nonce", ""))
+    _spa = STATIC_DIR / "dist" / "index.html"
+    if _spa.is_file():
+        resp = FileResponse(str(_spa), media_type="text/html")
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
+    raise HTTPException(500, "SPA 前端未构建，请先运行 npm run build")
 
 
 _whoami_rate_buckets: Dict[str, List[float]] = {}
