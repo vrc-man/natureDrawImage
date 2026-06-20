@@ -1005,16 +1005,49 @@ def _load_llm_config() -> Dict[str, Any]:
 
 
 _llm_config: Dict[str, Any] = _load_llm_config()
+_llm_profiles: Dict[str, Dict] = {}
+_llm_active_profile: str = ""
+
+def _ensure_llm_profiles():
+    global _llm_profiles, _llm_active_profile
+    if _llm_profiles:
+        return
+    try:
+        if LLM_CONFIG_FILE.is_file():
+            d = json.loads(LLM_CONFIG_FILE.read_text(encoding="utf-8"))
+            if isinstance(d, dict) and "profiles" in d:
+                _llm_profiles = d["profiles"]
+                for name in list(_llm_profiles.keys()):
+                    for key_field in ("google_api_key", "custom_api_key"):
+                        if _llm_profiles[name].get(key_field):
+                            _llm_profiles[name][key_field] = _decrypt_api_value(str(_llm_profiles[name][key_field]))
+                _llm_active_profile = str(d.get("active_profile", ""))
+                if _llm_active_profile not in _llm_profiles:
+                    _llm_active_profile = ""
+                return
+    except Exception:
+        pass
+    # 旧格式迁移：创建 default profile
+    _llm_profiles = {"default": dict(_llm_config)}
+    _llm_active_profile = "default"
 
 
 async def _save_llm_config(state: Dict[str, Any]) -> bool:
     async with _llm_config_lock:
         try:
-            # 写盘前加密 api_key 字段（不修改内存中的明文副本）
             disk_state = dict(state)
             for key_field in ("google_api_key", "custom_api_key"):
                 if disk_state.get(key_field):
                     disk_state[key_field] = _encrypt_api_value(str(disk_state[key_field]))
+            profiles_enc = {}
+            for pname, pcfg in _llm_profiles.items():
+                pc = dict(pcfg)
+                for key_field in ("google_api_key", "custom_api_key"):
+                    if pc.get(key_field):
+                        pc[key_field] = _encrypt_api_value(str(pc[key_field]))
+                profiles_enc[pname] = pc
+            disk_state["profiles"] = profiles_enc
+            disk_state["active_profile"] = _llm_active_profile
             tmp = LLM_CONFIG_FILE.with_suffix(".json.tmp")
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(disk_state, f, ensure_ascii=False, indent=2)
@@ -3309,13 +3342,13 @@ async def index(request: Request):
     # 已登录用户优先返回 SPA
     if user and _spa.is_file():
         resp = FileResponse(str(_spa), media_type="text/html")
-        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
     # 未登录或 SPA 不存在时返回欢迎页
     if not user or not _spa.is_file():
         _html = _WELCOME_HTML.replace("__CONTACT_EMAIL__", CONTACT_EMAIL or "admin@example.com")
         resp = Response(content=_html, media_type="text/html")
-        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
     return _serve_html(STATIC_DIR / "index.html", nonce=getattr(request.state, "csp_nonce", ""))
 
@@ -3348,7 +3381,7 @@ async def privacy_page(request: Request):
     content = (STATIC_DIR / "privacy.html").read_text(encoding="utf-8")
     content = content.replace("__CONTACT_EMAIL__", CONTACT_EMAIL or "admin@example.com")
     resp = Response(content=content, media_type="text/html")
-    resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+    resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     return resp
 
 
@@ -6300,6 +6333,8 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
         except Exception as e:
             await emit(ws, {"type": "log", "message": f"[warn] 写映射失败: {e}"})
 
+    await _save_gen_log(github_id, "", sd_prompt, path, len(images), "success", client_ip, negative_prompt=neg_text, file_paths=image_paths)
+    await _increment_key_usage(github_id)
     for img in images:
         _rel = ((img.get("subfolder") or "") + "/" + img["filename"]).replace("\\", "/").lstrip("/")
         url = f"/api/output/file?path={_urlparse.quote(_rel, safe='')}"
@@ -6311,9 +6346,6 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             "image_type": img["type"],
             "path": _rel,
         })
-
-    await _save_gen_log(github_id, "", sd_prompt, path, len(images), "success", client_ip, negative_prompt=neg_text, file_paths=image_paths)
-    await _increment_key_usage(github_id)
     try:
         async with _kv_state_lock:
             total = db.state_get("total_images_generated", 0)
@@ -6514,7 +6546,7 @@ async def admin_page(request: Request):
     _spa = STATIC_DIR / "dist" / "index.html"
     if _spa.is_file():
         resp = FileResponse(str(_spa), media_type="text/html")
-        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
     return _serve_html(STATIC_DIR / "admin.html", nonce=getattr(request.state, "csp_nonce", ""))
 
@@ -7621,6 +7653,10 @@ async def api_admin_gc_run(request: Request):
 
 
 _last_gc_result: Dict[str, Any] = {}
+_backfill_status: Dict[str, Any] = {}
+_backfill_lock = asyncio.Lock()
+_orphan_scan_status: Dict[str, Any] = {}
+_orphan_scan_lock = asyncio.Lock()
 
 
 @app.get("/api/admin/gc/status")
@@ -7650,6 +7686,87 @@ async def api_admin_gc_logs_clear(request: Request):
     return {"ok": True}
 
 
+@app.post("/api/admin/gc/backfill-thumbnails")
+async def api_admin_gc_backfill_thumbnails(request: Request):
+    """后台启动补录删除记录中缺失的缩略图。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    global _backfill_status
+    async with _backfill_lock:
+        if _backfill_status.get("status") == "running":
+            return {"ok": False, "error": "已有补缩略图任务运行中"}
+        _backfill_status = {"status": "running", "total": 0, "processed": 0, "filled": 0, "skipped": 0}
+    _safe_task(_run_backfill_thumbnails(), "backfill_thumbnails")
+    return {"ok": True}
+
+
+async def _run_backfill_thumbnails():
+    """后台补缩略图任务，更新 _backfill_status 进度。"""
+    global _backfill_status
+    import uuid as _uuid, shutil as _shutil
+    try:
+        records = db.get_empty_thumb_logs()
+        total = len(records)
+        async with _backfill_lock:
+            _backfill_status["total"] = total
+        if not total:
+            async with _backfill_lock:
+                _backfill_status.update(status="done", processed=0, filled=0, skipped=0)
+            return
+        for idx, r in enumerate(records):
+            path = r.get("path", "")
+            if not path:
+                async with _backfill_lock:
+                    _backfill_status["skipped"] += 1
+                continue
+            src_img = _resolve_output_path(path)
+            if not src_img or not src_img.is_file():
+                async with _backfill_lock:
+                    _backfill_status["skipped"] += 1
+                continue
+            try:
+                await asyncio.to_thread(_generate_thumb, src_img, path)
+            except Exception:
+                async with _backfill_lock:
+                    _backfill_status["skipped"] += 1
+                continue
+            src_thumb = _thumb_cache_path(path)
+            if not src_thumb.is_file():
+                async with _backfill_lock:
+                    _backfill_status["skipped"] += 1
+                continue
+            uid = _uuid.uuid4().hex[:12]
+            DELETION_THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+            dst = DELETION_THUMBS_DIR / f"{uid}.webp"
+            try:
+                _shutil.copy2(str(src_thumb), str(dst))
+                db.update_thumb_file(r["id"], dst.name)
+                async with _backfill_lock:
+                    _backfill_status["filled"] += 1
+            except Exception:
+                async with _backfill_lock:
+                    _backfill_status["skipped"] += 1
+            async with _backfill_lock:
+                _backfill_status["processed"] = idx + 1
+        async with _backfill_lock:
+            _backfill_status["status"] = "done"
+    except Exception as e:
+        async with _backfill_lock:
+            _backfill_status["status"] = "error"
+            _backfill_status["error"] = str(e)
+
+
+@app.get("/api/admin/gc/backfill-thumbnails/status")
+async def api_admin_gc_backfill_status(request: Request):
+    """查询补缩略图任务进度。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    global _backfill_status
+    if not _backfill_status:
+        return {"status": "idle"}
+    return dict(_backfill_status)
+
+
 @app.get("/api/admin/gc/stats")
 async def api_admin_gc_stats(request: Request):
     """GC 概览统计。"""
@@ -7666,6 +7783,25 @@ async def api_admin_gc_stats(request: Request):
         "online_users": online,
         "queue_size": len(_task_queue),
 }
+
+
+@app.get("/api/admin/stats/generation")
+async def api_admin_stats_generation(request: Request, date_from: float = 0, date_to: float = 0, login: str = ""):
+    """系统统计：今日生图总数、每小时分布、每日分布。支持 date_from/date_to (epoch秒)/login 筛选。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    login = login.strip()
+    if date_from and date_to:
+        return {
+            "today_total": db.count_gen_logs_range(date_from, date_to, login),
+            "hourly": db.get_gen_logs_hourly_range(date_from, date_to, login),
+            "daily": db.get_gen_logs_daily_range(date_from, date_to, login),
+        }
+    return {
+        "today_total": db.count_gen_logs_today(login),
+        "hourly": db.get_gen_logs_hourly_today(login),
+        "daily": db.get_gen_logs_daily_7days(login),
+    }
 
 
 # ---------------- 公告端点 ----------------
@@ -8196,6 +8332,84 @@ async def api_admin_wf_thumbnail_upload(request: Request, file: UploadFile):
 
 # ---------------- LLM 配置端点 ----------------
 
+@app.get("/api/admin/llm/profiles")
+async def api_admin_llm_profiles_list(request: Request):
+    """获取所有 LLM 配置 profile。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    _ensure_llm_profiles()
+    safe = {}
+    for name, cfg in _llm_profiles.items():
+        safe[name] = dict(cfg)
+        for key_field in ("google_api_key", "custom_api_key"):
+            k = safe[name].pop(key_field, "")
+            safe[name][f"has_{key_field}"] = bool(k)
+    return {"profiles": safe, "active": _llm_active_profile}
+
+
+@app.post("/api/admin/llm/profiles/{name}")
+async def api_admin_llm_profiles_save(request: Request, name: str, payload: Dict[str, Any]):
+    """保存一个 LLM 配置 profile。"""
+    global _llm_active_profile
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    if not name.strip():
+        raise HTTPException(400, "name required")
+    _ensure_llm_profiles()
+    old_cfg = _llm_profiles.get(name.strip(), {})
+    cfg = {
+        "provider": payload.get("provider", old_cfg.get("provider", "local")),
+        "local_endpoint": str(payload.get("local_endpoint", old_cfg.get("local_endpoint", DEFAULT_LLM_CONFIG["local_endpoint"]))).strip(),
+        "google_api_key": str(payload.get("google_api_key", old_cfg.get("google_api_key", ""))).strip(),
+        "google_model": str(payload.get("google_model", old_cfg.get("google_model", DEFAULT_LLM_CONFIG["google_model"]))).strip(),
+        "google_thinking": str(payload.get("google_thinking", old_cfg.get("google_thinking", "off"))).strip() or "off",
+        "custom_endpoint": str(payload.get("custom_endpoint", old_cfg.get("custom_endpoint", ""))).strip(),
+        "custom_api_key": str(payload.get("custom_api_key", old_cfg.get("custom_api_key", ""))).strip(),
+        "custom_model": str(payload.get("custom_model", old_cfg.get("custom_model", ""))).strip(),
+        "llm_stream": payload.get("llm_stream", old_cfg.get("llm_stream", True)) in (True, "true", 1),
+        "llm_max_tokens": max(1, min(32768, int(payload.get("llm_max_tokens", old_cfg.get("llm_max_tokens", 1024))))),
+    }
+    _llm_profiles[name.strip()] = cfg
+    if not _llm_active_profile:
+        _llm_active_profile = name.strip()
+    await _save_llm_config(_llm_config)
+    return {"ok": True}
+
+
+@app.delete("/api/admin/llm/profiles/{name}")
+async def api_admin_llm_profiles_delete(request: Request, name: str):
+    """删除一个 LLM 配置 profile。"""
+    global _llm_active_profile
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    _ensure_llm_profiles()
+    if name not in _llm_profiles:
+        raise HTTPException(404)
+    if len(_llm_profiles) <= 1:
+        raise HTTPException(400, "不能删除最后一个配置")
+    del _llm_profiles[name]
+    if _llm_active_profile == name:
+        _llm_active_profile = next(iter(_llm_profiles.keys()))
+    await _save_llm_config(_llm_config)
+    return {"ok": True}
+
+
+@app.post("/api/admin/llm/profiles/{name}/activate")
+async def api_admin_llm_profiles_activate(request: Request, name: str):
+    """激活一个 LLM 配置 profile。"""
+    global _llm_active_profile
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    _ensure_llm_profiles()
+    if name not in _llm_profiles:
+        raise HTTPException(404)
+    _llm_active_profile = name
+    _llm_config.clear()
+    _llm_config.update(_llm_profiles[name])
+    await _save_llm_config(_llm_config)
+    return {"ok": True}
+
+
 @app.get("/api/admin/llm")
 async def api_admin_llm_get(request: Request):
     if not getattr(request.state, "is_admin", False):
@@ -8239,6 +8453,10 @@ async def api_admin_llm_set(request: Request, payload: Dict[str, Any]):
         raise HTTPException(500, "写入 llm_config.json 失败")
     _llm_config.clear()
     _llm_config.update(new_state)
+    # 同步到当前激活的 profile
+    _ensure_llm_profiles()
+    if _llm_active_profile and _llm_active_profile in _llm_profiles:
+        _llm_profiles[_llm_active_profile].update(new_state)
     return {"ok": True}
 
 
@@ -8647,13 +8865,13 @@ async def api_admin_access_keys_reveal(request: Request, payload: Dict[str, Any]
 
 @app.get("/api/admin/gen-logs")
 async def api_admin_gen_logs(request: Request, limit: int = 20, offset: int = 0,
-                              login: str = "", date_from: float = 0, date_to: float = 0):
-    """分页查询生图日志（仅管理员），支持用户名搜索和日期筛选。"""
+                              login: str = "", date_from: float = 0, date_to: float = 0, path: str = ""):
+    """分页查询生图日志（仅管理员），支持用户名/文件名/日期筛选。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    rows, total = db.query_gen_logs(login.strip(), date_from, date_to, limit, offset)
+    rows, total = db.query_gen_logs(login.strip(), date_from, date_to, limit, offset, path.strip())
     items = [{
         "id": r.get("log_id", ""),
         "github_id": r.get("github_id", ""),
@@ -8687,6 +8905,93 @@ async def api_admin_gen_logs_clear(request: Request, date_from: float = 0, date_
     return {"ok": True, "message": f"已清空 {removed} 条日志"}
 
 
+@app.post("/api/admin/gen-logs/scan-orphans")
+async def api_admin_gen_logs_scan_orphans(request: Request, payload: Dict[str, Any] = {}):
+    """后台扫描生图日志中所有文件已不存在的记录，结果缓存。支持 date_from/date_to 限定范围。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    global _orphan_scan_status
+    date_from = (payload or {}).get("date_from", 0) or 0
+    date_to = (payload or {}).get("date_to", 0) or 0
+    async with _orphan_scan_lock:
+        if _orphan_scan_status.get("status") == "running":
+            return {"ok": False, "error": "已有扫描任务运行中"}
+        _orphan_scan_status = {"status": "running", "total": 0, "processed": 0, "found": 0}
+    _safe_task(_run_orphan_scan(date_from, date_to), "orphan_scan")
+    return {"ok": True}
+
+
+async def _run_orphan_scan(date_from: float = 0, date_to: float = 0):
+    """后台扫描孤儿 gen_logs，结果缓存到 _orphan_scan_status。date_from/date_to 限定扫描范围。"""
+    global _orphan_scan_status
+    try:
+        all_logs = db.get_gen_logs_raw_range(date_from, date_to)
+        total = len(all_logs)
+        async with _orphan_scan_lock:
+            _orphan_scan_status["total"] = total
+        orphans: list = []
+        for idx, r in enumerate(all_logs):
+            try:
+                fps = json.loads(r.get("file_paths", "[]"))
+            except Exception:
+                fps = []
+            if fps:
+                all_missing = True
+                for fp in fps:
+                    p = _resolve_output_path(fp)
+                    if p and p.is_file():
+                        all_missing = False
+                        break
+                if all_missing:
+                    orphans.append({
+                        "id": r["log_id"],
+                        "login": r.get("login", ""),
+                        "created_at": r.get("created_at", 0),
+                        "file_paths": fps,
+                    })
+            async with _orphan_scan_lock:
+                _orphan_scan_status["processed"] = idx + 1
+        orphans.sort(key=lambda x: -x["created_at"])
+        async with _orphan_scan_lock:
+            _orphan_scan_status["status"] = "done"
+            _orphan_scan_status["found"] = len(orphans)
+            _orphan_scan_status["orphans"] = orphans
+    except Exception as e:
+        async with _orphan_scan_lock:
+            _orphan_scan_status["status"] = "error"
+            _orphan_scan_status["error"] = str(e)
+
+
+@app.get("/api/admin/gen-logs/scan-orphans/status")
+async def api_admin_gen_logs_scan_status(request: Request):
+    """查询扫描孤儿任务进度。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    global _orphan_scan_status
+    if not _orphan_scan_status:
+        return {"status": "idle"}
+    return dict(_orphan_scan_status)
+
+
+@app.get("/api/admin/gen-logs/scan-orphans/result")
+async def api_admin_gen_logs_scan_result(request: Request, login: str = "", date_from: float = 0, date_to: float = 0):
+    """查询扫描结果，支持 login 和日期筛选。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    global _orphan_scan_status
+    if _orphan_scan_status.get("status") != "done":
+        return {"orphans": [], "total": 0}
+    items = _orphan_scan_status.get("orphans", [])
+    if login:
+        q = login.strip().lower()
+        items = [x for x in items if q in x.get("login", "").lower()]
+    if date_from:
+        items = [x for x in items if x.get("created_at", 0) >= date_from]
+    if date_to:
+        items = [x for x in items if x.get("created_at", 0) <= date_to]
+    return {"orphans": items, "total": len(items)}
+
+
 @app.post("/api/admin/gen-logs/delete")
 async def api_admin_gen_logs_delete(request: Request, payload: Dict[str, Any] = {}):
     """批量删除指定 log_id 的生图日志。"""
@@ -8697,6 +9002,16 @@ async def api_admin_gen_logs_delete(request: Request, payload: Dict[str, Any] = 
         raise HTTPException(400, "ids (list) required")
     removed = db.delete_gen_logs_by_ids(ids)
     return {"ok": True, "removed": removed}
+
+
+@app.get("/api/admin/gen-logs/info")
+async def api_admin_gen_logs_info(request: Request):
+    """返回 gen_logs 的日期范围和总数。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    min_d, max_d = db.get_gen_logs_date_range()
+    total = db.count_gen_logs_raw_total()
+    return {"min_date": min_d, "max_date": max_d, "total": total}
 
 
 @app.get("/api/admin/gen-log/thumb")
@@ -8823,6 +9138,6 @@ if _os.path.isfile(_SPA_INDEX):
         if path.startswith(("api/", "ws/", "auth/", "output/", "static/", "spa-assets/")):
             raise HTTPException(404)
         resp = FileResponse(_SPA_INDEX, media_type="text/html")
-        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         return resp
 

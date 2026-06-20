@@ -118,7 +118,6 @@ async function clearLogs() {
     gcResult.value = '清空失败: ' + e.message
   }
 }
-
 onMounted(() => {
   loadGcStats()
   loadGcLogs()
@@ -132,8 +131,6 @@ onUnmounted(() => {
 
 <template>
   <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-    <h2 class="text-sm font-bold text-gray-700 mb-3">🧹 GC 系统</h2>
-
     <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-3 text-xs">
       <div class="bg-blue-50 rounded-xl p-3">
         <div class="text-blue-500 text-[10px]">重启次数</div>

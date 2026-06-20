@@ -385,10 +385,6 @@ def save_deleted_images(data: Dict[str, List[str]]) -> None:
         raise
 
 
-# ═══════════════════════════════════════════
-# 生图日志
-# ═══════════════════════════════════════════
-
 def mark_images_deleted(github_id: str, paths: List[str], *, owner_github_id: str = "") -> int:
     """原子标记图片删除并清理关联状态。文件和删除日志由调用方在事务外处理。"""
     clean_paths = []
@@ -427,6 +423,10 @@ def mark_images_deleted(github_id: str, paths: List[str], *, owner_github_id: st
         raise
 
 
+# ═══════════════════════════════════════════
+# 生图日志
+# ═══════════════════════════════════════════
+
 _GEN_LOG_MAX = 500000  # 50万条上限
 
 
@@ -460,6 +460,104 @@ def save_gen_log(github_id: str, login: str, prompt: str, workflow: str,
 def load_gen_logs_raw():
     """Return all gen_logs rows as list of dicts (for fallback lookups)."""
     return [dict(r) for r in _db().execute("SELECT * FROM gen_logs ORDER BY created_at DESC").fetchall()]
+
+def count_gen_logs_today(login: str = "") -> int:
+    """今日（UTC）成功生图总数。可选 login 筛选。"""
+    sql = "SELECT COUNT(*) as c FROM gen_logs WHERE status='success' AND date(created_at,'unixepoch')=date('now')"
+    params: list = []
+    if login:
+        sql += " AND (login LIKE ? OR github_id LIKE ?)"
+        params.extend([f"%{login}%", f"%{login}%"])
+    r = _db().execute(sql, params).fetchone()
+    return r["c"] if r else 0
+
+
+def get_gen_logs_hourly_today(login: str = "") -> List[Dict]:
+    """今日（UTC）每小时的生图数量。可选 login 筛选。"""
+    sql = "SELECT strftime('%H',created_at,'unixepoch') as hour,COUNT(*) as count FROM gen_logs WHERE status='success' AND date(created_at,'unixepoch')=date('now')"
+    params: list = []
+    if login:
+        sql += " AND (login LIKE ? OR github_id LIKE ?)"
+        params.extend([f"%{login}%", f"%{login}%"])
+    sql += " GROUP BY hour ORDER BY hour"
+    rows = _db().execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_gen_logs_daily_7days(login: str = "") -> List[Dict]:
+    """最近7天（UTC）每日生图数量。可选 login 筛选。"""
+    sql = "SELECT date(created_at,'unixepoch') as day,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=unixepoch('now','-7 days')"
+    params: list = []
+    if login:
+        sql += " AND (login LIKE ? OR github_id LIKE ?)"
+        params.extend([f"%{login}%", f"%{login}%"])
+    sql += " GROUP BY day ORDER BY day"
+    rows = _db().execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_gen_logs_range(date_from: float, date_to: float, login: str = "") -> int:
+    """指定时间范围的生图总数。可选 login 筛选。"""
+    sql = "SELECT COUNT(*) as c FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+    params: list = [date_from, date_to]
+    if login:
+        sql += " AND (login LIKE ? OR github_id LIKE ?)"
+        params.extend([f"%{login}%", f"%{login}%"])
+    r = _db().execute(sql, params).fetchone()
+    return r["c"] if r else 0
+
+
+def get_gen_logs_hourly_range(date_from: float, date_to: float, login: str = "") -> List[Dict]:
+    """指定时间范围每小时的生图数量。可选 login 筛选。"""
+    sql = "SELECT strftime('%H',created_at,'unixepoch') as hour,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+    params: list = [date_from, date_to]
+    if login:
+        sql += " AND (login LIKE ? OR github_id LIKE ?)"
+        params.extend([f"%{login}%", f"%{login}%"])
+    sql += " GROUP BY hour ORDER BY hour"
+    rows = _db().execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_gen_logs_daily_range(date_from: float, date_to: float, login: str = "") -> List[Dict]:
+    """指定时间范围每日生图数量。可选 login 筛选。"""
+    sql = "SELECT date(created_at,'unixepoch') as day,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+    params: list = [date_from, date_to]
+    if login:
+        sql += " AND (login LIKE ? OR github_id LIKE ?)"
+        params.extend([f"%{login}%", f"%{login}%"])
+    sql += " GROUP BY day ORDER BY day"
+    rows = _db().execute(sql, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_gen_logs_raw_range(date_from: float = 0, date_to: float = 0) -> List[Dict]:
+    """返回指定时间范围的 gen_logs（全字段，不限量），不传=全部。"""
+    sql = "SELECT * FROM gen_logs"
+    params: list = []
+    conds: list = []
+    if date_from:
+        conds.append("created_at>=?")
+        params.append(date_from)
+    if date_to:
+        conds.append("created_at<?")
+        params.append(date_to)
+    if conds:
+        sql += " WHERE " + " AND ".join(conds)
+    sql += " ORDER BY created_at DESC"
+    return [dict(r) for r in _db().execute(sql, params).fetchall()]
+
+
+def count_gen_logs_raw_total() -> int:
+    r = _db().execute("SELECT COUNT(*) as c FROM gen_logs").fetchone()
+    return r["c"] if r else 0
+
+
+def get_gen_logs_date_range() -> Tuple[float, float]:
+    """返回 gen_logs 最早和最晚的 created_at。"""
+    r = _db().execute("SELECT MIN(created_at) as min_d, MAX(created_at) as max_d FROM gen_logs").fetchone()
+    return (r["min_d"] or 0, r["max_d"] or 0) if r else (0, 0)
+
 
 def find_gen_log_by_file_path(file_path: str) -> Optional[Dict]:
     rows = _db().execute("SELECT * FROM gen_logs WHERE file_paths LIKE ?", (f'%{file_path}%',)).fetchall()
@@ -504,12 +602,15 @@ def get_all_gen_log_file_paths() -> set:
 
 
 def query_gen_logs(login: str = "", date_from: float = 0, date_to: float = 0,
-                   limit: int = 20, offset: int = 0) -> Tuple[List[Dict], int]:
+                   limit: int = 20, offset: int = 0, path: str = "") -> Tuple[List[Dict], int]:
     conditions = []
     params = []
     if login:
         conditions.append("login LIKE ?")
         params.append(f"%{login}%")
+    if path:
+        conditions.append("file_paths LIKE ?")
+        params.append(f"%{path}%")
     if date_from:
         conditions.append("created_at >= ?")
         params.append(date_from)
@@ -615,6 +716,18 @@ def clear_deletion_logs(path: str = "", date_from: float = 0, date_to: float = 0
     r = _db().execute(f"DELETE FROM deletion_logs{where}", params)
     _db().commit()
     return r.rowcount
+
+
+def get_empty_thumb_logs() -> List[Dict]:
+    """查询 thumb_file 为空的删除记录。"""
+    rows = _db().execute("SELECT * FROM deletion_logs WHERE thumb_file='' ORDER BY deleted_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_thumb_file(log_id: int, thumb_file: str) -> None:
+    """更新删除记录的 thumb_file。"""
+    _db().execute("UPDATE deletion_logs SET thumb_file=? WHERE id=?", (thumb_file, log_id))
+    _db().commit()
 
 
 def query_deletion_log(search: str = "", date_from: float = 0, date_to: float = 0,

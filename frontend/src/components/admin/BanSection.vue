@@ -96,8 +96,6 @@ onMounted(loadBans)
 
 <template>
   <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-    <h2 class="text-sm font-bold text-gray-700 mb-3">🚫 IP 封禁管理</h2>
-
     <div class="flex gap-4">
       <!-- Blacklist -->
       <div class="flex-1 min-w-0">

@@ -33,12 +33,18 @@ async function load(reset = false) {
   loading.value = false
 }
 
+function fmtTime(ts: number) {
+  if (!ts) return ''
+  const d = new Date(ts * 1000)
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+}
 function openLightbox(index: number) {
   const items: LbItem[] = images.value.map((img: any) => ({
     url: `/api/output/file?path=${encodeURIComponent(img.path || '')}`,
     title: img.filename || img.path?.split('/').pop(),
     path: img.path,
     filename: img.filename || img.path?.split('/').pop(),
+    time: img.mtime ? fmtTime(img.mtime) : '',
   }))
   open(items, index)
 }

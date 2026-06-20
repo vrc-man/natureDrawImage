@@ -49,14 +49,19 @@ function elapsed(ts: number) {
   return Math.floor((Date.now() / 1000) - ts) + 's'
 }
 
+const refreshInterval = ref(1)
+const autoRefresh = ref(true)
 let pollTimer: any = null
-onMounted(() => {
-  loadQueue()
-  pollTimer = setInterval(loadQueue, 1000)
-})
-onUnmounted(() => {
+function restartPoll() {
   if (pollTimer) clearInterval(pollTimer)
-})
+  if (autoRefresh.value) pollTimer = setInterval(loadQueue, refreshInterval.value * 1000)
+}
+function toggleAuto() {
+  autoRefresh.value = !autoRefresh.value
+  restartPoll()
+}
+onMounted(() => { loadQueue(); restartPoll() })
+onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 </script>
 
 <template>
@@ -96,6 +101,14 @@ onUnmounted(() => {
           <button @click="cancelItem(q.id)" class="text-[9px] px-1.5 py-0.5 bg-red-400 text-white rounded hover:bg-red-500 cursor-pointer border-0">取消</button>
         </div>
       </div>
+    </div>
+
+    <!-- Refresh controls -->
+    <div class="flex items-center gap-2 mb-2 text-xs">
+      <button @click="loadQueue" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 cursor-pointer border-0">刷新</button>
+      <button @click="toggleAuto" :class="['px-2 py-1 rounded cursor-pointer border-0', autoRefresh ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-600']">自动刷新{{ autoRefresh ? '' : ': 关' }}</button>
+      <input v-model.number="refreshInterval" @change="restartPoll" type="number" min="1" max="60" class="w-12 text-xs text-center border rounded py-1 outline-none" title="刷新间隔(秒)" />
+      <span class="text-gray-400">秒</span>
     </div>
 
     <!-- Actions -->

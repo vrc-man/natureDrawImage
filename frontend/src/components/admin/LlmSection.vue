@@ -1,268 +1,384 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, onMounted } from 'vue'
 import { api } from './useAdminApi'
 
 defineProps<{ visible: boolean }>()
 
-const provider = ref('local')
-const localEndpoint = ref('')
-const googleKey = ref('')
-const googleKeyMasked = ref('')
-const googleModel = ref('')
-const googleThinking = ref('off')
-const customEndpoint = ref('')
-const customKey = ref('')
-const customKeyMasked = ref('')
-const customModel = ref('')
-const llmStream = ref(true)
-const llmMaxTokens = ref(1024)
+interface LLMProfile {
+  name: string
+  provider: string
+  local_endpoint?: string
+  google_model?: string
+  google_thinking?: string
+  custom_endpoint?: string
+  custom_model?: string
+  llm_stream?: boolean
+  llm_max_tokens?: number
+  has_google_key?: boolean
+  has_custom_key?: boolean
+  google_api_key?: string
+  custom_api_key?: string
+}
+
+const profiles = ref<LLMProfile[]>([])
+const activeName = ref('')
+const loading = ref(false)
 const status = ref('')
+const showModal = ref(false)
+const editProfile = ref<LLMProfile>({ name: '', provider: 'local' })
+const isNewProfile = ref(false)
+const testResult = ref('')
 const models = ref<{ id: string; name: string }[]>([])
 const showModels = ref(false)
-const loading = ref(false)
 
-const badgeText = computed(() => {
-  const m: Record<string, string> = { local: '本地', google: 'Google AI Studio', custom: '自定义 API' }
-  return m[provider.value] || '本地'
-})
-const badgeClass = computed(() => {
-  const m: Record<string, string> = {
-    local: 'bg-gray-200 text-gray-700',
-    google: 'bg-green-500 text-white',
-    custom: 'bg-purple-500 text-white',
-  }
-  return `ml-2 text-xs px-2 py-0.5 rounded ${m[provider.value] || m.local}`
-})
-
-function buildPayload() {
-  const p: Record<string, any> = {
-    provider: provider.value,
-    local_endpoint: localEndpoint.value,
-    google_model: googleModel.value,
-    google_thinking: googleThinking.value,
-    custom_endpoint: customEndpoint.value,
-    custom_model: customModel.value,
-    llm_stream: llmStream.value,
-    llm_max_tokens: parseInt(String(llmMaxTokens.value), 10) || 1024,
-  }
-  if (googleKey.value) p.google_api_key = googleKey.value
-  if (customKey.value) p.custom_api_key = customKey.value
-  return p
+const providerLabels: Record<string, string> = {
+  local: 'LM Studio（本地）',
+  google: 'Google AI Studio',
+  custom: '自定义 API',
+}
+const providerColors: Record<string, string> = {
+  local: 'bg-gray-100 text-gray-700',
+  google: 'bg-green-100 text-green-700',
+  custom: 'bg-purple-100 text-purple-700',
 }
 
-async function load() {
+async function loadProfiles() {
+  loading.value = true
   try {
-    loading.value = true
+    const d = await api('GET', '/api/admin/llm/profiles')
+    profiles.value = Object.entries(d.profiles || {}).map(([name, cfg]: [string, any]) => ({ name, ...cfg }))
+    activeName.value = d.active || ''
+  } catch { }
+  loading.value = false
+}
+
+function openNewProfile() {
+  isNewProfile.value = true
+  editProfile.value = { name: '', provider: 'local', llm_stream: true, llm_max_tokens: 1024 }
+  testResult.value = ''
+  models.value = []
+  showModels.value = false
+  showModal.value = true
+}
+
+function openEdit(p: LLMProfile) {
+  isNewProfile.value = false
+  editProfile.value = { ...p }
+  testResult.value = ''
+  models.value = []
+  showModels.value = false
+  // 加载当前完整配置
+  loadProfileDetail(p.name)
+  showModal.value = true
+}
+
+async function loadProfileDetail(name: string) {
+  try {
     const d = await api('GET', '/api/admin/llm')
     const c = d.llm || {}
-    provider.value = c.provider || 'local'
-    localEndpoint.value = c.local_endpoint || ''
-    googleKey.value = ''
-    googleKeyMasked.value = c.google_api_key_masked || ''
-    googleModel.value = c.google_model || ''
-    googleThinking.value = c.google_thinking || 'off'
-    customEndpoint.value = c.custom_endpoint || ''
-    customKey.value = ''
-    customKeyMasked.value = c.custom_api_key_masked || ''
-    customModel.value = c.custom_model || ''
-    llmStream.value = c.llm_stream !== false
-    llmMaxTokens.value = c.llm_max_tokens || 1024
-    status.value = ''
-    models.value = []
-    showModels.value = false
-  } catch (e: any) {
-    status.value = '加载失败: ' + e.message
-  } finally {
-    loading.value = false
-  }
+    // 只填充当前 profile 的字段，不覆盖已有字段
+    if (!editProfile.value.local_endpoint) editProfile.value.local_endpoint = c.local_endpoint
+    if (!editProfile.value.google_model) editProfile.value.google_model = c.google_model
+    if (!editProfile.value.custom_endpoint) editProfile.value.custom_endpoint = c.custom_endpoint
+    if (!editProfile.value.custom_model) editProfile.value.custom_model = c.custom_model
+  } catch { }
 }
 
-async function save() {
+async function saveProfile() {
+  if (!editProfile.value.name.trim()) { alert('请输入配置名称'); return }
   try {
-    status.value = '保存中…'
-    await api('POST', '/api/admin/llm', buildPayload())
-    googleKeyMasked.value = googleKey.value ? '****' + googleKey.value.slice(-4) : googleKeyMasked.value
-    customKeyMasked.value = customKey.value ? '****' + customKey.value.slice(-4) : customKeyMasked.value
-    googleKey.value = ''
-    customKey.value = ''
-    status.value = '✓ 已保存'
-    setTimeout(() => { if (status.value === '✓ 已保存') status.value = '' }, 2000)
-  } catch (e: any) {
-    status.value = '保存失败: ' + e.message
-  }
-}
-
-async function testConn() {
-  try {
-    status.value = '测试中…'
-    const d = await api('POST', '/api/admin/llm/test', buildPayload())
-    if (d.ok) {
-      status.value = `✓ 连接成功：${d.reply || '(空回复)'}`
-    } else {
-      status.value = `✗ 失败：${d.error}`
+    const body: Record<string, any> = {
+      provider: editProfile.value.provider,
+      local_endpoint: editProfile.value.local_endpoint || '',
+      google_model: editProfile.value.google_model || '',
+      google_thinking: editProfile.value.google_thinking || 'off',
+      custom_endpoint: editProfile.value.custom_endpoint || '',
+      custom_model: editProfile.value.custom_model || '',
+      llm_stream: editProfile.value.llm_stream ?? true,
+      llm_max_tokens: editProfile.value.llm_max_tokens || 1024,
     }
-    setTimeout(() => { if (status.value?.startsWith('✓') || status.value?.startsWith('✗')) status.value = '' }, 6000)
-  } catch (e: any) {
-    status.value = '测试失败: ' + e.message
-  }
+    if (editProfile.value.provider === 'google' && editProfile.value.google_api_key) {
+      body.google_api_key = editProfile.value.google_api_key
+    }
+    if (editProfile.value.provider === 'custom' && editProfile.value.custom_api_key) {
+      body.custom_api_key = editProfile.value.custom_api_key
+    }
+    await api('POST', `/api/admin/llm/profiles/${encodeURIComponent(editProfile.value.name)}`, body)
+    status.value = '✓ 已保存'
+    setTimeout(() => status.value = '', 2000)
+    showModal.value = false
+    await loadProfiles()
+  } catch (e: any) { alert('保存失败: ' + e.message) }
+}
+
+async function deleteProfile(p: LLMProfile) {
+  const label = p.name === activeName.value ? `（当前激活）` : ''
+  if (!confirm(`确定删除配置「${p.name}」${label}？`)) return
+  if (prompt(`确认删除配置「${p.name}」，请输入"确认删除"`) !== '确认删除') { alert('输入不匹配'); return }
+  try {
+    await api('DELETE', `/api/admin/llm/profiles/${encodeURIComponent(p.name)}`)
+    await loadProfiles()
+  } catch (e: any) { alert('删除失败: ' + e.message) }
+}
+
+async function activateProfile(name: string) {
+  if (name === activeName.value) return
+  try {
+    await api('POST', `/api/admin/llm/profiles/${encodeURIComponent(name)}/activate`)
+    activeName.value = name
+    status.value = `✓ 已切换至「${name}」`
+    setTimeout(() => status.value = '', 2000)
+  } catch (e: any) { alert('切换失败: ' + e.message) }
+}
+
+async function testConnection() {
+  testResult.value = '测试中…'
+  try {
+    const body: Record<string, any> = {
+      provider: editProfile.value.provider,
+      local_endpoint: editProfile.value.local_endpoint || '',
+      google_model: editProfile.value.google_model || '',
+      google_thinking: editProfile.value.google_thinking || 'off',
+      custom_endpoint: editProfile.value.custom_endpoint || '',
+      custom_model: editProfile.value.custom_model || '',
+      llm_stream: editProfile.value.llm_stream ?? true,
+      llm_max_tokens: editProfile.value.llm_max_tokens || 1024,
+    }
+    if (editProfile.value.google_api_key) body.google_api_key = editProfile.value.google_api_key
+    if (editProfile.value.custom_api_key) body.custom_api_key = editProfile.value.custom_api_key
+    const d = await api('POST', '/api/admin/llm/test', body)
+    testResult.value = d.ok ? `✓ 连接成功：${d.reply || ''}` : `✗ 失败：${d.error}`
+  } catch (e: any) { testResult.value = '✗ 测试失败: ' + e.message }
 }
 
 async function detectModels() {
+  testResult.value = '探测中…'
+  showModels.value = false
   try {
-    status.value = '探测中…'
-    showModels.value = false
-    const d = await api('POST', '/api/admin/llm/models', buildPayload())
-    if (!d.ok) {
-      status.value = `✗ 失败：${d.error}`
-      return
+    const body: Record<string, any> = {
+      provider: editProfile.value.provider,
+      local_endpoint: editProfile.value.local_endpoint || '',
+      google_model: editProfile.value.google_model || '',
+      custom_endpoint: editProfile.value.custom_endpoint || '',
+      custom_model: editProfile.value.custom_model || '',
     }
+    if (editProfile.value.google_api_key) body.google_api_key = editProfile.value.google_api_key
+    if (editProfile.value.custom_api_key) body.custom_api_key = editProfile.value.custom_api_key
+    const d = await api('POST', '/api/admin/llm/models', body)
+    if (!d.ok) { testResult.value = `✗ ${d.error}`; return }
     const list = d.models || []
-    if (!list.length) {
-      status.value = '未发现可用模型'
-      return
-    }
+    if (!list.length) { testResult.value = '未发现模型'; return }
     models.value = list
     showModels.value = true
-    status.value = `发现 ${list.length} 个模型`
-  } catch (e: any) {
-    status.value = '探测失败: ' + e.message
-  }
+    testResult.value = `发现 ${list.length} 个模型`
+  } catch (e: any) { testResult.value = '✗ 探测失败: ' + e.message }
 }
 
 function selectModel(id: string) {
-  if (provider.value === 'google') googleModel.value = id
-  else customModel.value = id
+  if (editProfile.value.provider === 'google') editProfile.value.google_model = id
+  else editProfile.value.custom_model = id
   showModels.value = false
-  status.value = `已选择: ${id}`
-  setTimeout(() => { status.value = '' }, 2000)
+  testResult.value = `已选择: ${id}`
 }
 
-watch(() => provider.value, () => { showModels.value = false })
+function profileIcon(provider: string): string {
+  const icons: Record<string, string> = { local: '🖥️', google: '☁️', custom: '🔌' }
+  return icons[provider] || '❓'
+}
+
+function hasKey(p: LLMProfile): boolean {
+  return (p.provider === 'google' && p.has_google_key) ||
+         (p.provider === 'custom' && p.has_custom_key) ||
+         (p.provider === 'local')
+}
+
+onMounted(loadProfiles)
 </script>
 
 <template>
-  <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-    <h2 class="text-sm font-bold text-gray-700 mb-3">
-      🤖 LLM 配置
-      <span :class="badgeClass">{{ badgeText }}</span>
-    </h2>
-
-    <!-- Provider radio -->
-    <div class="flex items-center gap-4 text-sm mb-3 flex-wrap">
-      <label class="flex items-center gap-1 cursor-pointer">
-        <input type="radio" v-model="provider" value="local" class="accent-pink-500" /> LM Studio（本地）
-      </label>
-      <label class="flex items-center gap-1 cursor-pointer">
-        <input type="radio" v-model="provider" value="google" class="accent-pink-500" /> Google AI Studio
-      </label>
-      <label class="flex items-center gap-1 cursor-pointer">
-        <input type="radio" v-model="provider" value="custom" class="accent-pink-500" /> 自定义 API
-      </label>
-      <button @click="load" class="ml-auto text-xs px-3 py-1 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 cursor-pointer border-0">刷新</button>
-    </div>
-
-    <!-- Local section -->
-    <div v-if="provider === 'local'" class="text-sm mb-3">
-      <label class="flex flex-col gap-1 max-w-md">
-        <span>本地端点</span>
-        <input v-model="localEndpoint" type="text" class="border border-gray-200 rounded-lg px-2 py-1 font-mono text-xs outline-none focus:border-pink-400" placeholder="http://127.0.0.1:1234" />
-        <span class="text-[10px] text-gray-500">LM Studio 本地服务地址。</span>
-      </label>
-    </div>
-
-    <!-- Google section -->
-    <div v-if="provider === 'google'" class="text-sm mb-3">
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <label class="flex flex-col gap-1">
-          <span>API Key</span>
-          <input v-model="googleKey" type="password" class="border border-gray-200 rounded-lg px-2 py-1 font-mono text-xs outline-none focus:border-pink-400" :placeholder="googleKeyMasked || 'AIza...'" autocomplete="off" />
-          <span class="text-[10px] text-gray-500">{{ googleKeyMasked ? `当前: ${googleKeyMasked}，留空不修改` : '留空则不修改已保存的密钥。' }}</span>
-        </label>
-        <label class="flex flex-col gap-1">
-          <span>模型</span>
-          <input v-model="googleModel" type="text" class="border border-gray-200 rounded-lg px-2 py-1 font-mono text-xs outline-none focus:border-pink-400" placeholder="gemma-4-31b-it" />
-          <span class="text-[10px] text-gray-500">Google AI Studio 模型 ID。</span>
-        </label>
-        <label class="flex flex-col gap-1">
-          <span>思考 (Thinking)</span>
-          <select v-model="googleThinking" class="border border-gray-200 rounded-lg px-2 py-1 text-xs outline-none focus:border-pink-400">
-            <option value="off">关闭（不发送 thinkingConfig）</option>
-            <optgroup label="── Gemini 3 系列 (thinkingLevel) ──">
-              <option value="level_minimal">minimal（几乎不思考）</option>
-              <option value="level_low">low（低延迟）</option>
-              <option value="level_medium">medium（平衡）</option>
-              <option value="level_high">high（深度推理，默认）</option>
-            </optgroup>
-            <optgroup label="── Gemini 2.5 系列 (thinkingBudget) ──">
-              <option value="budget_auto">自动 (thinkingBudget=-1)</option>
-              <option value="budget_0">0（关闭思考，仅 Flash/Lite）</option>
-              <option value="budget_1024">1024 tokens</option>
-              <option value="budget_2048">2048 tokens</option>
-              <option value="budget_4096">4096 tokens</option>
-              <option value="budget_8192">8192 tokens</option>
-              <option value="budget_16384">16384 tokens</option>
-              <option value="budget_24576">24576 tokens</option>
-              <option value="budget_32768">32768 tokens</option>
-            </optgroup>
-          </select>
-          <span class="text-[10px] text-gray-500">Gemini 3 用 thinkingLevel，Gemini 2.5 用 thinkingBudget；不支持的模型请关闭。</span>
-        </label>
+  <div v-if="visible">
+    <!-- Header bar -->
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex items-center gap-2">
+        <span class="text-sm font-semibold text-gray-700">🤖 LLM 配置</span>
+        <span v-if="activeName" class="text-xs px-2 py-0.5 rounded bg-blue-100 text-blue-700">
+          当前: {{ activeName }}
+        </span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-gray-500">{{ status }}</span>
+        <button @click="openNewProfile" class="px-3 py-1 bg-emerald-500 text-white rounded hover:bg-emerald-600 text-sm cursor-pointer border-0">+ 新建配置</button>
+        <button @click="loadProfiles" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer border-0">刷新</button>
       </div>
     </div>
 
-    <!-- Custom section -->
-    <div v-if="provider === 'custom'" class="text-sm mb-3">
-      <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <label class="flex flex-col gap-1">
-          <span>API 端点</span>
-          <input v-model="customEndpoint" type="text" class="border border-gray-200 rounded-lg px-2 py-1 font-mono text-xs outline-none focus:border-pink-400" placeholder="https://api.openai.com" />
-          <span class="text-[10px] text-gray-500">兼容 OpenAI 格式的 Base URL。</span>
-        </label>
-        <label class="flex flex-col gap-1">
-          <span>API 密钥</span>
-          <input v-model="customKey" type="password" class="border border-gray-200 rounded-lg px-2 py-1 font-mono text-xs outline-none focus:border-pink-400" :placeholder="customKeyMasked || 'sk-...'" autocomplete="off" />
-          <span class="text-[10px] text-gray-500">{{ customKeyMasked ? `当前: ${customKeyMasked}，留空不修改` : '留空则不修改已保存的密钥。' }}</span>
-        </label>
-        <label class="flex flex-col gap-1">
-          <span>模型名称</span>
-          <input v-model="customModel" type="text" class="border border-gray-200 rounded-lg px-2 py-1 font-mono text-xs outline-none focus:border-pink-400" placeholder="gpt-4o" />
-          <span class="text-[10px] text-gray-500">API 的 model 参数。</span>
-        </label>
+    <!-- Profile cards grid -->
+    <div v-if="!profiles.length && !loading" class="text-center text-gray-400 text-sm py-8 border-2 border-dashed border-gray-200 rounded-xl">
+      暂无 LLM 配置，点击「+ 新建配置」创建
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div v-for="p in profiles" :key="p.name"
+        @dblclick="activateProfile(p.name)"
+        class="relative border rounded-xl p-4 cursor-pointer transition-all hover:shadow-md"
+        :class="p.name === activeName ? 'border-blue-400 bg-blue-50/50 ring-2 ring-blue-200' : 'border-gray-200 bg-white hover:border-gray-300'">
+
+        <!-- Active badge -->
+        <div v-if="p.name === activeName" class="absolute top-2 right-2 text-xs px-2 py-0.5 rounded-full bg-blue-500 text-white font-medium">当前</div>
+
+        <div class="flex items-start gap-3">
+          <div class="text-2xl mt-0.5">{{ profileIcon(p.provider) }}</div>
+          <div class="flex-1 min-w-0">
+            <div class="font-semibold text-gray-800 mb-1 truncate">{{ p.name }}</div>
+            <div class="text-xs space-y-0.5 text-gray-500">
+              <div class="flex items-center gap-1">
+                <span class="px-1.5 py-0.5 rounded text-[10px]" :class="providerColors[p.provider] || 'bg-gray-100'">{{ providerLabels[p.provider] || p.provider }}</span>
+              </div>
+              <div v-if="p.provider === 'local' && p.local_endpoint" class="truncate font-mono text-[10px]">端点: {{ p.local_endpoint }}</div>
+              <div v-if="p.provider === 'google'">
+                <span>模型: {{ p.google_model || '-' }}</span>
+                <span v-if="p.has_google_key" class="ml-2 text-green-600">Key ✓</span>
+                <span v-else class="ml-2 text-amber-500">Key ✗</span>
+              </div>
+              <div v-if="p.provider === 'custom'">
+                <div class="truncate font-mono text-[10px]">端点: {{ p.custom_endpoint || '-' }}</div>
+                <span>模型: {{ p.custom_model || '-' }}</span>
+                <span v-if="p.has_custom_key" class="ml-2 text-green-600">Key ✓</span>
+                <span v-else-if="p.custom_endpoint" class="ml-2 text-amber-500">Key ✗</span>
+              </div>
+              <div>
+                <span>流式: {{ p.llm_stream !== false ? '✓ 开' : '✗ 关' }}</span>
+                <span class="ml-3">Token: {{ p.llm_max_tokens || 1024 }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action buttons -->
+        <div class="flex items-center gap-1 mt-3 pt-2 border-t border-gray-100">
+          <button v-if="p.name !== activeName" @click.stop="activateProfile(p.name)" class="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer border-0">激活</button>
+          <button @click.stop="openEdit(p)" class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 cursor-pointer border-0">编辑</button>
+          <button v-if="profiles.length > 1" @click.stop="deleteProfile(p)" class="text-xs px-2 py-1 bg-red-100 text-red-600 rounded hover:bg-red-200 cursor-pointer border-0">删除</button>
+        </div>
       </div>
     </div>
 
-    <!-- Stream -->
-    <div class="mt-3 flex items-center gap-3 flex-wrap text-sm">
-      <label class="flex items-center gap-1 cursor-pointer">
-        <input type="checkbox" v-model="llmStream" class="accent-pink-500" />
-        <span>流式输出 (SSE)</span>
-      </label>
-      <span class="text-[10px] text-gray-500">关闭后使用普通请求，适用于不支持 SSE 的网络环境。</span>
-    </div>
+    <!-- Edit/Create Modal -->
+    <Teleport to="body">
+      <div v-if="showModal" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4" @click.self="showModal=false">
+        <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-5 max-h-[90vh] overflow-y-auto" @click.stop>
+          <h3 class="text-lg font-semibold mb-4">{{ isNewProfile ? '新建 LLM 配置' : '编辑 LLM 配置' }}</h3>
 
-    <!-- Max tokens -->
-    <div class="mt-3 flex items-center gap-3 flex-wrap text-sm">
-      <label class="flex items-center gap-1">
-        <span>最大 Token:</span>
-        <input v-model.number="llmMaxTokens" type="number" min="1" max="32768" class="border border-gray-200 rounded-lg px-2 py-1 text-xs w-24 outline-none focus:border-pink-400" />
-      </label>
-      <span class="text-[10px] text-gray-500">LLM 返回的正负向提示词总上限（1-32768）。</span>
-    </div>
+          <!-- Profile name -->
+          <div class="mb-3">
+            <label class="block text-sm font-medium text-gray-700 mb-1">配置名称</label>
+            <input v-model="editProfile.name" type="text" class="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 box-border" placeholder="如: 本地 LM Studio" :disabled="!isNewProfile" />
+          </div>
 
-    <!-- Buttons -->
-    <div class="mt-3 flex items-center gap-2 flex-wrap">
-      <button @click="save" class="px-3 py-1 bg-pink-500 text-white rounded-lg hover:bg-pink-600 text-sm cursor-pointer border-0">保存</button>
-      <button @click="testConn" class="px-3 py-1 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 text-sm cursor-pointer border-0">测试连接</button>
-      <button @click="detectModels" class="px-3 py-1 bg-purple-500 text-white rounded-lg hover:bg-purple-600 text-sm cursor-pointer border-0">探测模型</button>
-      <span class="text-xs text-gray-500">{{ status }}</span>
-    </div>
+          <!-- Provider -->
+          <div class="mb-3">
+            <label class="block text-sm font-medium text-gray-700 mb-1">提供商</label>
+            <div class="flex items-center gap-3 flex-wrap">
+              <label class="flex items-center gap-1 cursor-pointer"><input type="radio" v-model="editProfile.provider" value="local" class="accent-blue-500" /> 🖥️ LM Studio</label>
+              <label class="flex items-center gap-1 cursor-pointer"><input type="radio" v-model="editProfile.provider" value="google" class="accent-blue-500" /> ☁️ Google AI Studio</label>
+              <label class="flex items-center gap-1 cursor-pointer"><input type="radio" v-model="editProfile.provider" value="custom" class="accent-blue-500" /> 🔌 自定义 API</label>
+            </div>
+          </div>
 
-    <!-- Models list -->
-    <div v-if="showModels && models.length" class="mt-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-2 text-xs bg-gray-50">
-      <div v-for="m in models" :key="m.id" @click="selectModel(m.id)" class="flex items-center justify-between py-0.5 border-b last:border-0 cursor-pointer hover:bg-blue-50 px-1 rounded" :data-model-id="m.id">
-        <span>{{ m.name || m.id }}</span>
-        <span class="text-[10px] text-gray-400">{{ m.id }}</span>
+          <!-- Fields by provider -->
+          <template v-if="editProfile.provider === 'local'">
+            <div class="mb-3">
+              <label class="block text-sm font-medium text-gray-700 mb-1">端点地址</label>
+              <input v-model="editProfile.local_endpoint" type="text" class="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-blue-400 box-border" placeholder="http://127.0.0.1:1234" />
+            </div>
+          </template>
+
+          <template v-if="editProfile.provider === 'google'">
+            <div class="mb-3">
+              <label class="block text-sm font-medium text-gray-700 mb-1">API Key <span class="text-gray-400 font-normal">（留空不修改）</span></label>
+              <input v-model="editProfile.google_api_key" type="password" class="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-blue-400 box-border" placeholder="AIza..." autocomplete="off" />
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">模型</label>
+                <input v-model="editProfile.google_model" type="text" class="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-blue-400 box-border" placeholder="gemma-4-31b-it" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">Thinking</label>
+                <select v-model="editProfile.google_thinking" class="w-full border rounded-lg px-3 py-2 text-sm outline-none focus:border-blue-400 box-border">
+                  <option value="off">关闭</option>
+                  <optgroup label="Gemini 3 (thinkingLevel)">
+                    <option value="level_minimal">minimal</option>
+                    <option value="level_low">low</option>
+                    <option value="level_medium">medium</option>
+                    <option value="level_high">high</option>
+                  </optgroup>
+                  <optgroup label="Gemini 2.5 (thinkingBudget)">
+                    <option value="budget_auto">auto</option>
+                    <option value="budget_0">0</option>
+                    <option value="budget_1024">1024</option>
+                    <option value="budget_2048">2048</option>
+                    <option value="budget_4096">4096</option>
+                    <option value="budget_8192">8192</option>
+                    <option value="budget_16384">16384</option>
+                    <option value="budget_24576">24576</option>
+                    <option value="budget_32768">32768</option>
+                  </optgroup>
+                </select>
+              </div>
+            </div>
+          </template>
+
+          <template v-if="editProfile.provider === 'custom'">
+            <div class="mb-3">
+              <label class="block text-sm font-medium text-gray-700 mb-1">API 端点</label>
+              <input v-model="editProfile.custom_endpoint" type="text" class="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-blue-400 box-border" placeholder="https://api.openai.com" />
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">API 密钥 <span class="text-gray-400 font-normal">（选填）</span></label>
+                <input v-model="editProfile.custom_api_key" type="password" class="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-blue-400 box-border" placeholder="sk-..." autocomplete="off" />
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">模型名称</label>
+                <input v-model="editProfile.custom_model" type="text" class="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-blue-400 box-border" placeholder="gpt-4o" />
+              </div>
+            </div>
+          </template>
+
+          <!-- Common options -->
+          <div class="mb-3 flex items-center gap-4 flex-wrap">
+            <label class="flex items-center gap-1 cursor-pointer text-sm">
+              <input type="checkbox" v-model="editProfile.llm_stream" class="accent-blue-500" /> 流式输出 (SSE)
+            </label>
+            <label class="flex items-center gap-1 text-sm">
+              <span>最大 Token:</span>
+              <input v-model.number="editProfile.llm_max_tokens" type="number" min="1" max="32768" class="w-20 border rounded px-2 py-1 text-xs outline-none" />
+            </label>
+          </div>
+
+          <!-- Test & Detect -->
+          <div class="flex items-center gap-2 mb-3">
+            <button @click="testConnection" class="px-3 py-1 bg-emerald-500 text-white rounded hover:bg-emerald-600 text-sm cursor-pointer border-0">测试连接</button>
+            <button @click="detectModels" class="px-3 py-1 bg-purple-500 text-white rounded hover:bg-purple-600 text-sm cursor-pointer border-0">探测模型</button>
+            <span class="text-xs" :class="testResult.startsWith('✓') ? 'text-green-600' : testResult.startsWith('✗') ? 'text-red-500' : 'text-gray-500'">{{ testResult }}</span>
+          </div>
+
+          <!-- Model list -->
+          <div v-if="showModels && models.length" class="mb-3 max-h-32 overflow-y-auto border rounded-lg p-2 text-xs bg-gray-50">
+            <div v-for="m in models" :key="m.id" @click="selectModel(m.id)" class="flex items-center justify-between py-1 px-2 cursor-pointer hover:bg-blue-50 rounded">
+              <span>{{ m.name || m.id }}</span>
+              <span class="text-[10px] text-gray-400">{{ m.id }}</span>
+            </div>
+          </div>
+
+          <!-- Actions -->
+          <div class="flex items-center justify-end gap-2 mt-4 pt-3 border-t border-gray-100">
+            <button @click="showModal=false" class="px-4 py-2 text-sm rounded-lg bg-gray-200 hover:bg-gray-300 cursor-pointer border-0">取消</button>
+            <button @click="saveProfile" class="px-4 py-2 text-sm rounded-lg bg-blue-500 text-white hover:bg-blue-600 cursor-pointer border-0">{{ isNewProfile ? '创建配置' : '保存配置' }}</button>
+          </div>
+        </div>
       </div>
-    </div>
+    </Teleport>
   </div>
 </template>

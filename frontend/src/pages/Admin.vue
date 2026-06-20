@@ -23,6 +23,7 @@ import FeaturedSection from '@/components/admin/FeaturedSection.vue'
 import RecentSection from '@/components/admin/RecentSection.vue'
 import ImageSection from '@/components/admin/ImageSection.vue'
 import GcSection from '@/components/admin/GcSection.vue'
+import StatsSection from '@/components/admin/StatsSection.vue'
 
 const isAdmin = ref(false), loading = ref(true)
 const expanded = ref<Record<string, boolean>>({})
@@ -43,6 +44,7 @@ function toggle(k: string) { expanded.value[k] = !expanded.value[k] }
       </div>
       <div v-if="!isAdmin && !loading" class="max-w-md mx-auto mt-20 text-center p-8 bg-white rounded-2xl shadow-sm"><p class="text-4xl mb-4">&#x1F512;</p><p class="text-gray-500">需要管理员权限</p></div>
       <template v-if="isAdmin">
+        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('stats')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.stats?'rotate-90':''">&#x25B8;</span> &#x1F4CA; 系统统计</h2></div><div v-show="expanded.stats"><StatsSection :visible="true" /></div></div>
         <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('queue')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.queue?'rotate-90':''">&#x25B8;</span> &#x1F3C3; 队列管理</h2></div><div v-show="expanded.queue"><QueueSection :visible="true" /></div></div>
         <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('ann')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.ann?'rotate-90':''">&#x25B8;</span> &#x1F4E2; 公告管理</h2></div><div v-show="expanded.ann"><AnnSection :visible="true" /></div></div>
         <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('res')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.res?'rotate-90':''">&#x25B8;</span> &#x1F4D0; 分辨率管理</h2></div><div v-show="expanded.res"><ResSection :visible="true" /></div></div>

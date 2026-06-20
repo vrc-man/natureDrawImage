@@ -44,11 +44,6 @@ onMounted(load)
 
 <template>
   <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-    <h2 class="text-sm font-bold text-gray-700 mb-3">
-      📄 Custom Head 注入
-      <span class="ml-2 text-xs px-2 py-0.5 rounded" :class="badgeClass">{{ badgeText }}</span>
-    </h2>
-
     <p class="text-xs text-gray-500 mb-3">
       自定义 HTML 标签注入到页面 &lt;head&gt; 中，可用于统计代码、验证信息等。注意不要包含 &lt;body&gt; 相关标签。
     </p>

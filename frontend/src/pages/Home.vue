@@ -37,8 +37,8 @@ const tabs = computed(() => {
 })
 
 watch(activeTab, (t) => {
-  if (t === 'gallery' && !tabLoaded.value.gallery) { tabLoaded.value.gallery = true; nextTick(() => galleryRef.value?.load(true)) }
-  if (t === 'myworks' && !tabLoaded.value.myworks) { tabLoaded.value.myworks = true; nextTick(() => myworksRef.value?.load(true)) }
+  if (t === 'gallery') { nextTick(() => galleryRef.value?.load(true)) }
+  if (t === 'myworks') { nextTick(() => myworksRef.value?.load(true)) }
   if (t === 'featured') tabLoaded.value.featured = true
   if (t === 'more') tabLoaded.value['more'] = true
 })
@@ -86,6 +86,7 @@ const logLines = ref<string[]>([])
 const showLog = ref(false)
 const resultImages = ref<any[]>([])
 const myQueueItems = ref<any[]>([])
+const hasLoadImage = ref(true)
 
 // Cooldown
 const cooldownSec = ref(0)
@@ -216,7 +217,18 @@ onMounted(async () => {
     const fw = localStorage.getItem('forkedWorkflow')
     if (fw) forkedWorkflow.value = JSON.parse(fw)
     const fm = localStorage.getItem('forkedMeta')
-    if (fm) forkedMeta.value = JSON.parse(fm)
+    if (fm) {
+      forkedMeta.value = JSON.parse(fm)
+      const meta = forkedMeta.value
+      if (meta.workflow_name) {
+        currentWorkflowPath.value = meta.workflow_name
+        localStorage.setItem('currentWorkflow', meta.workflow_name)
+      }
+      if (meta.prompt) directPrompt.value = meta.prompt
+      if (meta.negative_prompt) negativePrompt.value = meta.negative_prompt
+      if (meta.default_width) width.value = meta.default_width
+      if (meta.default_height) height.value = meta.default_height
+    }
   } catch {}
 })
 
@@ -260,13 +272,12 @@ async function onWorkflowSelect(path: string) {
       if (d.builtin_prompt) directPrompt.value = d.builtin_prompt.trim()
       if (d.builtin_negative_prompt) negativePrompt.value = d.builtin_negative_prompt.trim()
       if (d.default_width && d.default_height) { width.value = d.default_width; height.value = d.default_height }
+      hasLoadImage.value = !!(d.summary && d.summary.has_loadimage)
     }
   } catch {}
 }
 
-// ===== Char/Style selection (handled by CharStylePicker via localStorage) =====
-const selectedStyleTags = ref(localStorage.getItem('currentStyle') || '')
-const selectedCharTags = ref(localStorage.getItem('currentCharacters') || '')
+// ===== Char/Style selection (handled by CharStylePicker via localStorage; read at submit time) =====
 
 // ===== Fetch resolutions =====
 async function loadResolutions() {
@@ -397,14 +408,18 @@ function connectStatusWS() {
 }
 
 // ===== Generate =====
-function setMode(m: 'txt2img'|'img2img') { mode.value = m }
+function setMode(m: 'txt2img'|'img2img') {
+  mode.value = m
+  if (m === 'txt2img' && uploadRef.value) uploadRef.value.clearAll()
+}
 
 function prepareGen() {
   const direct = directPrompt.value.trim()
   const nl = nlPrompt.value.trim()
   const neg = negativePrompt.value.trim()
-  const style = selectedStyleTags.value
-  const char = selectedCharTags.value
+  const style = localStorage.getItem('currentStyle') || ''
+  let char = ''
+  try { char = JSON.parse(localStorage.getItem('currentCharacters') || '[]').join(', '); } catch {}
   if (!direct && !nl) { showErrorToast('请输入提示词'); return null }
   return { direct, nl, neg, w: width.value, h: height.value, style, char }
 }
@@ -503,6 +518,7 @@ function handleMsg(m: any) {
   else if (m.type === 'llm_start') { llmText.value = ''; progressText.value = '' }
   else if (m.type === 'llm_chunk') { llmText.value += m.delta }
   else if (m.type === 'llm_done') {
+    llmText.value = ''
     if (m.negative && !negativePrompt.value.trim()) negativePrompt.value = m.negative
   }
   else if (m.type === 'progress') {
@@ -780,7 +796,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 <div class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
                   <WorkflowPicker :mode="mode" @select="onWorkflowSelect" />
                 </div>
-                <div class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+                <div v-if="mode!=='img2img'" class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
                   <CharStylePicker />
                 </div>
               </div>
@@ -843,9 +859,9 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 </div>
 
                 <!-- Img2img upload -->
-                <div v-if="mode==='img2img'">
+                <div v-if="mode==='img2img' && hasLoadImage">
                   <label class="block text-sm font-semibold mb-1.5 text-gray-600">🖼️ 输入图 <span class="text-gray-400 font-normal">(最多3张，单张≤3MB)</span></label>
-                  <Img2ImgUpload ref="uploadRef" />
+                  <Img2ImgUpload ref="uploadRef" :onLog="(msg:string)=>logLines.push(msg)" />
                   <label class="flex items-center gap-1.5 text-sm text-gray-500 mt-2 cursor-pointer select-none">
                     <input v-model="img2imgUsePreset" type="checkbox" class="w-4 h-4 accent-pink-500" />
                     注入上方所选分辨率（默认不勾选，保持原图尺寸）

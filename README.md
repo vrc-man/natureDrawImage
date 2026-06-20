@@ -417,6 +417,19 @@ python -c "import secrets; print(secrets.token_hex(32))"
 
 未设定自定义密钥时应用仍能正常运行，但存在安全隐患。
 
+### ⚙️ SPA 静态文件缓存
+
+前端构建后的 JS/CSS 文件带有 hash 指纹（如 `index-BJk6YaG4.css`），可安全地设置为永久缓存。
+
+在 `.env` 中设置：
+
+```ini
+# SPA 静态文件缓存时间（秒）。0=不缓存（开发用），31536000=1年（生产推荐）
+SPA_CACHE_MAX_AGE=31536000
+```
+
+不设置则默认 `no-cache`，每次请求都重新验证。
+
 ## License
 
 AGPLv3 — 详见 [LICENSE](./LICENSE)

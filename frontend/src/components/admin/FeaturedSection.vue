@@ -50,7 +50,6 @@ onMounted(load)
 
 <template>
   <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-    <h2 class="text-sm font-bold text-gray-700 mb-3">✨ 精选管理 <span class="text-gray-400 font-normal text-xs">({{ total }})</span></h2>
     <div v-if="!items.length" class="text-xs text-gray-400 py-8 text-center">
       还没添加任何精选图。在下面「生图记录」里点 ☆ 加入精选。
     </div>

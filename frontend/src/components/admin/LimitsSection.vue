@@ -110,8 +110,6 @@ onMounted(load)
 
 <template>
   <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-    <h2 class="text-sm font-bold text-gray-700 mb-3">⏱️ 限流配置</h2>
-
     <div class="grid grid-cols-3 gap-3 text-xs mb-4">
       <div v-for="f in limitFields" :key="f.key">
         <label class="text-gray-500 block mb-0.5">{{ f.label }}</label>

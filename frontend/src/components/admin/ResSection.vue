@@ -63,8 +63,6 @@ load()
 
 <template>
   <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-    <h2 class="text-sm font-bold text-gray-700 mb-3">🖼️ 分辨率预设</h2>
-
     <div class="space-y-2 mb-3">
       <div v-for="(r, i) in adminRes" :key="i" class="flex items-center gap-1.5 text-sm bg-gray-50 rounded-xl px-3 py-2">
         <span class="text-[10px] text-gray-400 w-4 shrink-0">{{ i + 1 }}</span>

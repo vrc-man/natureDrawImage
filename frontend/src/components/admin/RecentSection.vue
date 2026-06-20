@@ -126,12 +126,7 @@ const pageWindow = computed(() => {
 
 <template>
   <div v-if="visible" class="bg-white rounded shadow p-4 mb-4">
-    <div class="flex items-center justify-between mb-2">
-      <h2 class="text-lg font-semibold cursor-pointer select-none">
-        <span class="inline-block w-4 text-gray-400">▸</span>
-        📋 生图记录
-        <span class="text-xs text-gray-500 font-normal">(<span>{{ shown }}</span>/<span>{{ total }}</span>)</span>
-      </h2>
+    <div class="flex items-center justify-end mb-2">
       <div class="flex gap-2">
         <button @click="resetPage" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer border-0">刷新</button>
         <button @click="toggleAuto"

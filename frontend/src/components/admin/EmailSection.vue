@@ -185,7 +185,6 @@ onUnmounted(() => stopAuto())
   <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
     <!-- Header -->
     <div class="flex items-center justify-between mb-4">
-      <h2 class="text-sm font-bold text-gray-700">📧 邮箱认证管理</h2>
       <div class="flex items-center gap-2 text-xs">
         <button @click="refreshAll" class="px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 cursor-pointer border-0">刷新</button>
         <button @click="toggleAuto" :class="autoRefresh ? 'bg-green-500 text-white' : 'bg-gray-200 text-gray-600'" class="px-2 py-1 rounded hover:opacity-80 cursor-pointer border-0">自动刷新: {{ autoRefresh ? '开' : '关' }}</button>
@@ -292,7 +291,7 @@ onUnmounted(() => stopAuto())
       </div>
       <div class="grid grid-cols-3 gap-2 text-xs">
         <label v-for="(v, k) in rateLimits" :key="k" class="flex items-center gap-1">
-          <span class="text-gray-500">{{ k }}:</span>
+          <span class="text-gray-500">{{ ({'login_max_per_email_per_min':'登录/min/邮箱','login_max_per_ip_per_min':'登录/min/IP','login_lockout_fails':'锁定失败次数','login_lockout_seconds':'锁定时间(秒)','reg_per_ip_per_hour':'注册/hr/IP','reg_per_ip_per_day':'注册/天/IP','reg_per_email_per_day':'注册/天/邮箱','reg_ip_cooldown_seconds':'IP冷却(秒)','forgot_pw_per_email_per_hour':'重置密码/hr','forgot_pw_per_email_per_day':'重置密码/天','reset_link_expire_seconds':'重置链接过期(秒)','email_global_per_day':'发信/天','email_global_per_min':'发信/分','verify_retry_max':'验证重试上限','verify_abuse_threshold':'恶意标记阈值'}[k] || k) }}:</span>
           <input type="number" v-model.number="rateLimits[k]" class="w-full border border-gray-200 rounded px-1 py-0.5 text-xs" />
         </label>
       </div>

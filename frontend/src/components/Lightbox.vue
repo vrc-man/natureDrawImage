@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, watch, onMounted, onUnmounted } from 'vue'
 import { useLightbox } from '@/composables/useLightbox'
 import { api } from '@/api/client'
 
@@ -7,6 +7,23 @@ const { lbOpen, lbState, current, close, prev, next } = useLightbox()
 const showReport = ref(false)
 const reportReason = ref('')
 const reportStatus = ref('')
+const lbCreator = ref('')
+const forkLoading = ref(false)
+
+function fetchCreator() {
+  const c = current()
+  if (c?.creator) { lbCreator.value = c.creator; return }
+  if (c?.path) {
+    lbCreator.value = ''
+    api('GET', '/api/output/creator?path=' + encodeURIComponent(c.path))
+      .then((d: any) => { if (d.github_id) lbCreator.value = d.github_login || d.github_id })
+      .catch(() => { lbCreator.value = '' })
+  } else {
+    lbCreator.value = ''
+  }
+}
+watch(() => lbState.index, fetchCreator)
+watch(lbOpen, (v) => { if (v) setTimeout(fetchCreator, 50) })
 
 function onKeyDown(e: KeyboardEvent) {
   if (!lbOpen.value) return
@@ -16,16 +33,18 @@ function onKeyDown(e: KeyboardEvent) {
 }
 
 async function doFork() {
-  if (!current()) return
+  if (!current() || forkLoading.value) return
+  forkLoading.value = true
   try {
-    const d = await api<any>('POST', '/api/output/fork', { path: current()!.filename || current()!.path || '' })
-    if (d.inline_workflow) {
-      localStorage.setItem('forkedWorkflow', JSON.stringify(d.inline_workflow))
-      localStorage.setItem('forkedMeta', JSON.stringify(d))
-    }
+    const d = await api<any>('POST', '/api/output/fork', { path: current()!.path || current()!.filename || '' })
+    localStorage.setItem('forkedWorkflow', JSON.stringify(d.workflow || null))
+    localStorage.setItem('forkedMeta', JSON.stringify(d))
     close()
     location.reload()
-  } catch (e: any) { alert('Fork 失败: ' + e.message) }
+  } catch (e: any) {
+    forkLoading.value = false
+    alert('Fork 失败: ' + e.message)
+  }
 }
 
 async function doCopyLink() {
@@ -63,7 +82,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
       <div id="lb-bar" class="text-white px-4 py-3 flex items-center gap-3 flex-wrap text-sm" style="background:rgba(15,23,42,.85);backdrop-filter:blur(12px)">
         <span id="lb-title" class="text-sm mr-auto break-all">{{ current()?.title || '' }}</span>
         <span v-if="current()?.time" class="text-xs text-white/40">{{ current()!.time }}</span>
-        <span v-if="current()?.creator" class="text-xs text-amber-300">{{ current()!.creator }}</span>
+        <span v-if="lbCreator || current()?.creator" class="text-xs text-amber-300">{{ lbCreator || current()?.creator }}</span>
         <a v-if="current()?.filename" :href="'/api/output/file?path=' + encodeURIComponent(current()!.path || current()!.filename || '') + '&full=1'" target="_blank" class="text-white/60 hover:text-white no-underline text-base" title="下载原图">⬇️</a>
         <button @click="doFork" class="text-pink-300 hover:text-pink-100 cursor-pointer border-0 bg-transparent text-base" title="Fork 工作流">🍴</button>
         <button @click="doCopyLink" class="text-white/50 hover:text-white cursor-pointer border-0 bg-transparent text-base" title="复制链接">🔗</button>
@@ -81,6 +100,13 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
           <button @click="doReport" class="flex-1 py-2 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl hover:from-pink-300 hover:to-rose-300 text-sm font-semibold transition-all cursor-pointer border-0">提交举报</button>
         </div>
         <span v-if="reportStatus" class="text-xs mt-2 block text-center" :class="reportStatus.startsWith('✅')?'text-green-500':'text-red-400'">{{ reportStatus }}</span>
+      </div>
+    </div>
+    <!-- Fork loading overlay -->
+    <div v-if="forkLoading" class="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center">
+      <div class="bg-white/95 rounded-2xl px-8 py-6 shadow-2xl flex items-center gap-3">
+        <span class="animate-spin inline-block w-5 h-5 border-2 border-pink-500 border-t-transparent rounded-full"></span>
+        <span class="text-gray-700 font-medium">🍴 Fork 信息加载中...</span>
       </div>
     </div>
   </Teleport>

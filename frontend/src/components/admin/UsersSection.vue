@@ -51,8 +51,6 @@ onMounted(load)
 
 <template>
   <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-    <h2 class="text-sm font-bold text-gray-700 mb-3">👥 用户管理 ({{ users.length }})</h2>
-
     <div class="overflow-x-auto">
       <table class="w-full text-xs">
         <thead>

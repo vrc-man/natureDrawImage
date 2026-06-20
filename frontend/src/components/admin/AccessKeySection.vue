@@ -89,8 +89,7 @@ onMounted(loadKeys)
 
 <template>
   <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-    <h2 class="text-sm font-bold text-gray-700 mb-3">🔑 访问密钥管理</h2>
-
+    
     <p class="text-xs text-gray-500 mb-4">管理访问密钥，支持计时、计次或混合类型的密钥。生成的密钥可用于 API 访问。</p>
 
     <!-- Generate -->

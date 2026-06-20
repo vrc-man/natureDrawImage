@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 
+const props = defineProps<{ onLog?: (msg: string) => void }>()
+
 interface AccImg { name: string; previewUrl: string; progress: number; done: boolean }
 const images = ref<AccImg[]>([])
 const MAX_SHORT = 1440, MAX_LONG = 2560, MAX_BYTES = 3000 * 1024
@@ -56,27 +58,28 @@ function compressImage(file: File): Promise<Blob> {
       // 先尝试 0.98
       canvas.toBlob(async (blob) => {
         if (!blob) { resolve(file); return }
-        if (blob.size > MAX_BYTES) {
-          // 二分搜索 0.7-0.98
-          let lo = 0.7, hi = 0.98, best = blob
+        let resultBlob: Blob = blob
+        if (resultBlob.size > MAX_BYTES) {
+          let lo = 0.7, hi = 0.98
           for (let i = 0; i < 6; i++) {
             const q = (lo + hi) / 2
             const b = await new Promise<Blob | null>(r => canvas.toBlob(r, 'image/jpeg', q))
             if (!b) break
-            best = b
+            resultBlob = b
             if (b.size <= MAX_BYTES) lo = q; else hi = q
           }
-          blob = best
         }
-        if (blob.size > MAX_BYTES) {
-          // 仍超标，缩尺寸再试
-          const ratio2 = Math.sqrt(MAX_BYTES / blob.size)
+        if (resultBlob.size > MAX_BYTES) {
+          const ratio2 = Math.sqrt(MAX_BYTES / resultBlob.size)
           const c2 = document.createElement('canvas')
           c2.width = Math.round(w * ratio2); c2.height = Math.round(h * ratio2)
           c2.getContext('2d')!.drawImage(canvas, 0, 0, c2.width, c2.height)
-          blob = await new Promise(r => c2.toBlob(r, 'image/jpeg', 0.85))
+          resultBlob = await new Promise<Blob | null>(r => c2.toBlob(r, 'image/jpeg', 0.85)) || resultBlob
         }
-        resolve(blob || file)
+        const origKB = (file.size / 1024).toFixed(0)
+        const newKB = (resultBlob.size / 1024).toFixed(0)
+        props.onLog?.(`📐 图片压缩: ${origKB}KB → ${newKB}KB (${w}x${h})`)
+        resolve(resultBlob)
       }, 'image/jpeg', 0.98)
     }
     img.onerror = () => reject(new Error('图片加载失败'))

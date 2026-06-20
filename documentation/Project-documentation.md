@@ -371,10 +371,110 @@ admin.html 的 save 函数是扁平结构，不要额外包一层 `{config:...}`
 cd frontend
 npm run build
 # 输出到 web/static/dist/
-
-# 后端运行
-cd web
-uvicorn app:app --host 0.0.0.0 --port 8080 --reload
 ```
 
-> 前端修改后刷新页面即生效，无需重启后端（文件由后端直接服务）。
+## 后端部署
+
+```bash
+# 方式一：直接运行（推荐）
+# 在项目根目录执行（不要 cd web）
+start.bat
+
+# 方式二：手动启动
+cd /d I:\网站\shengtu\natureDrawImage-main-sqlit
+.venv\Scripts\python.exe -m uvicorn web.app:app --host 127.0.0.1 --port 8080 --forwarded-allow-ips 127.0.0.1 --timeout-graceful-shutdown 30
+
+# 方式三：外网部署
+# 使用反向代理（nginx/caddy）监听 443，转发到 127.0.0.1:8080
+```
+
+## 内网穿透测试
+
+```
+本地服务器 :8080
+  ↕ frpc/ngrok 客户端
+内网穿透 → https://cc.hjmmb.com （示例域名）
+```
+
+## 前端修改后部署流程
+
+```bash
+cd frontend
+npm run build               # 构建
+# 输出到 web/static/dist/
+# 刷新浏览器即可，无需重启后端
+```
+
+> 注意：前端构建输出到 `web/static/dist/`，后端直接服务这些静态文件。修改 Vue 代码后只需重新构建，刷新页面即可，**不需要重启 Python 后端**。
+
+---
+
+# 测试指南
+
+## 管理后台功能测试清单
+
+| 模块 | 测试内容 | 预期结果 |
+|------|---------|---------|
+| 队列管理 | 展开/折叠，查看在线用户 | 正常显示 |
+| 公告管理 | 创建/编辑/开启/关闭公告 | 公告在前端显示/隐藏 |
+| 画风管理 | 添加/编辑/排序/上传缩略图 | 画风在用户端可选 |
+| 角色管理 | 同上 | 同上 |
+| 工作流元数据 | 分类管理/缩略图上传/重命名 | 工作流显示正常 |
+| LLM 配置 | 切换提供商/保存/测试模型 | 连接成功/失败 |
+| 限流配置 | 修改参数/保存/GC/重启 | 参数生效 |
+| 邮箱管理 | 邀请码/注册限流/用户列表/发信日志 | 数据正常显示 |
+| 访问密钥 | 生成/禁用/启用/清理 | 密钥可用/不可用 |
+| 生图日志 | 筛选/编辑模式/批量删除/清空 | 日志操作正常 |
+| 删除记录 | 缩略图查看/清理记录 | 记录可清理 |
+| IP 封禁 | 添加/解封/白名单/IP图片查看 | 封禁生效 |
+| 举报管理 | 处理举报（删除/封禁/忽略） | 举报消失 |
+| 图片管理 | 全选/批量删除/条件筛选删除 | 图片标记删除 |
+| GC 系统 | 执行 GC/查看日志/清空日志 | GC 完成并记录 |
+| 生图记录 | 封禁/精选/删除 | 操作生效 |
+| 精选管理 | 拖拽排序/加载更多 | 排序同步到前端 |
+
+## 灯箱测试
+
+在所有带缩略图的板块（生图日志、删除记录、图片管理、生图记录、精选）点击缩略图验证：
+
+- [ ] 灯箱打开显示大图
+- [ ] 键盘 ← → 切换
+- [ ] Esc 关闭
+- [ ] 下载按钮
+- [ ] 封禁用户（管理员可见）
+
+## API 测试（使用 PowerShell）
+
+```powershell
+# 测试路由是否注册（返回 401 表示路由存在，需要登录）
+Invoke-WebRequest -Uri "http://127.0.0.1:8080/api/admin/email-dashboard" -TimeoutSec 5
+
+# 测试邮箱用户列表
+Invoke-WebRequest -Uri "http://127.0.0.1:8080/api/admin/email-users?limit=24&offset=0" -TimeoutSec 5
+
+# 测试发信日志
+Invoke-WebRequest -Uri "http://127.0.0.1:8080/api/admin/email-logs?limit=24&offset=0" -TimeoutSec 5
+
+# 测试图片条件删除
+Invoke-WebRequest -Uri "http://127.0.0.1:8080/api/admin/images/delete-by-query" -Method POST -Body '{"date_from": 1700000000, "date_to": 1800000000}' -ContentType "application/json" -TimeoutSec 10
+```
+
+> 返回 401 = 路由正常（未登录）。返回 404 = 路由未注册。
+
+## 常见问题排查
+
+| 现象 | 原因 | 解决 |
+|------|------|------|
+| 邮箱 API 返回 404 | `init_email_auth()` 在 SPA 兜底之后注册 | 检查 `app.py` 底部路由顺序 |
+| 修改代码后不生效 | Python 字节码缓存 | 删除 `web/__pycache__/` 重启 |
+| 前端修改不生效 | 浏览器缓存 | Ctrl+F5 强制刷新 |
+| 邮箱日志状态全红 | 前端不认 `"ok"` 状态码 | 检查 `logStatusText()` 是否包含 `'ok'` |
+| 删除操作无响应 | 锁竞争或数据文件损坏 | 查看服务端日志，确认锁是否释放 |
+
+---
+
+# 变更日志
+
+| 日期 | 提交 | 说明 |
+|------|------|------|
+| 2026-06-19 | `f264714` | 管理后台模块化重构：21 个独立组件、邮箱管理 API 修复、SPA 路由顺序修复、GC del_set 清理、项目文档 |

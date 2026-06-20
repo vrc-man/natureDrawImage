@@ -221,6 +221,7 @@ def get_email_user(session_uid: str) -> Optional[dict]:
         "banned_reason": eu.get("banned_reason", ""),
     }
 
+
 def _sync_main_email_user_ban(github_id: str, banned: bool, reason: str = "") -> None:
     """同步邮箱用户封禁状态到主 users 表，避免主会话读取绕过 email_users。"""
     get_db().execute(

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { api, fmt } from './useAdminApi'
+import { api, fmt, fmtShort } from './useAdminApi'
 
 defineProps<{ visible: boolean }>()
 
@@ -42,7 +42,7 @@ async function deleteByFilter() {
   if (filterCreator.value.trim()) body.creator = filterCreator.value.trim()
   if (!body.date_from && !body.date_to && !body.creator) { alert('请至少设置一个筛选条件'); return }
   const desc = [body.date_from ? '日期起' : '', body.date_to ? '日期止' : '', body.creator ? '创建者: ' + body.creator : ''].filter(Boolean).join(', ')
-  if (!confirm(`确定按条件删除匹配的图片？筛选条件: ${desc}\n匹配的图片将被标记删除，文件待 GC 清理。`)) return
+  if (!confirm(`确定按条件删除匹配的图片？筛选条件: ${desc}`)) return
   const i = prompt(`即将删除匹配条件的图片，请输入"确认删除"以继续：`)
   if (i !== '确认删除') { alert('输入不匹配，已取消'); return }
   filtering.value = true
@@ -68,7 +68,7 @@ function toggleItem(path: string) {
 
 async function deleteSelected() {
   if (!selected.value.size) return
-  if (!confirm(`确定删除选中的 ${selected.value.size} 张图片？将标记删除，文件待 GC 清理。`)) return
+  if (!confirm(`确定删除选中的 ${selected.value.size} 张图片？`)) return
   const paths = Array.from(selected.value)
   try {
     await api('POST', '/api/admin/mark_delete_batch', { paths })
@@ -90,12 +90,7 @@ onMounted(() => loadImages(true))
 
 <template>
   <div v-if="visible" class="bg-white rounded shadow p-4 mb-4">
-    <div class="flex items-center justify-between mb-2">
-      <h2 class="text-lg font-semibold cursor-pointer select-none">
-        <span class="inline-block w-4 text-gray-400">&#x25B8;</span>
-        &#x1F5BC;&#xFE0F; 图片管理
-        <span class="text-xs text-gray-500 font-normal">(<span>{{ shown }}</span>/<span>{{ total }}</span>)</span>
-      </h2>
+    <div class="flex items-center justify-end mb-2">
       <div class="flex gap-2">
         <button @click="toggleAll" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer border-0">全选</button>
         <button v-if="selected.size > 0" @click="deleteSelected" class="text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 cursor-pointer border-0">&#x1F5D1; 删除选中 ({{ selected.size }})</button>
@@ -123,6 +118,7 @@ onMounted(() => loadImages(true))
             :data-path="img.path" :data-mtime="img.mtime || ''" :data-ip="img.creator_ip || ''" />
           <div class="text-[9px] text-gray-500 mt-0.5 truncate" :title="img.path">{{ img.path.split('/').pop() }}</div>
           <div class="text-[8px] text-gray-400 truncate">{{ creatorInfo(img) || '\u00A0' }}</div>
+          <div class="text-[8px] text-gray-400" v-if="img.mtime">{{ fmt(img.mtime) }}</div>
         </div>
       </div>
       <div class="mt-3 text-center">

@@ -24,7 +24,7 @@ async function load(reset = false) {
 }
 
 async function del(path: string) {
-  if (!confirm('确定要删除这张作品吗？将标记删除，文件待 GC 清理。')) return
+  if (!confirm('确定要删除这张作品吗？')) return
   try {
     await deleteMyImage(path)
     items.value = items.value.filter((i: any) => i.path !== path)
@@ -49,7 +49,7 @@ function toggleSelectAll() {
 
 async function deleteSelected() {
   if (!selected.value.size) return
-  if (!confirm(`确定删除选中的 ${selected.value.size} 张作品？将标记删除，文件待 GC 清理。`)) return
+  if (!confirm(`确定删除选中的 ${selected.value.size} 张作品？`)) return
   const i = prompt(`即将删除选中的 ${selected.value.size} 张图片，请输入"确认删除这些图片"以继续：`)
   if (i !== '确认删除这些图片') { alert('输入不匹配，已取消'); return }
   const paths = Array.from(selected.value)
@@ -61,7 +61,7 @@ async function deleteSelected() {
 
 async function deleteAll() {
   if (!total.value) return
-  if (!confirm(`确定删除全部 ${total.value} 张作品？将标记删除，文件待 GC 清理。`)) return
+  if (!confirm(`确定删除全部 ${total.value} 张作品？`)) return
   const i = prompt(`即将删除全部 ${total.value} 张作品，请输入"确认全部删除图片"以继续：`)
   if (i !== '确认全部删除图片') { alert('输入不匹配，已取消'); return }
   try { await deleteAllMyImages() } catch {}
@@ -70,12 +70,18 @@ async function deleteAll() {
   selected.value = new Set()
 }
 
+function fmtTime(ts: number) {
+  if (!ts) return ''
+  const d = new Date(ts * 1000)
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+}
 function openLightbox(index: number) {
   const lbItems: LbItem[] = items.value.map((img: any) => ({
     url: img.url || `/api/output/file?path=${encodeURIComponent(img.path || '')}`,
     title: img.filename || img.path?.split('/').pop(),
     path: img.path,
     filename: img.filename || img.path?.split('/').pop(),
+    time: img.time ? fmtTime(img.time) : '',
   }))
   open(lbItems, index)
 }

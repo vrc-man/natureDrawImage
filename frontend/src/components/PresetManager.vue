@@ -51,10 +51,10 @@ function deleteSelected() {
 function importFromBox() {
   const ta = document.getElementById(props.target) as HTMLTextAreaElement
   if (!ta || !ta.value.trim()) return
-  const name = prompt('预设名称：')
-  if (!name) return
-  presets.value.push({ name, text: ta.value.trim() })
-  savePresets(presets.value)
+  editingId.value = null
+  formName.value = ''
+  formText.value = ta.value.trim()
+  view.value = 'form'
 }
 function fillPreset(id: number) {
   const p = presets.value[id]
@@ -120,7 +120,7 @@ function importPresets() {
           <div class="p-5 space-y-3">
             <input v-model="formName" placeholder="预设名称" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all box-border" />
             <textarea v-model="formText" placeholder="预设内容" rows="6" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all resize-y box-border"></textarea>
-            <button @click="importFromBox" class="text-xs text-pink-400 hover:text-pink-500 cursor-pointer border-0 bg-transparent">📥 从输入框导入</button>
+            <button @click="importFromBox" class="text-xs text-pink-400 hover:text-pink-500 cursor-pointer border-0 bg-transparent">📥 从提示词框内导入</button>
             <div class="flex gap-2">
               <button @click="view = 'list'" class="flex-1 py-2.5 bg-gray-100 rounded-xl hover:bg-gray-200 text-sm text-gray-600 transition-all cursor-pointer border-0">取消</button>
               <button @click="saveForm" class="flex-1 py-2.5 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl hover:from-pink-300 hover:to-rose-300 text-sm font-semibold transition-all cursor-pointer border-0">保存</button>

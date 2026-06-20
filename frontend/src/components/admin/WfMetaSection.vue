@@ -125,11 +125,7 @@ onMounted(load)
 
 <template>
   <div v-if="visible" class="bg-white rounded shadow p-4 mb-4">
-    <div class="flex items-center justify-between mb-2">
-      <h2 class="text-lg font-semibold">
-        🔗 工作流缩略图 & Lora 链接
-        <span class="ml-2 text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">{{ wfMeta.length }}</span>
-      </h2>
+    <div class="flex items-center justify-end mb-2">
       <button @click="load" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 border-0 cursor-pointer">刷新</button>
     </div>
     <div>

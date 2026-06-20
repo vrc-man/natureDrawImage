@@ -36,7 +36,6 @@ onMounted(load)
 
 <template>
   <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-    <h2 class="text-sm font-bold text-gray-700 mb-3">📮 举报管理 <span class="text-gray-400 font-normal text-xs">({{ count }})</span></h2>
     <div class="space-y-3">
       <div v-for="r in reports" :key="r.id" class="border border-gray-100 rounded-xl p-3">
         <div class="flex items-start gap-3">

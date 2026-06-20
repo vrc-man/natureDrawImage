@@ -4,6 +4,7 @@ import { api, fmt } from './useAdminApi'
 
 const lbOpen = ref(false)
 const lbItems = ref<any[]>([]), lbIndex = ref(0), lbCur = ref<any>(null), lbGhUser = ref(''), lbBanGid = ref('')
+const forkLoading = ref(false)
 
 function closeLb() { lbOpen.value = false; document.body.style.overflow = '' }
 
@@ -13,10 +14,18 @@ function collectLbItems() {
     const h = el as HTMLElement
     const isAnchor = el.tagName === 'A'
     const href = isAnchor ? (el as HTMLAnchorElement).getAttribute('href') || '' : ''
+    const delThumb = h.dataset.delThumb || ''
+    const path = h.dataset.path || ''
+    const isGenlog = !!h.dataset.genlog
+    const hasOriginal = !!(path && !delThumb && !isGenlog)
+    const url = delThumb || href || (path ? '/api/output/file?path=' + encodeURIComponent(path) : '')
     items.push({
-      url: h.dataset.delThumb || href || '/api/output/file?path=' + encodeURIComponent(h.dataset.path || '') + '&full=1',
-      path: h.dataset.path || '', mtime: h.dataset.mtime || '', ip: h.dataset.ip || '',
-      isGenlog: !!h.dataset.genlog, delThumb: h.dataset.delThumb || '',
+      url,
+      _key: path || url,
+      downloadUrl: hasOriginal ? '/api/output/file?path=' + encodeURIComponent(path) + '&full=1' : '',
+      path, mtime: h.dataset.mtime || '', ip: h.dataset.ip || '',
+      author: h.dataset.author || '',
+      isGenlog, delThumb,
     })
   })
   return items
@@ -25,16 +34,20 @@ function collectLbItems() {
 function showLb() {
   const it = lbItems.value[lbIndex.value]
   if (!it) return; lbCur.value = it
-  if (it.path) {
+  // 删除记录已有创建者信息，不调 /api/output/creator
+  if (it.path && !it.delThumb) {
     api('GET', '/api/output/creator?path=' + encodeURIComponent(it.path))
       .then(d => { lbGhUser.value = d.github_id ? 'GitHub: ' + (d.github_login || d.github_id) + (d.github_email ? ' <' + d.github_email + '>' : '') : ''; lbBanGid.value = d.github_id || '' })
       .catch(() => { lbGhUser.value = ''; lbBanGid.value = '' })
+  } else {
+    lbGhUser.value = ''; lbBanGid.value = ''
   }
 }
 
-function openLb(path: string) {
+function openLb(path: string, url: string = '') {
   lbItems.value = collectLbItems()
-  lbIndex.value = Math.max(0, lbItems.value.findIndex((it: any) => it.path === path))
+  const key = path || url
+  lbIndex.value = Math.max(0, lbItems.value.findIndex((it: any) => it._key === key))
   lbOpen.value = true; document.body.style.overflow = 'hidden'; showLb()
 }
 
@@ -50,11 +63,30 @@ async function lbBanUser() {
   try { await api('POST', '/api/admin/users/ban', { github_id: gid, reason: r || '' }); alert('已封禁用户 ' + gid); lbBanGid.value = '' } catch (e: any) { alert('封禁失败: ' + e.message) }
 }
 
+async function doFork() {
+  const path = lbCur.value?.path
+  if (!path || forkLoading.value) return
+  forkLoading.value = true
+  try {
+    const d = await api('POST', '/api/output/fork', { path })
+    localStorage.setItem('forkedWorkflow', JSON.stringify(d.workflow || null))
+    localStorage.setItem('forkedMeta', JSON.stringify(d))
+    closeLb()
+    location.href = '/'
+  } catch (e: any) {
+    forkLoading.value = false
+    alert('Fork 失败: ' + e.message)
+  }
+}
+
 function handleKeydown(e: KeyboardEvent) { if (!lbOpen.value) return; if (e.key === 'Escape') closeLb(); if (e.key === 'ArrowLeft') lbPrev(); if (e.key === 'ArrowRight') lbNext() }
 function handleThumbClick(e: Event) {
   const target = e.target as HTMLElement; const img = target.closest('.lb-thumb') as HTMLElement
   if (!img) return; if (target.closest('button, .btn-del-row, .btn-ban-row')) return
-  e.preventDefault(); openLb(img.dataset.path || '')
+  e.preventDefault()
+  const path = img.dataset.path || ''
+  const url = (img.tagName === 'A' ? (img as HTMLAnchorElement).href : (img.dataset.delThumb || '')) || ''
+  openLb(path, url)
 }
 
 document.addEventListener('keydown', handleKeydown)
@@ -72,11 +104,19 @@ onUnmounted(() => { document.body.style.overflow = ''; document.removeEventListe
     </div>
     <div class="flex items-center gap-2 flex-wrap p-2 bg-black/50 text-white text-xs">
       <span class="text-gray-300 mr-auto break-all">{{ lbCur?.path?.split('/').pop() || '' }}</span>
+      <span v-if="lbCur?.author" class="text-emerald-300">👤 {{ lbCur.author }}</span>
+      <span v-else-if="lbGhUser" class="text-emerald-300">{{ lbGhUser }}</span>
       <span class="text-gray-400">{{ lbCur?.mtime ? fmt(parseInt(lbCur.mtime)) : '' }}</span>
       <span class="text-amber-300">{{ lbCur?.ip ? 'IP: ' + lbCur.ip : '' }}</span>
-      <span v-if="lbGhUser" class="text-emerald-300">{{ lbGhUser }}</span>
+      <button v-if="lbCur?.path" @click="doFork" class="text-xs px-2 py-0.5 bg-pink-600 text-white rounded hover:bg-pink-700 cursor-pointer border-0">&#x1F374; Fork</button>
       <button v-if="lbBanGid" class="text-xs px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700 cursor-pointer border-0" @click="lbBanUser">&#x1F6AB; 封禁用户</button>
-      <a v-if="lbCur && !lbCur.isGenlog" :href="lbCur.url" target="_blank" rel="noopener" download class="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">&#x2B07; 下载原图</a>
+      <a v-if="lbCur && lbCur.downloadUrl" :href="lbCur.downloadUrl" target="_blank" rel="noopener" download class="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">&#x2B07; 下载原图</a>
+    </div>
+    <div v-if="forkLoading" class="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center">
+      <div class="bg-white/95 rounded-2xl px-8 py-6 shadow-2xl flex items-center gap-3">
+        <span class="animate-spin inline-block w-5 h-5 border-2 border-pink-500 border-t-transparent rounded-full"></span>
+        <span class="text-gray-700 font-medium">🍴 Fork 信息加载中...</span>
+      </div>
     </div>
   </div>
 </template>
