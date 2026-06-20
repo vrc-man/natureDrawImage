@@ -1404,6 +1404,10 @@ async def _auth_middleware(request: Request, call_next):
     """基于会话的鉴权，保护 /admin 和 /api/admin/*，注入用户到 request.state。"""
     path = request.url.path
 
+    # 旧版生图页入口已被 Vue SPA 替代，旧链接统一带回新版入口。
+    if path == "/static/index.html":
+        return Response(status_code=302, headers={"Location": "/"})
+
     # 维护模式：未登录非管理员用户看到维护页（略过登录要求）
     if _maintenance.get("enabled") and not path.startswith(("/static", "/spa-assets")) and not path.startswith("/auth/"):
         user = _get_user_from_session(request)
@@ -3264,6 +3268,7 @@ var _hasRead = localStorage.getItem('agreementRead') === 'true';
 var _hasChecked = localStorage.getItem('agreementChecked') === 'true';
 var _turnstilePassed = false;
 var _turnstileRendered = false;
+var _turnstileRenderTimer = null;
 if (_hasRead) {
   document.getElementById('agree-hint').style.display = 'none';
   document.getElementById('agree-label').style.display = 'flex';
@@ -3320,18 +3325,37 @@ function _onTurnstilePass() {
   _turnstilePassed = true;
   _updateButtons();
 }
+function _renderWelcomeTurnstile(tryCount) {
+  if (_turnstileRendered || !document.getElementById('agree-check').checked) return;
+  var c = document.getElementById('turnstile-welcome-container');
+  if (!c) return;
+  tryCount = tryCount || 0;
+  if (typeof turnstile === 'undefined') {
+    if (tryCount < 40) {
+      if (_turnstileRenderTimer) clearTimeout(_turnstileRenderTimer);
+      _turnstileRenderTimer = setTimeout(function(){ _renderWelcomeTurnstile(tryCount + 1); }, 250);
+    } else {
+      c.innerHTML = '<p style="font-size:12px;color:#ef4444">人机验证加载失败，请刷新页面重试</p>';
+    }
+    return;
+  }
+  try {
+    c.innerHTML = '';
+    turnstile.render('#turnstile-welcome-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU', theme: 'light', callback: _onTurnstilePass });
+    _turnstileRendered = true;
+  } catch(e) {
+    _turnstileRendered = false;
+    c.innerHTML = '<p style="font-size:12px;color:#ef4444">人机验证加载失败，请刷新页面重试</p>';
+  }
+}
 function _onCheckboxChange() {
   var checked = document.getElementById('agree-check').checked;
   localStorage.setItem('agreementChecked', checked ? 'true' : 'false');
-  if (checked && !_turnstileRendered) {
-    _turnstileRendered = true;
-    var c = document.getElementById('turnstile-welcome-container');
-    if (c && typeof turnstile !== 'undefined') {
-      try { turnstile.render('#turnstile-welcome-container', { sitekey: '0x4AAAAAADWvaKWEsnuGl7oU', theme: 'light', callback: _onTurnstilePass }); } catch(e) {}
-    }
-  }
+  if (checked) _renderWelcomeTurnstile();
+  else _turnstilePassed = false;
   _updateButtons();
 }
+window.addEventListener('load', function(){ if (document.getElementById('agree-check').checked) _renderWelcomeTurnstile(); });
 </script>
 
 </body>
