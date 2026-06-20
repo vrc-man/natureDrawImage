@@ -7,7 +7,7 @@ const emit = defineEmits<{ select: [path: string, name: string] }>()
 const props = defineProps<{ mode: 'txt2img' | 'img2img' }>()
 
 const open = ref(false)
-const selectedName = ref(localStorage.getItem('currentWorkflowName') || '')
+const selectedName = ref(displayWorkflowText(localStorage.getItem('currentWorkflowName') || ''))
 const allWorkflows = ref<WorkflowItem[]>([])
 const search = ref('')
 const catExpanded = ref<Record<string, boolean>>({})
@@ -23,7 +23,7 @@ const workflows = computed(() => {
 const filtered = computed(() => {
   if (!search.value) return workflows.value
   const q = search.value.toLowerCase()
-  return workflows.value.filter(w => (w.name || w.path).toLowerCase().includes(q))
+  return workflows.value.filter(w => displayWorkflowName(w).toLowerCase().includes(q))
 })
 
 const grouped = computed(() => {
@@ -49,18 +49,31 @@ onMounted(loadAll)
 
 function toggle() { open.value = !open.value }
 function select(w: WorkflowItem) {
+  const name = displayWorkflowName(w)
   localStorage.setItem('currentWorkflow', w.path)
-  selectedName.value = w.name || w.path
-  localStorage.setItem('currentWorkflowName', selectedName.value)
-  emit('select', w.path, w.name || w.path)
+  selectedName.value = name
+  localStorage.setItem('currentWorkflowName', name)
+  emit('select', w.path, name)
   open.value = false
 }
 
+function displayWorkflowName(w: WorkflowItem) {
+  return displayWorkflowText(w.name || w.path)
+}
+
+function displayWorkflowText(text: string) {
+  return text.replace(/^.*[\\/]/, '').replace(/\.json$/i, '')
+}
+
+function escapeHtml(text: string) {
+  return text.replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch] || ch))
+}
+
 function _highlight(text: string, q: string) {
-  if (!q) return text
+  if (!q) return escapeHtml(text)
   const idx = text.toLowerCase().indexOf(q.toLowerCase())
-  if (idx === -1) return text
-  return text.slice(0, idx) + '<mark class="bg-pink-200 rounded px-0.5">' + text.slice(idx, idx + q.length) + '</mark>' + text.slice(idx + q.length)
+  if (idx === -1) return escapeHtml(text)
+  return escapeHtml(text.slice(0, idx)) + '<mark class="bg-pink-200 rounded px-0.5">' + escapeHtml(text.slice(idx, idx + q.length)) + '</mark>' + escapeHtml(text.slice(idx + q.length))
 }
 </script>
 
@@ -88,10 +101,13 @@ function _highlight(text: string, q: string) {
               {{ cat }}
             </div>
             <div v-show="catExpanded[cat] !== false" class="wf-grid flex flex-wrap gap-1.5">
-              <div v-for="w in items" :key="w.path" class="wf-card" :title="w.name || w.path" @click="select(w)">
+              <div v-for="w in items" :key="w.path" class="wf-card" :title="displayWorkflowName(w)" @click="select(w)">
                 <img v-if="w.thumbnail" :src="'/api/thumbnail?path=' + encodeURIComponent(w.path)" class="wf-thumb" loading="lazy" />
-                <div v-else class="wf-thumb flex items-center justify-center text-gray-300 text-lg">📄</div>
-                <span class="wf-label" v-html="_highlight(w.name || w.path, search)"></span>
+                <div v-else class="wf-thumb wf-thumb-placeholder">
+                  <span class="wf-placeholder-icon">🎨</span>
+                  <span class="wf-placeholder-text">Workflow</span>
+                </div>
+                <span class="wf-label" v-html="_highlight(displayWorkflowName(w), search)"></span>
               </div>
             </div>
           </div>
