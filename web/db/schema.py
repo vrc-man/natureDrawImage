@@ -29,10 +29,11 @@ def get_db() -> sqlite3.Connection:
     """获取数据库连接（自动创建）。"""
     global _conn
     if _conn is None:
-        _conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+        _conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=30)
         _conn.row_factory = sqlite3.Row
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA foreign_keys=ON")
+        _conn.execute("PRAGMA busy_timeout=30000")
     return _conn
 
 
