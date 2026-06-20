@@ -2092,15 +2092,42 @@ def _gen_logs_lookup(path: str) -> Tuple[str, str]:
     _ensure_gen_logs_cache()
     return _gen_logs_path_cache.get(path, ("", ""))
 
+def _deletion_creator_meta(rel_path: str) -> Tuple[str, str, str]:
+    """删除前抓取创建者信息，避免事务清理关联表后日志缺失。"""
+    key = rel_path.replace("\\", "/")
+    creator_ip = db.lookup_creator_ip(key) or ""
+    creator_gid = ""
+    creator_login = ""
+    try:
+        for uid_, entries in _load_user_images().items():
+            for e in entries:
+                if (e.get("path", "")).replace("\\", "/") == key:
+                    creator_gid = uid_
+                    break
+            if creator_gid:
+                break
+    except Exception:
+        pass
+    if not creator_gid:
+        creator_gid, creator_login = _gen_logs_lookup(key)
+    if creator_gid and not creator_login:
+        creator_login = _load_users().get(creator_gid, {}).get("login", creator_gid)
+    return creator_gid, creator_login, creator_ip
+
 async def _record_deletion(rel_path: str, github_id: str, login: str,
-                          creator_gid: str = "", creator_login: str = ""):
-    """将删除图片的缩略图移动到存档目录，并记录删除日志。
+                          creator_gid: str = "", creator_login: str = "",
+                          creator_ip_hint: str = ""):
+    """将删除图片的缩略图复制到存档目录，并记录删除日志。
     若调用方已知生图者信息，传入可避免删除后查不到。"""
     import uuid as _uuid, shutil as _shutil
     uid = _uuid.uuid4().hex[:12]
     dst = None
     try:
         src_thumb = _thumb_cache_path(rel_path)
+        if not src_thumb.is_file():
+            src_img = _resolve_output_path(rel_path)
+            if src_img.is_file():
+                await asyncio.to_thread(_generate_thumb, src_img, rel_path)
         if src_thumb.is_file():
             DELETION_THUMBS_DIR.mkdir(parents=True, exist_ok=True)
             dst = DELETION_THUMBS_DIR / f"{uid}.webp"
@@ -2108,7 +2135,7 @@ async def _record_deletion(rel_path: str, github_id: str, login: str,
     except Exception:
         dst = None
     # 始终查 creator_ip（不论调用方是否传入 creator_gid）
-    creator_ip = ""
+    creator_ip = creator_ip_hint
     creator_github_id = creator_gid
     key = rel_path.replace("\\", "/")
     try:
@@ -6787,20 +6814,13 @@ async def api_delete_my_image(request: Request, payload: DeleteImagePayload):
         owned = {i.get("path", "") for i in data.get(github_id, [])}
         if rel_path not in owned:
             raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
-        db.remove_user_image(github_id, rel_path)
-    # 标记删除
-    async with _deleted_images_lock:
-        db.add_deleted_image(github_id, rel_path)
-    # 清理精选列表
-    feats = _read_featured()
-    if rel_path in feats:
-        feats = [x for x in feats if x != rel_path]
-        await _write_featured(feats)
-    # 自动 dismiss 待处理举报
-    db.dismiss_reports_for_image(rel_path)
+        db.mark_images_deleted(github_id, [rel_path], owner_github_id=github_id)
     # 记录删除日志（缩略图移入存档目录），传生图者避免查不到
-    await _record_deletion(rel_path, github_id, user.get("login", github_id),
-                          creator_gid=creator_gid, creator_login=creator_login)
+    try:
+        await _record_deletion(rel_path, github_id, user.get("login", github_id),
+                              creator_gid=creator_gid, creator_login=creator_login)
+    except Exception as e:
+        print(f"[WARN] 删除日志记录失败: {rel_path} — {type(e).__name__}: {e}")
     # 文件由 GC / 启动清理统一处理，此处仅标记
     return {"ok": True}
 
@@ -6831,26 +6851,13 @@ async def api_delete_my_images_batch(request: Request, payload: DeleteImagesPayl
         allowed = [p for p in valid if p in owned]
         if not allowed:
             return {"ok": True, "deleted": 0}
-        for p in allowed:
-            db.remove_user_image(github_id, p)
+        db.mark_images_deleted(github_id, allowed, owner_github_id=github_id)
     for p in allowed:
         try:
-            db.add_deleted_image(github_id, p)
-            db.remove_creator_ip(p)
-            db.dismiss_reports_for_image(p)
             await _record_deletion(p, github_id, creator_login,
                                   creator_gid=github_id, creator_login=creator_login)
         except Exception:
             pass
-    # 清理精选
-    feats = _read_featured()
-    changed = False
-    for p in allowed:
-        if p in feats:
-            feats = [x for x in feats if x != p]
-            changed = True
-    if changed:
-        await _write_featured(feats)
     return {"ok": True, "deleted": len(allowed)}
 
 @app.post("/api/my-images/delete-all")
@@ -6866,26 +6873,13 @@ async def api_delete_my_images_all(request: Request):
         paths = [i.get("path", "") for i in data.get(github_id, []) if i.get("path")]
         if not paths:
             return {"ok": True, "deleted": 0}
-        for p in paths:
-            db.remove_user_image(github_id, p)
+        db.mark_images_deleted(github_id, paths, owner_github_id=github_id)
     for p in paths:
         try:
-            db.add_deleted_image(github_id, p)
-            db.remove_creator_ip(p)
-            db.dismiss_reports_for_image(p)
             await _record_deletion(p, github_id, creator_login,
                                   creator_gid=github_id, creator_login=creator_login)
-        except Exception:
-            pass
-    # 清理精选
-    feats = _read_featured()
-    changed = False
-    for p in paths:
-        if p in feats:
-            feats = [x for x in feats if x != p]
-            changed = True
-    if changed:
-        await _write_featured(feats)
+        except Exception as e:
+            print(f"[WARN] 删除日志记录失败: {p} — {type(e).__name__}: {e}")
     return {"ok": True, "deleted": len(paths)}
 
 # ---------------- 用户管理 (admin only) ----------------
@@ -7230,31 +7224,16 @@ async def api_admin_delete(request: Request, payload: Dict[str, Any]):
     p = _resolve_output_path(rel)
     if not p.is_file():
         raise HTTPException(404, "not found")
-    # 仅标记删除，文件由 GC / 启动统一清理
-    try:
-        await _record_deletion(rel, "__admin__", "admin")
-    except Exception as e:
-        print(f"[ERROR] 管理员标记删除失败: {rel} — {type(e).__name__}: {e}")
-        raise HTTPException(500, "标记删除失败")
     key = rel.replace("\\", "/")
-    # 标记到 deleted_images
-    async with _deleted_images_lock:
-        try:
-            db.add_deleted_image("__admin__", key)
-        except Exception:
-            pass
-    async with _creator_map_lock:
-        db.remove_creator_ip(key)
-    # 删图时同步从精选清掉
-    feats = _read_featured()
-    if rel in feats:
-        feats = [x for x in feats if x != rel]
-        await _write_featured(feats)
-    # 自动忽略该图所有待处理举报
-    await _auto_dismiss_reports_for_image(rel)
-    # 同步清理 user_images
-    async with _user_images_lock:
-        db.remove_user_image_by_path(rel)
+    creator_gid, creator_login, creator_ip = _deletion_creator_meta(key)
+    db.mark_images_deleted("__admin__", [key])
+    # 删除状态已落库；日志/缩略图归档失败不影响删除结果
+    try:
+        await _record_deletion(key, "__admin__", "admin",
+                              creator_gid=creator_gid, creator_login=creator_login,
+                              creator_ip_hint=creator_ip)
+    except Exception as e:
+        print(f"[WARN] 删除日志记录失败: {key} — {type(e).__name__}: {e}")
     return {"ok": True}
 
 
@@ -7294,6 +7273,7 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
         raise HTTPException(400, "paths (list) required")
     deleted = []
     failed = []
+    deletion_meta: Dict[str, Tuple[str, str, str]] = {}
     for rel in paths:
         rel = str(rel).strip()
         if not rel:
@@ -7301,32 +7281,23 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
         try:
             p = _resolve_output_path(rel)
             if p.is_file():
-                await _record_deletion(rel, "__admin__", "admin")
-                deleted.append(rel)
+                key = rel.replace("\\", "/")
+                deletion_meta[key] = _deletion_creator_meta(key)
+                deleted.append(key)
             else:
                 failed.append(rel)
         except Exception:
             failed.append(rel)
-    # 标记到 deleted_images
     del_set = set(r.replace("\\", "/") for r in deleted)
-    if deleted:
-        for d in del_set:
-            db.add_deleted_image("__admin__", d)
-    # 批量清理关联数据
     if del_set:
-        for p in del_set:
-            db.remove_creator_ip(p)
-        feats = _read_featured()
-        changed = False
-        for rel in deleted:
-            if rel in feats:
-                feats = [x for x in feats if x != rel]
-                changed = True
-        if changed:
-            await _write_featured(feats)
-        db.dismiss_reports_for_image_paths(del_set)
-        async with _user_images_lock:
-            db.remove_user_images_by_paths(del_set)
+        db.mark_images_deleted("__admin__", list(del_set))
+        for p in deleted:
+            try:
+                cg, cl, cip = deletion_meta.get(p, ("", "", ""))
+                await _record_deletion(p, "__admin__", "admin",
+                                      creator_gid=cg, creator_login=cl, creator_ip_hint=cip)
+            except Exception as e:
+                print(f"[WARN] 删除日志记录失败: {p} — {type(e).__name__}: {e}")
     return {"ok": True, "deleted": len(deleted), "failed": len(failed)}
 
 
@@ -7421,33 +7392,15 @@ async def api_admin_mark_delete_batch(request: Request, payload: Dict[str, Any])
     if not valid:
         return {"ok": True, "marked": 0}
     del_set = set(valid)
-    # 记录删除日志 + 归档缩略图
+    deletion_meta = {p: _deletion_creator_meta(p) for p in valid}
+    db.mark_images_deleted("__admin__", list(del_set))
     for p in valid:
         try:
-            await _record_deletion(p, "__admin__", "admin")
-        except Exception:
-            pass
-    # 1. 添加到 deleted_images
-    async with _deleted_images_lock:
-        for p in valid:
-            db.add_deleted_image("__admin__", p)
-    # 2. 清理 user_images
-    async with _user_images_lock:
-        db.remove_user_images_by_paths(del_set)
-    # 3. 清理 creator 映射
-    for p in del_set:
-        db.remove_creator_ip(p)
-    # 4. 清理精选
-    feats = _read_featured()
-    changed = False
-    for rel in valid:
-        if rel in feats:
-            feats = [x for x in feats if x != rel]
-            changed = True
-    if changed:
-        await _write_featured(feats)
-    # 5. 自动 dismiss 待处理举报
-    db.dismiss_reports_for_image_paths(del_set)
+            cg, cl, cip = deletion_meta.get(p, ("", "", ""))
+            await _record_deletion(p, "__admin__", "admin",
+                                  creator_gid=cg, creator_login=cl, creator_ip_hint=cip)
+        except Exception as e:
+            print(f"[WARN] 删除日志记录失败: {p} — {type(e).__name__}: {e}")
     return {"ok": True, "marked": len(valid)}
 
 class DeleteByQueryPayload(BaseModel):
@@ -7517,28 +7470,15 @@ async def api_admin_images_delete_by_query(request: Request, payload: DeleteByQu
     matched = [m for m in matched if m not in deleted_paths]
     if not matched:
         return {"ok": True, "marked": 0}
-    # 批量标记删除
+    deletion_meta = {p: _deletion_creator_meta(p) for p in matched}
+    db.mark_images_deleted("__admin__", matched)
     for p in matched:
         try:
-            await _record_deletion(p, "__admin__", "admin")
-        except Exception:
-            pass
-    async with _deleted_images_lock:
-        for p in matched:
-            db.add_deleted_image("__admin__", p)
-    async with _user_images_lock:
-        db.remove_user_images_by_paths(set(matched))
-    for p in matched:
-        db.remove_creator_ip(p)
-    feats = _read_featured()
-    changed = False
-    for p in matched:
-        if p in feats:
-            feats = [x for x in feats if x != p]
-            changed = True
-    if changed:
-        await _write_featured(feats)
-    db.dismiss_reports_for_image_paths(set(matched))
+            cg, cl, cip = deletion_meta.get(p, ("", "", ""))
+            await _record_deletion(p, "__admin__", "admin",
+                                  creator_gid=cg, creator_login=cl, creator_ip_hint=cip)
+        except Exception as e:
+            print(f"[WARN] 删除日志记录失败: {p} — {type(e).__name__}: {e}")
     return {"ok": True, "marked": len(matched)}
 
 
@@ -8456,27 +8396,22 @@ async def api_admin_report_resolve(request: Request, payload: Dict[str, Any]):
         raise HTTPException(400, "此举报已被处理")
     image_path = target.get("image_path", "")
     if action == "delete":
+        key = image_path.replace("\\", "/")
+        creator_gid, creator_login, creator_ip = _deletion_creator_meta(key)
         try:
             p = _resolve_output_path(image_path)
             if p.is_file():
-                await _record_deletion(image_path, "__admin__", "admin")
-        except Exception:
-            pass
-        key = image_path.replace("\\", "/")
-        async with _deleted_images_lock:
-            try:
-                db.add_deleted_image("__admin__", key)
-            except Exception:
-                pass
-        async with _creator_map_lock:
-            db.remove_creator_ip(key)
-        feats = _read_featured()
-        if image_path in feats:
-            feats = [x for x in feats if x != image_path]
-            await _write_featured(feats)
-        async with _user_images_lock:
-            db.remove_user_image_by_path(key)
-        db.dismiss_reports_for_image(image_path)
+                db.mark_images_deleted("__admin__", [key])
+                try:
+                    await _record_deletion(key, "__admin__", "admin",
+                                          creator_gid=creator_gid, creator_login=creator_login,
+                                          creator_ip_hint=creator_ip)
+                except Exception as e:
+                    print(f"[WARN] 删除日志记录失败: {key} — {type(e).__name__}: {e}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            print(f"[WARN] 举报删图处理失败: {key} — {type(e).__name__}: {e}")
     elif action == "ban_creator":
         creator_ip = _creator_map_get(image_path)
         if creator_ip:

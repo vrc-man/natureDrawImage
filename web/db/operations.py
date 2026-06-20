@@ -389,6 +389,44 @@ def save_deleted_images(data: Dict[str, List[str]]) -> None:
 # 生图日志
 # ═══════════════════════════════════════════
 
+def mark_images_deleted(github_id: str, paths: List[str], *, owner_github_id: str = "") -> int:
+    """原子标记图片删除并清理关联状态。文件和删除日志由调用方在事务外处理。"""
+    clean_paths = []
+    seen = set()
+    for p in paths or []:
+        p = str(p or "").replace("\\", "/").strip()
+        if p and p not in seen:
+            seen.add(p)
+            clean_paths.append(p)
+    if not clean_paths:
+        return 0
+    now = _time_module.time()
+    conn = _db()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for p in clean_paths:
+            conn.execute(
+                "INSERT OR IGNORE INTO deleted_images (github_id, path, marked_at) VALUES (?,?,?)",
+                (github_id, p, now))
+        placeholders = ",".join("?" * len(clean_paths))
+        if owner_github_id:
+            conn.execute(
+                f"DELETE FROM user_images WHERE github_id=? AND path IN ({placeholders})",
+                [owner_github_id] + clean_paths)
+        else:
+            conn.execute(f"DELETE FROM user_images WHERE path IN ({placeholders})", clean_paths)
+        conn.execute(f"DELETE FROM featured WHERE path IN ({placeholders})", clean_paths)
+        conn.execute(f"DELETE FROM creator_ips WHERE path IN ({placeholders})", clean_paths)
+        conn.execute(
+            f"UPDATE reports SET status='resolved', resolved_action='dismiss' WHERE status='pending' AND image_path IN ({placeholders})",
+            clean_paths)
+        conn.commit()
+        return len(clean_paths)
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+
+
 _GEN_LOG_MAX = 500000  # 50万条上限
 
 

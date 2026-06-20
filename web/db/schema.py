@@ -108,6 +108,8 @@ SCHEMA = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_deleted_images_path ON deleted_images(path)",
     "CREATE INDEX IF NOT EXISTS idx_deleted_images_github ON deleted_images(github_id)",
+    "DELETE FROM deleted_images WHERE id NOT IN (SELECT MIN(id) FROM deleted_images GROUP BY github_id, path)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_deleted_images_unique ON deleted_images(github_id, path)",
 
     # ── 生图日志 ──
     """
