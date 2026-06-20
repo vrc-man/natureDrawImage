@@ -5577,8 +5577,9 @@ async def _process_queue() -> None:
                 pass
             # 任务失败，回滚预扣的密钥次数
             ck = next_item.get("claimed_key", "")
-            if ck and ws is not None:
-                await _rollback_key_reservation(id(ws), ck)
+            reservation_ws_id = int(next_item.get("reservation_ws_id") or (id(ws) if ws is not None else 0))
+            if ck:
+                await _rollback_key_reservation(reservation_ws_id, ck)
         finally:
             _cancel_flag = None
             _current_task_info = {}
@@ -5608,10 +5609,10 @@ async def _process_queue() -> None:
                             oldest = min(_headless_completed, key=lambda k: _headless_completed[k]["time"])
                             del _headless_completed[oldest]
             # 清理密钥预扣跟踪（任务已完成，预扣已确认或已回滚）
-            if not headless and ws is not None:
-                ck = next_item.get("claimed_key", "")
-                if ck:
-                    _key_usage_reserved_ws.pop(id(ws), None)
+            ck = next_item.get("claimed_key", "")
+            reservation_ws_id = int(next_item.get("reservation_ws_id") or (id(ws) if ws is not None else 0))
+            if ck:
+                _key_usage_reserved_ws.pop(reservation_ws_id, None)
     finally:
         _run_lock.release()
 
@@ -5704,8 +5705,8 @@ async def ws_run(ws: WebSocket):
             except Exception:
                 pass
             return
-        # 访问密钥检查（预扣一次使用次数，失败/断开时回滚）
-        key_err = await _ws_verify_key(ws_user, pre_consume=True)
+        # 先只读校验访问密钥；确定新任务可入队后再预扣次数，避免冷却/队列拒绝先扣费。
+        key_err = await _ws_verify_key(ws_user, pre_consume=False)
         if key_err:
             try:
                 await ws.send_json({"type": "error", "message": key_err})
@@ -5716,10 +5717,8 @@ async def ws_run(ws: WebSocket):
             except Exception:
                 pass
             return
-        # 记录预扣的密钥次数（用于断开/失败时回滚）
         claimed_key = ws_user.get("_claimed_key", "")
-        if claimed_key and ws_user.get("role") != "admin":
-            _key_usage_reserved_ws[id(ws)] = claimed_key
+        key_preconsumed = False
         # 每 IP 最多 _WS_RUN_MAX_PER_IP 个连接（检查+预留原子操作，防 TOCTOU）
         run_slot_reserved = False
         if client_ip:
@@ -5733,10 +5732,20 @@ async def ws_run(ws: WebSocket):
                         await ws.close()
                     except Exception:
                         pass
-                    await _rollback_key_reservation(id(ws), claimed_key)
                     return
                 _ws_run_per_ip[client_ip] = _ws_run_per_ip.get(client_ip, 0) + 1
                 run_slot_reserved = True
+
+        async def _release_run_slot() -> None:
+            nonlocal run_slot_reserved
+            if run_slot_reserved and client_ip:
+                async with _ws_per_ip_lock:
+                    cnt = _ws_run_per_ip.get(client_ip, 0) - 1
+                    if cnt <= 0:
+                        _ws_run_per_ip.pop(client_ip, None)
+                    else:
+                        _ws_run_per_ip[client_ip] = cnt
+                run_slot_reserved = False
 
         import time as _time
         github_id = str(ws_user.get("github_id", ""))
@@ -5763,8 +5772,6 @@ async def ws_run(ws: WebSocket):
                                     _ws_run_per_ip.pop(client_ip, None)
                                 else:
                                     _ws_run_per_ip[client_ip] = cnt
-                        # 回滚预扣的密钥次数
-                        await _rollback_key_reservation(id(ws), claimed_key)
                         return
                     # 断线重连：复用已有排队项，先关闭旧 ws 防止孤儿连接
                     reconnect_item = qi
@@ -5780,7 +5787,6 @@ async def ws_run(ws: WebSocket):
 
             # 新建任务：计数器递增和入队均在锁内完成，防止并发重复
             if reconnect_item is None:
-                _queue_id_counter += 1
                 # 优雅重启中，暂停新任务入队
                 if _pause_queue:
                     try:
@@ -5791,6 +5797,7 @@ async def ws_run(ws: WebSocket):
                         await ws.close()
                     except Exception:
                         pass
+                    await _release_run_slot()
                     return
                 # 队列上限检查（与入队在同一锁内原子执行）
                 if len(_task_queue) >= _MAX_QUEUE_SIZE:
@@ -5803,16 +5810,52 @@ async def ws_run(ws: WebSocket):
                         await ws.close()
                     except Exception:
                         pass
-                    if run_slot_reserved:
-                        async with _ws_per_ip_lock:
-                            cnt = _ws_run_per_ip.get(client_ip, 0) - 1
-                            if cnt <= 0:
-                                _ws_run_per_ip.pop(client_ip, None)
-                            else:
-                                _ws_run_per_ip[client_ip] = cnt
-                    await _rollback_key_reservation(id(ws), claimed_key)
+                    await _release_run_slot()
                     return
 
+                wait_sec = 0
+                async with _cooldown_lock:
+                    now = _time.time()
+                    last = _RATE_LAST_TS.get(github_id, 0.0)
+                    cooldown = float(_limits.get("gen_cooldown_sec", 30))
+                    wait = 0 if ws_user.get("role") == "admin" else cooldown - (now - last)
+                    if wait > 0:
+                        wait_sec = int(wait) + 1
+                if wait_sec > 0:
+                    try:
+                        await ws.send_json({"type": "error", "message": f"生图间隔限制：请 {wait_sec}s 后再试", "cooldown_remaining": wait_sec})
+                    except Exception:
+                        pass
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    await _release_run_slot()
+                    return
+
+                key_err = await _ws_verify_key(ws_user, pre_consume=True)
+                if key_err:
+                    try:
+                        await ws.send_json({"type": "error", "message": key_err})
+                    except Exception:
+                        pass
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    await _release_run_slot()
+                    return
+                key_preconsumed = bool(claimed_key and ws_user.get("role") != "admin")
+                if key_preconsumed:
+                    _key_usage_reserved_ws[id(ws)] = claimed_key
+                if ws_user.get("role") != "admin":
+                    async with _cooldown_lock:
+                        _RATE_LAST_TS[github_id] = _time.time()
+                        old_cd = _cooldown_tasks.pop(github_id, None)
+                        if old_cd and not old_cd.done():
+                            old_cd.cancel()
+
+                _queue_id_counter += 1
                 queue_item = {
                     "id": _queue_id_counter,
                     "github_id": github_id,
@@ -5823,54 +5866,11 @@ async def ws_run(ws: WebSocket):
                     "client_ip": client_ip,
                     "created_at": _time.time(),
                     "claimed_key": claimed_key,  # 用于任务失败时回滚密钥次数
+                    "reservation_ws_id": id(ws) if key_preconsumed else 0,
                 }
                 _task_queue.append(queue_item)
                 _save_queue_state()
 
-        # 只有新建任务才检查冷却；重连跳过冷却
-        if reconnect_item is None:
-            should_reject = False
-            wait_msg = ""
-            async with _cooldown_lock:
-                now = _time.time()
-                last = _RATE_LAST_TS.get(github_id, 0.0)
-                cooldown = float(_limits.get("gen_cooldown_sec", 30))
-                wait = 0 if ws_user.get("role") == "admin" else cooldown - (now - last)
-                if wait > 0:
-                    should_reject = True
-                    wait_msg = f"生图间隔限制：请 {int(wait) + 1}s 后再试"
-                    wait_sec = int(wait) + 1
-                elif ws_user.get("role") != "admin":
-                    # 管理员不更新冷却计时器，避免阻塞同 IP 普通用户排队
-                    _RATE_LAST_TS[github_id] = now
-                    # 取消该用户的旧冷却推送（新提交意味着冷却周期重新开始）
-                    old_cd = _cooldown_tasks.pop(github_id, None)
-                    if old_cd and not old_cd.done():
-                        old_cd.cancel()
-            if should_reject:
-                try:
-                    await ws.send_json({"type": "error", "message": wait_msg, "cooldown_remaining": wait_sec})
-                except Exception:
-                    pass
-                try:
-                    await ws.close()
-                except Exception:
-                    pass
-                # 冷却期内撤回排队（已在锁内入队，需在锁内移除）；同时释放 IP 槽位
-                async with _queue_lock:
-                    if queue_item in _task_queue:
-                        _task_queue.remove(queue_item)
-                        _save_queue_state()
-                if run_slot_reserved:
-                    async with _ws_per_ip_lock:
-                        cnt = _ws_run_per_ip.get(client_ip, 0) - 1
-                        if cnt <= 0:
-                            _ws_run_per_ip.pop(client_ip, None)
-                        else:
-                            _ws_run_per_ip[client_ip] = cnt
-                # 回滚预扣的密钥次数
-                await _rollback_key_reservation(id(ws), claimed_key)
-                return
         async with _ws_sub_lock:
             _ws_user_map[id(ws)] = github_id
             if client_ip:
