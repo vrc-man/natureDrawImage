@@ -96,6 +96,7 @@ def _save_invite_codes(data: dict):
     for k, v in data.items():
         db.execute("INSERT OR REPLACE INTO invite_codes VALUES (?,?,?,?)",
                    (k, v.get("used_count", 0), v.get("max_uses", 1), v.get("created_at", 0)))
+    db.commit()
 
 def _load_email_users() -> dict:
     rows = get_db().execute("SELECT * FROM email_users").fetchall()
@@ -399,42 +400,47 @@ def init_email_auth():
             if recent_ip and not invite_code:
                 raise HTTPException(429, "该IP近期已注册过，请使用邀请码或稍后再试")
             has_invite = False
-            if invite_code:
-                async with _invite_lock:
-                    codes = _load_invite_codes()
-                    entry = codes.get(invite_code)
-                    if entry and (entry.get("max_uses", 1) <= 0 or entry["used_count"] < entry["max_uses"]):
-                        entry["used_count"] += 1
-                        if entry.get("max_uses", 1) > 0 and entry["used_count"] >= entry["max_uses"]:
-                            codes.pop(invite_code, None)
-                        _save_invite_codes(codes)
-                        has_invite = True
-                    elif entry:
-                        raise HTTPException(400, "邀请码已被用完")
-                    else:
-                        raise HTTPException(400, "无效邀请码")
-            async with _email_users_lock:
-                email_users = _load_email_users()
-                if email in email_users:
-                    raise HTTPException(400, "邮箱已注册")
-                # 判断是否为第一位注册用户（邮箱+GitHub 全部为空）
-                from web.app import _load_users as _load_main_users
-                _first = not email_users and not _load_main_users()
-                user_role = "admin" if _first else "user"
-                verify_token = "" if has_invite else secrets.token_urlsafe(32)
-                email_users[email] = {
-                    "password_hash": _hash_password(password),
-                    "role": user_role, "banned": False, "banned_reason": "",
-                    "created_at": time.time(), "verified": has_invite,
-                    "verify_token": verify_token, "totp_secret": "", "totp_enabled": False,
-                }
-                _save_email_users(email_users)
-            # 同步写入 users 表（sessions 表有外键约束）
-            db2 = get_db()
-            db2.execute("""INSERT OR IGNORE INTO users (github_id, login, email, avatar_url, role, banned, banned_reason, created_at)
-                VALUES (?,?,?,?,?,?,?,?)""",
-                ("email:" + email, email.split("@")[0], email, "", user_role, 0, "", time.time()))
-            db2.commit()
+            verify_token = ""
+            user_role = "user"
+            async with _invite_lock:
+                async with _email_users_lock:
+                    db2 = get_db()
+                    db2.execute("BEGIN IMMEDIATE")
+                    try:
+                        email_users = _load_email_users()
+                        if email in email_users:
+                            raise HTTPException(400, "邮箱已注册")
+                        if invite_code:
+                            entry = db2.execute("SELECT * FROM invite_codes WHERE code=?", (invite_code,)).fetchone()
+                            if entry and (entry["max_uses"] <= 0 or entry["used_count"] < entry["max_uses"]):
+                                new_used = int(entry["used_count"] or 0) + 1
+                                if entry["max_uses"] > 0 and new_used >= entry["max_uses"]:
+                                    db2.execute("DELETE FROM invite_codes WHERE code=?", (invite_code,))
+                                else:
+                                    db2.execute("UPDATE invite_codes SET used_count=? WHERE code=?", (new_used, invite_code))
+                                has_invite = True
+                            elif entry:
+                                raise HTTPException(400, "邀请码已被用完")
+                            else:
+                                raise HTTPException(400, "无效邀请码")
+                        _first = (
+                            db2.execute("SELECT COUNT(*) as c FROM email_users").fetchone()["c"] == 0
+                            and db2.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"] == 0
+                        )
+                        user_role = "admin" if _first else "user"
+                        verify_token = "" if has_invite else secrets.token_urlsafe(32)
+                        created_at = time.time()
+                        db2.execute("""INSERT INTO email_users VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                            (email, _hash_password(password), user_role, 0, "", created_at,
+                             1 if has_invite else 0, verify_token, "", 0, 0, 0, invite_code))
+                        db2.execute("""INSERT OR IGNORE INTO users (github_id, login, email, avatar_url, role, banned, banned_reason, created_at)
+                            VALUES (?,?,?,?,?,?,?,?)""",
+                            ("email:" + email, email.split("@")[0], email, "", user_role, 0, "", created_at))
+                        db2.commit()
+                        main_db.invalidate_users_cache()
+                    except Exception:
+                        db2.execute("ROLLBACK")
+                        raise
             _record_rate_limit(client_ip, email)
             if has_invite:
                 return {"ok": True, "message": "注册成功！请返回登录。"}

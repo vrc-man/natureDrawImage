@@ -304,9 +304,15 @@ SCHEMA = [
         verified       INTEGER NOT NULL DEFAULT 1,
         verify_token   TEXT NOT NULL DEFAULT '',
         totp_secret    TEXT NOT NULL DEFAULT '',
-        totp_enabled   INTEGER NOT NULL DEFAULT 0
+        totp_enabled   INTEGER NOT NULL DEFAULT 0,
+        login_fails    INTEGER NOT NULL DEFAULT 0,
+        login_fail_time REAL NOT NULL DEFAULT 0,
+        invite_code    TEXT NOT NULL DEFAULT ''
     )
     """,
+    "ALTER TABLE email_users ADD COLUMN login_fails INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE email_users ADD COLUMN login_fail_time REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE email_users ADD COLUMN invite_code TEXT NOT NULL DEFAULT ''",
 
     # ── 邀请码 ──
     """
