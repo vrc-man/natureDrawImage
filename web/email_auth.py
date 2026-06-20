@@ -25,6 +25,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from db.schema import get_db, config_get, config_set
+from db import operations as main_db
 
 # ═══ 速率限制（rate_limits.json + env 覆盖） ═══
 import json as _json
@@ -218,6 +219,15 @@ def get_email_user(session_uid: str) -> Optional[dict]:
         "banned": bool(eu.get("banned", False)),
         "banned_reason": eu.get("banned_reason", ""),
     }
+
+def _sync_main_email_user_ban(github_id: str, banned: bool, reason: str = "") -> None:
+    """同步邮箱用户封禁状态到主 users 表，避免主会话读取绕过 email_users。"""
+    get_db().execute(
+        "UPDATE users SET banned=?, banned_reason=? WHERE github_id=?",
+        (1 if banned else 0, reason if banned else "", github_id),
+    )
+    get_db().commit()
+    main_db.invalidate_users_cache()
 
 # ═══ 限流 & Turnstile ═══
 _email_rate_ip: Dict[str, list] = {}
@@ -1120,6 +1130,7 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             eu["banned"] = True
             eu["banned_reason"] = reason
             _save_email_users(users)
+            _sync_main_email_user_ban(github_id, True, reason)
         return {"ok": True}
 
     @app.post("/api/admin/email-users/unban")
@@ -1138,6 +1149,7 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             eu["banned"] = False
             eu["banned_reason"] = ""
             _save_email_users(users)
+            _sync_main_email_user_ban(github_id, False)
         return {"ok": True}
 
     # Monkey-patch _get_user_from_session to support email users
@@ -1146,6 +1158,17 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
     def _patched_get_user(request):
         user = _orig_get_user(request)
         if user:
+            uid0 = str(user.get("github_id", ""))
+            if uid0.startswith("email:"):
+                eu0 = get_email_user(uid0)
+                if eu0:
+                    merged = dict(user)
+                    merged.update({
+                        "banned": eu0.get("banned", user.get("banned", False)),
+                        "banned_reason": eu0.get("banned_reason", user.get("banned_reason", "")),
+                        "email": eu0.get("email", user.get("email", "")),
+                    })
+                    return merged
             return user
         token = request.cookies.get("session") or ""
         if not token:
