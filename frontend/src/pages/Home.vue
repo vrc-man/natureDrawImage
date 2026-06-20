@@ -200,7 +200,7 @@ onMounted(async () => {
   startGPUPoll()
   startNotifyPoll()
   loadResolutions()
-  loadList()
+  await loadList()
   if (darkMode.value) document.documentElement.classList.add('dark')
   initTooltips()
   initSakuraPetals()
@@ -230,6 +230,7 @@ onMounted(async () => {
       if (meta.default_height) height.value = meta.default_height
     }
   } catch {}
+  await ensureWorkflowForMode(mode.value)
 })
 
 onUnmounted(() => {
@@ -260,17 +261,53 @@ async function loadList() {
     const d = await api<any>('GET', '/api/workflows')
     if (d.workflows) allWorkflows.value = d.workflows
     else if (d.all) allWorkflows.value = d.all
+    wfDirs.value = { txt2img: d.txt2img_dir || '', img2img: d.img2img_dir || '' }
   } catch {}
 }
-async function onWorkflowSelect(path: string) {
+
+function displayWorkflowName(w: any) {
+  return String(w?.name || w?.path || '').replace(/^.*[\\/]/, '').replace(/\.json$/i, '')
+}
+
+function workflowsForMode(m: 'txt2img'|'img2img') {
+  const dir = wfDirs.value[m]
+  if (!dir) return allWorkflows.value
+  return allWorkflows.value.filter((w: any) => w.path && w.path.startsWith(dir))
+}
+
+function workflowPathMatchesMode(path: string, m: 'txt2img'|'img2img') {
+  const dir = wfDirs.value[m]
+  return !dir || (!!path && path.startsWith(dir))
+}
+
+async function ensureWorkflowForMode(m: 'txt2img'|'img2img') {
+  if (!allWorkflows.value.length) await loadList()
+  if (forkedWorkflow.value) return
+  const current = currentWorkflowPath.value || localStorage.getItem('currentWorkflow') || ''
+  if (current && workflowPathMatchesMode(current, m) && workflowsForMode(m).some((w: any) => w.path === current)) {
+    await onWorkflowSelect(current)
+    return
+  }
+  const first = workflowsForMode(m)[0]
+  if (first?.path) await onWorkflowSelect(first.path, displayWorkflowName(first))
+  else {
+    currentWorkflowPath.value = ''
+    localStorage.removeItem('currentWorkflow')
+    localStorage.removeItem('currentWorkflowName')
+    hasLoadImage.value = m === 'img2img'
+  }
+}
+
+async function onWorkflowSelect(path: string, name?: string) {
   currentWorkflowPath.value = path
   localStorage.setItem('currentWorkflow', path)
+  if (name) localStorage.setItem('currentWorkflowName', name)
   try {
     const r = await fetch(`/api/workflows/current?path=${encodeURIComponent(path)}&_t=${Date.now()}`)
     const d = await r.json()
     if (d.path && !d.error) {
-      if (d.builtin_prompt) directPrompt.value = d.builtin_prompt.trim()
-      if (d.builtin_negative_prompt) negativePrompt.value = d.builtin_negative_prompt.trim()
+      directPrompt.value = (d.builtin_prompt || '').trim()
+      negativePrompt.value = (d.builtin_negative_prompt || '').trim()
       if (d.default_width && d.default_height) { width.value = d.default_width; height.value = d.default_height }
       hasLoadImage.value = !!(d.summary && d.summary.has_loadimage)
     }
@@ -315,6 +352,7 @@ async function pollMyQueue() {
         if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
         if (!_doneNotified) {
           _doneNotified = true; _watchingMode.value = false; _hasRunningBefore = false; _finishing.value = true
+          if (mode.value === 'img2img') uploadRef.value?.clearAll()
           showToast('✅ 任务已完成，请到「我的」查看')
           sound.play('done')
           sound.sendNotification('✅ 生图完成，请到「我的」查看')
@@ -341,7 +379,7 @@ async function pollMyQueue() {
           showToast(errMsg ? '❌ ' + errMsg : '✅ 任务已完成，请到「我的」查看')
           sound.play(errMsg ? 'error' : 'done')
           sound.sendNotification(errMsg ? '❌ ' + errMsg : '✅ 生图完成，请到「我的」查看')
-          finishRun()
+          finishRun(!errMsg)
         }
       } else {
         progressText.value = running.length ? '⚡ 生图中...' : '⏳ ' + (waiting[0]?.position ? `排队第 ${waiting[0].position} 位` : '排队中')
@@ -361,7 +399,7 @@ async function pollMyQueue() {
           const errMsg = item.error_message || ''
           showToast(errMsg ? '❌ ' + errMsg : '✅ 任务已完成，请到「我的」查看')
           sound.play(item.status === 'done' ? 'done' : 'error')
-          finishRun()
+          finishRun(item.status === 'done')
         }
       }
     }
@@ -408,9 +446,10 @@ function connectStatusWS() {
 }
 
 // ===== Generate =====
-function setMode(m: 'txt2img'|'img2img') {
+async function setMode(m: 'txt2img'|'img2img') {
   mode.value = m
   if (m === 'txt2img' && uploadRef.value) uploadRef.value.clearAll()
+  await ensureWorkflowForMode(m)
 }
 
 function prepareGen() {
@@ -459,12 +498,15 @@ async function actuallyStartRun(g: {direct:string;nl:string;neg:string;w:number;
 
   let image1_name = '', image2_name = '', image3_name = ''
   if (mode.value === 'img2img' && uploadRef.value) {
-    progressText.value = '等待图片上传...'
+    progressText.value = uploadRef.value.hasPendingUploads()
+      ? '等待参考图上传...'
+      : '参考图已就绪，正在提交任务...'
     await uploadRef.value.waitAllUploads()
+    progressText.value = '参考图已上传，正在提交任务...'
     const names = uploadRef.value.getImageNames()
     image1_name = names[0] || ''; image2_name = names[1] || ''; image3_name = names[2] || ''
   } else {
-    progressText.value = '等待服务器响应...'
+    progressText.value = '正在提交任务...'
   }
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -540,7 +582,7 @@ function handleMsg(m: any) {
     _pendingCooldown.value = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1
     flashGreen()
     _doneNotified = true
-    finishRun()
+    finishRun(true)
   }
   else if (m.type === 'error') {
     logLines.value.push('❌ ' + m.message)
@@ -572,7 +614,8 @@ function flashGreen() {
   setTimeout(() => { if (notifyUnreadCount.value > 0) notifyUnreadCount.value-- }, 2000)
 }
 
-function finishRun() {
+function finishRun(clearUpload = false) {
+  if (clearUpload && mode.value === 'img2img') uploadRef.value?.clearAll()
   if (_finishing.value) return
   _finishing.value = true
   _isGenerating.value = false
@@ -794,7 +837,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
               <!-- Workflow + Char/Style side by side -->
               <div class="flex flex-col sm:flex-row gap-4 sm:gap-6">
                 <div class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
-                  <WorkflowPicker :mode="mode" @select="onWorkflowSelect" />
+                  <WorkflowPicker :key="mode + ':' + currentWorkflowPath" :mode="mode" @select="onWorkflowSelect" />
                 </div>
                 <div v-if="mode!=='img2img'" class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
                   <CharStylePicker />

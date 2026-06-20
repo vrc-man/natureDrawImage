@@ -105,7 +105,8 @@ function pickFile() {
 }
 async function waitAllUploads() { await Promise.all(_uploadPromises) }
 const getImageNames = () => images.value.map(i => i.name)
-defineExpose({ waitAllUploads, getImageNames, clearAll })
+const hasPendingUploads = () => images.value.some(i => !i.done)
+defineExpose({ waitAllUploads, getImageNames, clearAll, hasPendingUploads })
 </script>
 
 <template>
@@ -117,8 +118,8 @@ defineExpose({ waitAllUploads, getImageNames, clearAll })
       <div v-for="(img, i) in images" :key="i" class="relative" style="width:128px;height:128px">
         <img :src="img.previewUrl" class="w-full h-full object-cover rounded-xl border border-pink-100" style="width:128px;height:128px" />
         <button @click="removeImage(i)" class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] leading-none hover:bg-red-700 cursor-pointer border-0">✕</button>
-        <div v-if="!img.done" class="upload-progress">
-          <div class="upload-progress-bar" :style="{ width: img.progress + '%' }"></div>
+        <div class="upload-progress">
+          <div class="upload-progress-bar" :class="{ done: img.done }" :style="{ width: img.progress + '%' }"></div>
         </div>
       </div>
       <div class="border-2 border-dashed border-pink-200 rounded-xl flex items-center justify-center text-lg text-gray-300 cursor-pointer hover:bg-pink-50/50" style="width:128px;height:128px" @click="pickFile">+</div>

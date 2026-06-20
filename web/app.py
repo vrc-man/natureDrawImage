@@ -1405,7 +1405,7 @@ async def _auth_middleware(request: Request, call_next):
     path = request.url.path
 
     # 维护模式：未登录非管理员用户看到维护页（略过登录要求）
-    if _maintenance.get("enabled") and not path.startswith("/static") and not path.startswith("/auth/"):
+    if _maintenance.get("enabled") and not path.startswith(("/static", "/spa-assets")) and not path.startswith("/auth/"):
         user = _get_user_from_session(request)
         if not (user and user.get("role") == "admin"):
             if path.startswith("/api/") or path.startswith("/ws/"):
@@ -1421,7 +1421,7 @@ async def _auth_middleware(request: Request, call_next):
     client_ip = _client_ip_from_request(request)
 
     # 请求日志：真实 IP（非静态资源）
-    if not path.startswith("/static/"):
+    if not path.startswith(("/static/", "/spa-assets/")):
         real_ip = _client_ip_from_request(request)
         login = user.get("login", "-") if user else "-"
         print(f"[HTTP] {real_ip} | {login} | {request.method} {path}")
@@ -1430,6 +1430,7 @@ async def _auth_middleware(request: Request, call_next):
     public = (
         path == "/"
         or path.startswith("/static/")
+        or path.startswith("/spa-assets/")
         or path.startswith("/auth/")
         or path.startswith("/api/auth/")
         or path == "/api/whoami"
@@ -1500,6 +1501,7 @@ async def _auth_middleware(request: Request, call_next):
         if not sess.get("access_granted", False):
             exempt = (
                 "/static/", "/auth/", "/api/auth/", "/api/whoami",
+                "/spa-assets/",
                 "/access", "/favicon.ico", "/robots.txt",
                 "/api/announcement", "/api/output/featured",
             )
@@ -3343,6 +3345,7 @@ async def index(request: Request):
     if user and _spa.is_file():
         resp = FileResponse(str(_spa), media_type="text/html")
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
         return resp
     # 未登录或 SPA 不存在时返回欢迎页
     if not user or not _spa.is_file():
@@ -6547,6 +6550,7 @@ async def admin_page(request: Request):
     if _spa.is_file():
         resp = FileResponse(str(_spa), media_type="text/html")
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
         return resp
     return _serve_html(STATIC_DIR / "admin.html", nonce=getattr(request.state, "csp_nonce", ""))
 
@@ -9139,5 +9143,6 @@ if _os.path.isfile(_SPA_INDEX):
             raise HTTPException(404)
         resp = FileResponse(_SPA_INDEX, media_type="text/html")
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
         return resp
 
