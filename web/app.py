@@ -1482,7 +1482,7 @@ async def _auth_middleware(request: Request, call_next):
         if sess.get("access_granted") and not claimed_key:
             async with _sessions_lock:
                 sessions2 = _load_sessions()
-                s2 = sessions2.get(token)
+                s2 = sessions2.get(_session_hash(token))
                 if s2:
                     s2["access_granted"] = False
                     await _save_sessions(sessions2)
@@ -1520,7 +1520,7 @@ async def _auth_middleware(request: Request, call_next):
                 # 更新会话，清除 access_granted
                 async with _sessions_lock:
                     sessions2 = _load_sessions()
-                    s2 = sessions2.get(token)
+                    s2 = sessions2.get(_session_hash(token))
                     if s2:
                         s2["access_granted"] = False
                         s2.pop("claimed_key", None)
@@ -3386,7 +3386,7 @@ async def api_whoami(request: Request):
                     # 同步更新 session 文件，消除中间件与 whoami 之间的一致性窗口
                     async with _sessions_lock:
                         sessions2 = _load_sessions()
-                        s2 = sessions2.get(token)
+                        s2 = sessions2.get(_session_hash(token))
                         if s2:
                             s2["access_granted"] = False
                             s2.pop("claimed_key", None)
@@ -3396,7 +3396,7 @@ async def api_whoami(request: Request):
                 access_granted = False
                 async with _sessions_lock:
                     sessions2 = _load_sessions()
-                    s2 = sessions2.get(token)
+                    s2 = sessions2.get(_session_hash(token))
                     if s2:
                         s2["access_granted"] = False
                         await _save_sessions(sessions2)
@@ -3426,7 +3426,7 @@ async def api_whoami(request: Request):
                             claimed_key = k
                             async with _sessions_lock:
                                 sessions3 = _load_sessions()
-                                s2 = sessions3.get(token)
+                                s2 = sessions3.get(_session_hash(token))
                                 if s2:
                                     s2["access_granted"] = True
                                     s2["claimed_key"] = k
@@ -3636,7 +3636,7 @@ async def auth_logout(request: Request):
     if token:
         async with _sessions_lock:
             sessions = _load_sessions()
-            sessions.pop(token, None)
+            sessions.pop(_session_hash(token), None)
             await _save_sessions(sessions)
     resp = JSONResponse({"ok": True})
     resp.set_cookie("session", "", max_age=0, path="/", httponly=True, samesite="lax", secure=SITE_URL.startswith("https"))
