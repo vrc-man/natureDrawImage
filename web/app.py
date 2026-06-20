@@ -320,6 +320,7 @@ async def _save_users(users: dict) -> None:
         """, (gid, u.get("login",""), u.get("email",""), u.get("avatar_url",""),
               u.get("role","user"), int(u.get("banned",0)), u.get("banned_reason",""),
               u.get("created_at", _time_module.time())))
+    db._db().commit()
     db.invalidate_users_cache()
 
 def _session_hash(token: str) -> str:
@@ -7050,6 +7051,9 @@ async def api_admin_user_set_role(payload: SetRolePayload, request: Request):
                 raise HTTPException(400, "不能移除最后一位管理员")
         users[github_id]["role"] = role
         await _save_users(users)
+        if github_id.startswith("email:"):
+            get_db().execute("UPDATE email_users SET role=? WHERE email=?", (role, github_id[6:]))
+            get_db().commit()
     # 降级管理员 → 清除其所有会话的 access_granted 和密钥绑定
     if role == "user":
         async with _sessions_lock:
