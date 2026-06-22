@@ -67,6 +67,9 @@ SITE_URL = os.environ.get("SITE_URL", "")
 
 # 开发测试模式：设为 "1" 可跳过 GitHub OAuth，使用 /auth/dev_login 测试
 DEV_MODE = os.environ.get("DEV_MODE", "0") == "1"
+FIRST_USER_ADMIN = os.environ.get("FIRST_USER_ADMIN", "1") != "0"
+INITIAL_ADMIN_USER_IDS = {x.strip().lower() for x in os.environ.get("INITIAL_ADMIN_USER_IDS", "").split(",") if x.strip()}
+LOG_USER_ID = os.environ.get("LOG_USER_ID", "0") == "1"
 if DEV_MODE:
     import sys as _sys, time as _tm
     print("\n" + "=" * 60, file=_sys.stderr)
@@ -122,7 +125,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 import websockets
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, Form
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
@@ -339,6 +342,39 @@ async def _save_sessions(sessions: dict) -> None:
             s.get("claimed_key", ""),
         )
 
+
+def _is_initial_admin_user_id(user_id: str) -> bool:
+    return bool(user_id) and str(user_id).strip().lower() in INITIAL_ADMIN_USER_IDS
+
+
+async def _release_user_access_bindings(github_id: str, *, as_admin: bool = False) -> None:
+    """释放用户绑定的访问密钥；管理员会话保持放行，普通用户会话撤销放行。"""
+    github_id = str(github_id or "")
+    if not github_id:
+        return
+    async with _sessions_lock:
+        sessions = _load_sessions()
+        modified = False
+        for s in sessions.values():
+            if str(s.get("github_id", "")) == github_id:
+                if s.get("access_granted") != as_admin:
+                    s["access_granted"] = as_admin
+                    modified = True
+                if s.get("claimed_key"):
+                    s["claimed_key"] = ""
+                    modified = True
+        if modified:
+            await _save_sessions(sessions)
+    async with _access_keys_lock:
+        akeys = _load_access_keys()
+        modified = False
+        for v in akeys.get("keys", {}).values():
+            if str(v.get("used_by", "")) == github_id:
+                v["used_by"] = ""
+                modified = True
+        if modified:
+            _save_access_keys(akeys)
+
 async def _create_session(github_id: str) -> str:
     """创建会话，返回 token。管理员自动获得 access_granted。"""
     token = secrets.token_urlsafe(32)
@@ -413,19 +449,26 @@ async def _ensure_user(user_data: dict) -> dict:
             for key in ("login", "email", "avatar_url"):
                 if user_data.get(key):
                     existing[key] = user_data[key]
+            promoted = _is_initial_admin_user_id(github_id) and existing.get("role") != "admin"
+            if promoted:
+                existing["role"] = "admin"
             users[github_id] = existing
         else:
+            role = "admin" if ((FIRST_USER_ADMIN and is_first) or _is_initial_admin_user_id(github_id)) else "user"
             users[github_id] = {
                 "github_id": github_id,
                 "login": str(user_data.get("login") or ""),
                 "email": str(user_data.get("email") or ""),
                 "avatar_url": str(user_data.get("avatar_url") or ""),
-                "role": "admin" if is_first else "user",
+                "role": role,
                 "banned": False,
                 "banned_reason": "",
                 "created_at": _time_module.time(),
             }
+            promoted = role == "admin"
         await _save_users(users)
+        if promoted:
+            await _release_user_access_bindings(github_id, as_admin=True)
         return dict(users[github_id])
 
 # ---------------- 管理员 / 封禁列表 / 精选 ----------------
@@ -489,6 +532,9 @@ DEFAULT_LIMITS = {
     "gpu_poll_interval_ms": 5000,
     "gpu_cache_ttl_ms": 5000,
     "gc_interval_hours": 0.5,
+    "gc_orphan_scan": 1,
+    "startup_orphan_scan": 1,
+    "gc_clean_empty_dirs": 1,
     "featured_tip": "💡 温馨提示：可以尝试 Fork 优秀作品二改哦！只收录非 R18、作画好看、无明显坏手坏脚、风格独特的作品。",
     "wf_categories": [],
 }
@@ -529,7 +575,6 @@ async def _save_limits(new_limits: Dict[str, int]) -> bool:
             return True
         except Exception:
             return False
-
 
 
 # ---------------- 公告 ----------------
@@ -1404,9 +1449,11 @@ async def _auth_middleware(request: Request, call_next):
     """基于会话的鉴权，保护 /admin 和 /api/admin/*，注入用户到 request.state。"""
     path = request.url.path
 
-    # 旧版生图页入口已被 Vue SPA 替代，旧链接统一带回新版入口。
+    # 旧版入口已被 Vue SPA 替代，旧链接统一带回新版入口。
     if path == "/static/index.html":
         return Response(status_code=302, headers={"Location": "/"})
+    if path == "/static/admin.html":
+        return Response(status_code=302, headers={"Location": "/admin"})
 
     # 维护模式：未登录非管理员用户看到维护页（略过登录要求）
     if _maintenance.get("enabled") and not path.startswith(("/static", "/spa-assets")) and not path.startswith("/auth/"):
@@ -1428,7 +1475,11 @@ async def _auth_middleware(request: Request, call_next):
     if not path.startswith(("/static/", "/spa-assets/")):
         real_ip = _client_ip_from_request(request)
         login = user.get("login", "-") if user else "-"
-        print(f"[HTTP] {real_ip} | {login} | {request.method} {path}")
+        if LOG_USER_ID:
+            gid = user.get("github_id", "-") if user else "-"
+            print(f"[HTTP] {real_ip} | {login} | gid={gid} | {request.method} {path}")
+        else:
+            print(f"[HTTP] {real_ip} | {login} | {request.method} {path}")
 
     # 公开路径：无需登录
     public = (
@@ -1507,7 +1558,7 @@ async def _auth_middleware(request: Request, call_next):
                 "/static/", "/auth/", "/api/auth/", "/api/whoami",
                 "/spa-assets/",
                 "/access", "/favicon.ico", "/robots.txt",
-                "/api/announcement", "/api/output/featured",
+                "/api/announcement", "/api/notifications",
             )
             if not any(path.startswith(p) for p in exempt):
                 if path.startswith("/api/") or path.startswith("/ws/"):
@@ -1683,26 +1734,20 @@ async def _run_gc():
         pass
     cleaned["orphan_creator_entries"] = orphan_count
 
-    # 3b. 清理孤儿缩略图（原图不存在且无 gen_log 引用的才是真孤儿）
+    # 3b. 清理孤儿缩略图：thumb_cache 只保留仍被 gen_logs 引用的图片缩略图。
     orphan_thumbs = 0
     if THUMB_CACHE_DIR.exists():
         gen_log_paths = db.get_all_gen_log_file_paths()
+        gen_log_stems = {_path_stem_key(p) for p in gen_log_paths}
         for tp in THUMB_CACHE_DIR.rglob("*.webp"):
             if not tp.is_file():
                 continue
             try:
                 rel_no_ext = tp.relative_to(THUMB_CACHE_DIR).with_suffix("")
                 rel_str = str(rel_no_ext).replace("\\", "/")
-                found = False
-                for ext in (".png", ".jpg", ".jpeg", ".gif"):
-                    src = (OUTPUT_DIR / str(rel_no_ext)).with_suffix(ext)
-                    if src.is_file():
-                        found = True
-                        break
-                if not found:
-                    if not any(f"{rel_str}{ext}" in gen_log_paths for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp")):
-                        tp.unlink()
-                        orphan_thumbs += 1
+                if rel_str not in gen_log_stems:
+                    tp.unlink()
+                    orphan_thumbs += 1
             except Exception:
                 pass
         if orphan_thumbs:
@@ -1711,8 +1756,54 @@ async def _run_gc():
 
     # 4. 重试清理标记删除但残留的文件（首次删除失败 / 服务重启丢失后台任务）
     deleted = _load_deleted_images()
+    # 补漏：删原图前遍历待删批次，补全 thumb_cache 和 deletion_logs 缺失的缩略图
+    thumb_patched = 0
+    dl_patched = 0
+    for gid, paths in deleted.items():
+        for rel_path in paths:
+            if not _validate_rel_path(rel_path):
+                continue
+            fp = _resolve_output_path(rel_path)
+            if not fp.is_file():
+                continue
+            # a. 补 thumb_cache
+            if not _thumb_exists(rel_path):
+                try:
+                    await asyncio.to_thread(_generate_thumb, fp, rel_path)
+                    thumb_patched += 1
+                except Exception:
+                    pass
+            # b. 补 deletion_logs 缩略图归档
+            try:
+                dl_rows = db.query_deletion_logs_thumb(path=rel_path.replace("\\", "/"))
+                for row in dl_rows:
+                    tf = row.get("thumb_file", "")
+                    if not tf or not (DELETION_THUMBS_DIR / tf).is_file():
+                        if not _thumb_exists(rel_path):
+                            _generate_thumb(fp, rel_path)
+                        src_thumb = _thumb_cache_path(rel_path)
+                        if src_thumb.is_file():
+                            import shutil as _shutil_dl
+                            _dd = _time_module.strftime("%Y-%m-%d", _time_module.localtime())
+                            _fn = rel_path.replace("\\", "/").replace("/", "_")
+                            thumb_rel = f"{_dd}/{_fn}.webp"
+                            dst = DELETION_THUMBS_DIR / thumb_rel
+                            dst.parent.mkdir(parents=True, exist_ok=True)
+                            _shutil_dl.copy2(str(src_thumb), str(dst))
+                            db.update_thumb_file(row["id"], thumb_rel)
+                            dl_patched += 1
+            except Exception:
+                pass
+    if thumb_patched or dl_patched:
+        print(f"[gc] 补漏: thumb_cache {thumb_patched}, deletion_logs {dl_patched}")
+    cleaned["patch_thumb_cache"] = thumb_patched
+    cleaned["patch_deletion_log"] = dl_patched
     gc_deleted = 0
     still_failed: Dict[str, List[str]] = {}
+    removed_ok: List[Tuple[str, str]] = []
+    # 本轮 GC 备份目录（同一批次共用一个目录）
+    gc_ts = _time_module.strftime("%Y%m%d_%H%M%S", _time_module.localtime())
+    gc_backup_dir = Path(__file__).parent.parent / "gcbackups" / f"gc_backup_{gc_ts}"
     for github_id, paths in deleted.items():
         for rel_path in paths:
             if not _validate_rel_path(rel_path):
@@ -1721,6 +1812,17 @@ async def _run_gc():
             if not _is_safe_subpath(fp, OUTPUT_DIR):
                 continue
             ok = False
+
+            # ---- 备份：删前先拷贝到 gcbackups ----
+            if fp.is_file():
+                try:
+                    import shutil as _shutil_gc
+                    gc_backup_dir.mkdir(parents=True, exist_ok=True)
+                    dst = gc_backup_dir / rel_path.replace("\\", "/").replace("/", "_")
+                    _shutil_gc.copy2(str(fp), str(dst))
+                except Exception as e:
+                    print(f"[GC] 备份失败: {rel_path} — {e}")
+
             try:
                 if fp.is_file():
                     fp.unlink()
@@ -1730,27 +1832,24 @@ async def _run_gc():
             except Exception as e:
                 print(f"[GC] 补删失败: {rel_path} — {e}")
             if ok:
+                removed_ok.append((github_id, rel_path))
                 async with _creator_map_lock:
                     db.remove_creator_ip(rel_path)
             else:
                 still_failed.setdefault(github_id, []).append(rel_path)
-    # 写回 deleted_images：仅保留仍失败的条目
-    if gc_deleted > 0:
+    # 只清除本轮确认删成功的标记，避免误删 GC 期间新写入的删除标记。
+    if removed_ok:
         async with _deleted_images_lock:
-            try:
-                old = _load_deleted_images()
-                for gid, paths in old.items():
-                    for p in paths:
-                        if gid not in still_failed or p not in still_failed.get(gid, []):
-                            db.remove_deleted_image(gid, p)
-                for gid, paths in still_failed.items():
-                    for p in paths:
-                        if gid not in old or p not in old.get(gid, []):
-                            db.add_deleted_image(gid, p)
-            except Exception:
-                pass
+            for gid, p in removed_ok:
+                try:
+                    db.remove_deleted_image(gid, p)
+                except Exception:
+                    pass
     cleaned["retry_delete_success"] = gc_deleted
     cleaned["retry_delete_failed"] = sum(len(v) for v in still_failed.values())
+    # 记录本次 GC 的备份目录（方便 GC 日志回查）
+    if gc_deleted > 0:
+        cleaned["backup_dir"] = str(gc_backup_dir)
 
     # 4b. 清理 user_images.json 中磁盘已不存在的死记录
     try:
@@ -1794,6 +1893,24 @@ async def _run_gc():
     except Exception:
         cleaned["expired_sessions"] = 0
 
+    # 7. 全量清理无 gen_logs 关联的原图（备份到 gcbackups 后删除）和缩略图
+    if _limits.get("gc_orphan_scan", 1):
+        result = await asyncio.to_thread(_do_orphan_scan, "gc_orphan")
+        # 收集失败信息到 GC 日志
+        fail_list = result.get("originals_failed", [])
+        cleaned["orphan_originals"] = len(result.get("originals_deleted", []))
+        cleaned["orphan_originals_failed"] = len(fail_list)
+        if fail_list:
+            cleaned["orphan_originals_fail_detail"] = fail_list[:20]  # 最多 20 条
+        cleaned["orphan_thumbs"] = (cleaned.get("orphan_thumbs", 0) + result.get("thumbs_deleted", 0))
+
+    # 8. 清空日期空目录（必须在删图/孤儿扫描之后，清掉当轮产生的空壳）
+    if _limits.get("gc_clean_empty_dirs", 1):
+        try:
+            cleaned["empty_dirs_removed"] = await _run_clean_empty_dirs()
+        except Exception:
+            cleaned["empty_dirs_removed"] = 0
+
     async with _kv_state_lock:
         db.state_set("last_gc_time", _time.time())
     return cleaned
@@ -1809,11 +1926,9 @@ async def _backup_data_files():
         backup_subdir = backups_dir / f"backup_{ts}"
         backup_subdir.mkdir(parents=True, exist_ok=True)
         data_files = [
-            "users.json", "sessions.json", "access_keys.json", "limits.json",
-            "styles.json", "resolutions.json", "llm_config.json",
-            "announcement.json", "maintenance.json", "workflow_meta.json",
-            "user_images.json", "deleted_images.json", "gen_log.json",
-            "queue_state.json", "custom_head.json",
+            "limits.json", "styles.json", "characters.json", "resolutions.json",
+            "llm_config.json", "announcement.json", "workflow_meta.json",
+            "queue_state.json", "rate_limits.json",
             "banned_ips.txt", "featured.txt",
         ]
         copied = 0
@@ -1828,10 +1943,9 @@ async def _backup_data_files():
         for old in existing[5:]:
             _shutil.rmtree(old, ignore_errors=True)
         # 同时备份 SQLite 数据库
-        import shutil as _shutil2
         db_src = Path(__file__).parent / 'db' / 'natureDrawImage.db'
         if db_src.is_file():
-            _shutil2.copy2(str(db_src), str(backup_subdir / 'natureDrawImage.db'))
+            await asyncio.to_thread(db.backup_database, str(backup_subdir / 'natureDrawImage.db'))
             copied += 1
             print(f'[backup] SQLite 数据库已备份')
         if copied:
@@ -1849,37 +1963,11 @@ async def _gc_loop():
             continue
         await asyncio.sleep(interval_h * 3600)
         try:
-            await _backup_files_for_gc()
             await _run_gc()
             await _cleanup_expired_access_keys()
         except Exception:
             pass
 
-
-async def _backup_files_for_gc() -> Optional[Path]:
-    """GC 前备份待删除文件到 gcbackups/。返回备份目录路径。"""
-    import shutil as _shutil
-    output_dir = Path(OUTPUT_DIR_STR)
-    ts = _time_module.strftime("%Y%m%d_%H%M%S", _time_module.localtime())
-    backup_dir = Path(__file__).parent.parent / "gcbackups" / f"gc_backup_{ts}"
-    deleted = _load_deleted_images()
-    backed = 0
-    for key, paths in deleted.items():
-        for rel_path in paths:
-            src = (output_dir / rel_path).resolve()
-            try:
-                if src.is_file() and _is_safe_subpath(src, output_dir):
-                    dst = backup_dir / rel_path.replace("\\", "/").replace("/", "_")
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    _shutil.copy2(str(src), str(dst))
-                    backed += 1
-            except Exception:
-                pass
-    if backed:
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        print(f"[GC] 定时备份 {backed} 个文件到 {backup_dir}")
-        return backup_dir
-    return None
 
 
 async def _backup_loop():
@@ -1918,14 +2006,14 @@ async def _cleanup_expired_access_keys():
         print(f"[gc] 清理过期密钥失败: {e}")
 
 
-
 async def _ensure_thumb_cache():
     """启动时扫描 OUTPUT_DIR，为缺失缩略图的文件批量生成，mtime 倒序优先处理最新"""
     if not OUTPUT_DIR.exists():
         return
-    # 先清理孤儿缩略图（原图不存在且无 gen_log 引用的才是真孤儿）
+    # 先清理孤儿缩略图：thumb_cache 只保留仍被 gen_logs 引用的图片缩略图。
     if THUMB_CACHE_DIR.exists():
         gen_log_paths = db.get_all_gen_log_file_paths()
+        gen_log_stems = {_path_stem_key(p) for p in gen_log_paths}
         orphan = 0
         for tp in THUMB_CACHE_DIR.rglob("*.webp"):
             if not tp.is_file():
@@ -1933,15 +2021,9 @@ async def _ensure_thumb_cache():
             try:
                 rel_no_ext = tp.relative_to(THUMB_CACHE_DIR).with_suffix("")
                 rel_str = str(rel_no_ext).replace("\\", "/")
-                found = False
-                for ext in (".png", ".jpg", ".jpeg", ".gif"):
-                    if (OUTPUT_DIR / str(rel_no_ext)).with_suffix(ext).is_file():
-                        found = True
-                        break
-                if not found:
-                    if not any(f"{rel_str}{ext}" in gen_log_paths for ext in (".png", ".jpg", ".jpeg", ".gif", ".webp")):
-                        tp.unlink()
-                        orphan += 1
+                if rel_str not in gen_log_stems:
+                    tp.unlink()
+                    orphan += 1
             except Exception:
                 pass
         if orphan:
@@ -1950,6 +2032,7 @@ async def _ensure_thumb_cache():
     deleted_set = set()
     for paths in _load_deleted_images().values():
         deleted_set.update(p.replace("\\", "/") for p in paths)
+    gen_log_stems = {_path_stem_key(p) for p in db.get_all_gen_log_file_paths()}
     files = []
     for p in OUTPUT_DIR.rglob("*"):
         if not p.is_file():
@@ -1961,6 +2044,8 @@ async def _ensure_thumb_cache():
         except Exception:
             continue
         if rel in deleted_set:
+            continue
+        if _path_stem_key(rel) not in gen_log_stems:
             continue
         if not _thumb_exists(rel):
             files.append((p.stat().st_mtime, rel))
@@ -2022,6 +2107,123 @@ async def _cleanup_stale_user_images():
         print(f"[startup] 清理 user_images 失败: {e}")
 
 
+async def _cleanup_orphan_files_at_startup():
+    """启动时清理无 gen_logs 关联的原图（备份到 gcbackups 后删除）和缩略图。"""
+    if not _limits.get("startup_orphan_scan", 1):
+        return
+    result = await asyncio.to_thread(_do_orphan_scan, "startup_orphan")
+    if result["originals_deleted"]:
+        print(f"[startup] 清理孤儿原图: {result['originals_deleted']} 个（已备份到 {result['backup_dir']}）")
+    if result["originals_failed"]:
+        for f in result["originals_failed"]:
+            print(f"[startup] 孤儿原图删除失败: {f['path']} — {f['reason']}")
+    if result["thumbs_deleted"]:
+        print(f"[startup] 清理孤儿缩略图: {result['thumbs_deleted']} 个")
+
+
+def _do_orphan_scan(prefix: str = "orphan") -> dict:
+    """扫描并清理无 gen_logs 关联的原图和缩略图，返回详细结果。"""
+    import shutil as _shutil_orphan
+    gen_log_paths = db.get_all_gen_log_file_paths()
+    gen_log_stems = {_path_stem_key(p) for p in gen_log_paths}
+    ots = _time_module.strftime("%Y%m%d_%H%M%S", _time_module.localtime())
+    obackup_dir = Path(__file__).parent.parent / "gcbackups" / f"{prefix}_{ots}"
+    # 原图
+    originals_deleted: list = []
+    originals_failed: list = []
+    if OUTPUT_DIR.exists():
+        for orig in OUTPUT_DIR.rglob("*"):
+            if not orig.is_file():
+                continue
+            if orig.suffix.lower() not in OUTPUT_IMAGE_EXTS:
+                continue
+            try:
+                rel = orig.resolve().relative_to(OUTPUT_DIR.resolve()).as_posix()
+            except Exception:
+                continue
+            if _path_stem_key(rel) not in gen_log_stems:
+                backup_ok = False
+                try:
+                    obackup_dir.mkdir(parents=True, exist_ok=True)
+                    dst = obackup_dir / rel.replace("/", "_")
+                    _shutil_orphan.copy2(str(orig), str(dst))
+                    backup_ok = True
+                except Exception as e:
+                    pass
+                try:
+                    orig.unlink()
+                    originals_deleted.append({"path": rel, "backed_up": backup_ok})
+                except Exception as e:
+                    originals_failed.append({"path": rel, "reason": str(e)})
+    # 缩略图
+    thumbs_deleted = 0
+    if THUMB_CACHE_DIR.exists():
+        for tp in THUMB_CACHE_DIR.rglob("*.webp"):
+            if not tp.is_file():
+                continue
+            try:
+                rel_no_ext = tp.relative_to(THUMB_CACHE_DIR).with_suffix("")
+                rel_str = str(rel_no_ext).replace("\\", "/")
+                if rel_str not in gen_log_stems:
+                    tp.unlink()
+                    thumbs_deleted += 1
+            except Exception:
+                pass
+    return {
+        "originals_deleted": originals_deleted,
+        "originals_failed": originals_failed,
+        "thumbs_deleted": thumbs_deleted,
+        "backup_dir": str(obackup_dir) if originals_deleted else "",
+    }
+
+
+# 清空日期目录：只删「YYYY-MM-DD」格式的空目录，跳过今天，绝不删非空目录
+import re as _re_dates
+_DATE_DIR_RE = _re_dates.compile(r"^\d{4}-\d{2}-\d{2}$")
+_clean_dirs_lock = asyncio.Lock()
+
+
+def _clean_empty_date_dirs(base_dir: Path) -> int:
+    """删除 base_dir 下「YYYY-MM-DD」格式的空子目录（跳过今天）。
+    - 只匹配标准日期格式目录，手动测试目录(seedVR2 等)一律不碰
+    - rmdir 只能删空目录，非空物理上删不掉
+    - 任何异常都跳过，不中断
+    返回删除的空目录数量。
+    """
+    if not base_dir.is_dir():
+        return 0
+    today = _time_module.strftime("%Y-%m-%d", _time_module.localtime())
+    removed = 0
+    try:
+        for d in base_dir.iterdir():
+            try:
+                if not d.is_dir():
+                    continue
+                if not _DATE_DIR_RE.match(d.name):
+                    continue
+                if d.name == today:
+                    continue
+                # 二次确认为空，再 rmdir（rmdir 本身也只删空目录）
+                if not any(d.iterdir()):
+                    d.rmdir()
+                    removed += 1
+            except OSError:
+                # 非空 / 并发占用 / 已被删 → 跳过
+                pass
+    except Exception:
+        pass
+    return removed
+
+
+async def _run_clean_empty_dirs() -> int:
+    """对三个目录执行空日期目录清理，带锁避免与手动触发并发。"""
+    async with _clean_dirs_lock:
+        total = 0
+        for d in (OUTPUT_DIR, THUMB_CACHE_DIR, DELETION_THUMBS_DIR):
+            total += await asyncio.to_thread(_clean_empty_date_dirs, d)
+        return total
+
+
 @app.on_event("startup")
 async def _start_gc():
     # 初始化 SQLite 数据库 + 首次运行时从 JSON 迁移
@@ -2038,7 +2240,10 @@ async def _start_gc():
     _safe_task(_cleanup_stale_deleted_entries(), "cleanup_stale_deleted")
     _safe_task(_recover_queue_on_startup(), "recover_queue")
     _safe_task(_backup_data_files(), "startup_backup")
-    _safe_task(_ensure_thumb_cache(), "ensure_thumb_cache")
+    async def _startup_thumb_sequence():
+        await _ensure_thumb_cache()
+        await _cleanup_orphan_files_at_startup()
+    _safe_task(_startup_thumb_sequence(), "startup_thumb_sequence")
     _gc_task = _safe_task(_gc_loop(), "gc_loop")
     _safe_task(_backup_loop(), "backup_loop")
     # 记录重启次数
@@ -2159,8 +2364,11 @@ async def _record_deletion(rel_path: str, github_id: str, login: str,
                           creator_ip_hint: str = ""):
     """将删除图片的缩略图复制到存档目录，并记录删除日志。
     若调用方已知生图者信息，传入可避免删除后查不到。"""
-    import uuid as _uuid, shutil as _shutil
-    uid = _uuid.uuid4().hex[:12]
+    import shutil as _shutil
+    # 按删除日期分子目录，避免单文件夹文件过多卡顿；thumb_file 字段存「日期/文件名」相对路径
+    _date_dir = _time_module.strftime("%Y-%m-%d", _time_module.localtime())
+    _fname = rel_path.replace("\\", "/").replace("/", "_")
+    thumb_rel = f"{_date_dir}/{_fname}.webp"
     dst = None
     try:
         src_thumb = _thumb_cache_path(rel_path)
@@ -2169,8 +2377,8 @@ async def _record_deletion(rel_path: str, github_id: str, login: str,
             if src_img.is_file():
                 await asyncio.to_thread(_generate_thumb, src_img, rel_path)
         if src_thumb.is_file():
-            DELETION_THUMBS_DIR.mkdir(parents=True, exist_ok=True)
-            dst = DELETION_THUMBS_DIR / f"{uid}.webp"
+            dst = DELETION_THUMBS_DIR / thumb_rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
             _shutil.copy2(str(src_thumb), str(dst))
     except Exception:
         dst = None
@@ -2202,9 +2410,16 @@ async def _record_deletion(rel_path: str, github_id: str, login: str,
                 creator_login = creator_login or users_.get(creator_github_id, {}).get("login", creator_github_id)
         except Exception:
             pass
+    if not (creator_github_id or creator_login or creator_ip):
+        try:
+            if dst:
+                dst.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return
     entry = {
         "path": rel_path.replace("\\", "/"),
-        "thumb_file": dst.name if dst else "",
+        "thumb_file": thumb_rel if dst else "",
         "deleted_by_github_id": github_id,
         "deleted_by_login": login or github_id,
         "deleted_at": _time_module.time(),
@@ -2230,8 +2445,13 @@ def _thumb_exists(output_rel: str) -> bool:
     return _thumb_cache_path(output_rel).is_file()
 
 
-def _generate_thumb(src_path: Path, output_rel: str, *, short_side: int = 512, quality: int = 80) -> bool:
-    """生成单张缩略图，返回是否成功，跑在线程池里"""
+def _path_stem_key(path: str) -> str:
+    """规范化相对路径并去掉扩展名，用于原图和 thumb_cache 的关联匹配。"""
+    return Path(str(path or "").replace("\\", "/")).with_suffix("").as_posix()
+
+
+def _generate_thumb(src_path: Path, output_rel: str, *, short_side: int = 256, quality: int = 80) -> bool:
+    """生成单张缩略图，返回是否成功，跑在线程池里。默认短边 256px。"""
     try:
         from PIL import Image
         Image.MAX_IMAGE_PIXELS = _PIL_MAX_PIXELS
@@ -3007,7 +3227,6 @@ async def _llm_google(system: str, user: str, cfg: Dict[str, Any], on_chunk: Opt
         print(f"[LLM] Google 返回空内容 | {detail} | 思维链: {thought_preview}")
         raise RuntimeError("模型返回空内容，请稍后重试")
     return full
-
 
 
 async def _llm_openai_compat(system: str, user: str, endpoint: str,
@@ -3919,9 +4138,23 @@ async def api_thumbnail(request: Request, path: str):
     p = find_thumbnail(path)
     if not p:
         raise HTTPException(404, "no thumbnail")
+    # 基于文件 mtime+size 生成 ETag：缩略图变更后 ETag 变化，浏览器自动取新图
+    try:
+        st = p.stat()
+        etag = f'"thumb-{int(st.st_mtime)}-{st.st_size}"'
+        if request.headers.get("If-None-Match", "") == etag:
+            return Response(status_code=304, headers={
+                "Cache-Control": "no-cache",
+                "ETag": etag,
+            })
+    except Exception:
+        etag = ""
     # 缩略图固定限制最长边 256，质量更低
     resp = _serve_image_maybe_webp(request, p, quality=72, max_side=256)
-    resp.headers["Cache-Control"] = "public, max-age=60"
+    # no-cache：浏览器仍缓存，但每次都用 ETag 重新校验，确保换图后立即生效
+    resp.headers["Cache-Control"] = "no-cache"
+    if etag:
+        resp.headers["ETag"] = etag
     return resp
 
 
@@ -6224,9 +6457,14 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             if "seed" in inp:
                 inp["seed"] = random.randint(0, 2**63 - 1)
 
-    # 给 SaveImage 类节点的 filename_prefix 注入时间戳，防止 ComfyUI 复用文件名
+    # 给 SaveImage 类节点的 filename_prefix 注入「日期子目录 + 时间戳」
+    # - 日期子目录：每天的图单独放 output/YYYY-MM-DD/ 下，避免单文件夹文件过多卡顿
+    # - 时间戳后缀：防止 ComfyUI 复用文件名
+    # 旧图不受影响（它们已按原路径存在），只对新生成的图生效
     import datetime as _dt
-    ts = _dt.datetime.now().strftime("%Y%m%d%H%M%S")
+    _now = _dt.datetime.now()
+    ts = _now.strftime("%Y%m%d%H%M%S")
+    date_dir = _now.strftime("%Y-%m-%d")
     for nid, ndata in prompt_dict.items():
         ct = ndata.get("class_type", "")
         if "save" in ct.lower() or "preview" in ct.lower():
@@ -6241,7 +6479,9 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
                         key = k
                         break
             if key and isinstance(inp.get(key), str) and inp[key]:
-                inp[key] = f"{inp[key]}_{ts}"
+                base = inp[key]
+                # 若用户工作流里已自带子目录前缀，保留其结构，只在最前面加日期目录
+                inp[key] = f"{date_dir}/{base}_{ts}"
 
     # 图生图：注入图片名到 LoadImage / VHS_LoadImages 节点
     if req.image1_name or req.image2_name or req.image3_name:
@@ -6582,7 +6822,7 @@ async def admin_page(request: Request):
         resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; frame-src 'none'; connect-src 'self' ws:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
         resp.headers["Cache-Control"] = "no-cache, must-revalidate"
         return resp
-    return _serve_html(STATIC_DIR / "admin.html", nonce=getattr(request.state, "csp_nonce", ""))
+    raise HTTPException(500, "SPA 前端未构建，请先运行 npm run build")
 
 
 @app.get("/api/admin/whoami")
@@ -6952,8 +7192,8 @@ async def api_delete_my_images_all(request: Request):
 # ---------------- 用户管理 (admin only) ----------------
 
 @app.get("/api/admin/users")
-async def api_admin_users(request: Request, search: str = "", limit: int = 20, offset: int = 0):
-    """分页查询注册用户，支持搜索（login/email/github_id）。"""
+async def api_admin_users(request: Request, search: str = "", role: str = "", banned: str = "", limit: int = 20, offset: int = 0):
+    """分页查询注册用户，支持搜索（login/email/github_id）与角色/封禁筛选。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     users = _load_users()
@@ -6961,6 +7201,11 @@ async def api_admin_users(request: Request, search: str = "", limit: int = 20, o
     if search.strip():
         s = search.strip().lower()
         items = [u for u in items if s in u.get("login","").lower() or s in u.get("email","").lower() or s in u.get("github_id","").lower()]
+    if role in ("admin", "user"):
+        items = [u for u in items if u.get("role", "user") == role]
+    if banned in ("0", "1"):
+        want = banned == "1"
+        items = [u for u in items if bool(u.get("banned")) == want]
     total = len(items)
     items = items[offset:offset + max(1, min(limit, 200))]
     return {"users": items, "total": total}
@@ -7105,7 +7350,8 @@ async def api_admin_user_set_role(payload: SetRolePayload, request: Request):
     if role not in ("admin", "user"):
         raise HTTPException(400, "role 必须是 admin 或 user")
     current_user = request.state.user or {}
-    if github_id == str(current_user.get("github_id")):
+    is_self = github_id == str(current_user.get("github_id"))
+    if is_self and role == "admin":
         raise HTTPException(400, "不能修改自己的角色")
     async with _users_lock:
         users = _load_users()
@@ -7120,29 +7366,8 @@ async def api_admin_user_set_role(payload: SetRolePayload, request: Request):
         if github_id.startswith("email:"):
             get_db().execute("UPDATE email_users SET role=? WHERE email=?", (role, github_id[6:]))
             get_db().commit()
-    # 降级管理员 → 清除其所有会话的 access_granted 和密钥绑定
-    if role == "user":
-        async with _sessions_lock:
-            sessions = _load_sessions()
-            modified = False
-            for t, s in sessions.items():
-                if str(s.get("github_id")) == github_id:
-                    if s.get("access_granted") or s.get("claimed_key"):
-                        s["access_granted"] = False
-                        s.pop("claimed_key", None)
-                        modified = True
-            if modified:
-                await _save_sessions(sessions)
-        # 同时清除 access_keys 中该用户的绑定
-        async with _access_keys_lock:
-            akeys = _load_access_keys()
-            akeys_modified = False
-            for k, v in akeys.get("keys", {}).items():
-                if v.get("used_by") == github_id:
-                    v["used_by"] = ""
-                    akeys_modified = True
-            if akeys_modified:
-                _save_access_keys(akeys)
+    # 角色变化后释放访问密钥绑定：管理员不占用密钥，普通用户需重新领取/验证。
+    await _release_user_access_bindings(github_id, as_admin=(role == "admin"))
     return {"ok": True, "user": users[github_id]}
 
 
@@ -7652,38 +7877,25 @@ async def api_admin_limits_set(request: Request, payload: Dict[str, Any]):
 
 @app.post("/api/admin/gc")
 async def api_admin_gc_run(request: Request):
-    """手动触发一次 GC（后台异步执行），可选跳过备份。"""
+    """手动触发一次 GC（后台异步执行）。"""
     global _last_gc_result
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
-    try:
-        body = await request.json() or {}
-    except Exception:
-        body = {}
-    do_backup = body.get("backup", True) in (True, "true", 1)
     _start_ts = _time_module.time()
     _last_gc_result = {"status": "running", "cleaned": {}, "time": _start_ts}
     async def _gc_with_result():
         global _last_gc_result
-        backup_dir = None
         try:
-            if do_backup:
-                backup_dir = await _backup_files_for_gc()
             result = await _run_gc()
-            if backup_dir:
-                result["backup_dir"] = str(backup_dir)
             duration = _time_module.time() - _start_ts
             _last_gc_result = {"status": "done", "cleaned": result, "time": _time_module.time()}
-            db.add_gc_log(_time_module.time(), duration, result, str(backup_dir) if backup_dir else "")
+            db.add_gc_log(_time_module.time(), duration, result, result.get("backup_dir", ""))
         except Exception as e:
             duration = _time_module.time() - _start_ts
             _last_gc_result = {"status": "error", "error": str(e), "time": _time_module.time()}
             db.add_gc_log(_time_module.time(), duration, {"error": str(e)}, "")
     _safe_task(_gc_with_result(), "manual_gc")
-    msg = "GC 已触发，后台执行中"
-    if do_backup:
-        msg += "（先备份再清理）"
-    return {"ok": True, "message": msg}
+    return {"ok": True, "message": "GC 已触发，后台执行中"}
 
 
 _last_gc_result: Dict[str, Any] = {}
@@ -7691,6 +7903,9 @@ _backfill_status: Dict[str, Any] = {}
 _backfill_lock = asyncio.Lock()
 _orphan_scan_status: Dict[str, Any] = {}
 _orphan_scan_lock = asyncio.Lock()
+# 补充缩略图任务状态（原图还在但 thumb_cache 缩略图丢失的记录，重新生成）
+_backfill_thumbs_status: Dict[str, Any] = {}
+_backfill_thumbs_lock = asyncio.Lock()
 
 
 @app.get("/api/admin/gc/status")
@@ -7718,6 +7933,54 @@ async def api_admin_gc_logs_clear(request: Request):
         raise HTTPException(403)
     db.clear_gc_logs()
     return {"ok": True}
+
+
+@app.post("/api/admin/gc/orphan-scan")
+async def api_admin_gc_orphan_scan(request: Request):
+    """手动触发孤儿文件清扫：扫描无 gen_logs 关联的原图（备份后删除）和缩略图。"""
+    global _orphan_scan_status
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    async with _orphan_scan_lock:
+        if _orphan_scan_status.get("status") == "running":
+            return {"ok": False, "error": "已有孤儿清扫任务运行中"}
+        _orphan_scan_status = {"status": "running", "cleaned": {}, "result": None}
+    async def _run():
+        global _orphan_scan_status
+        try:
+            result = await asyncio.to_thread(_do_orphan_scan, "manual_orphan")
+            _orphan_scan_status = {
+                "status": "done",
+                "cleaned": {
+                    "originals": len(result["originals_deleted"]),
+                    "originals_failed": len(result["originals_failed"]),
+                    "thumbs": result["thumbs_deleted"],
+                    "backup_dir": result["backup_dir"],
+                },
+                "result": result,
+            }
+        except Exception as e:
+            _orphan_scan_status = {"status": "error", "error": str(e)}
+    _safe_task(_run(), "manual_orphan_scan")
+    return {"ok": True, "message": "孤儿文件清扫已触发，后台执行中"}
+
+
+@app.get("/api/admin/gc/orphan-scan/status")
+async def api_admin_gc_orphan_scan_status(request: Request):
+    """查询最近一次孤儿文件清扫状态。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    return _orphan_scan_status or {"status": "idle"}
+
+
+@app.post("/api/admin/gc/clean-empty-dirs")
+async def api_admin_gc_clean_empty_dirs(request: Request):
+    """手动清理 output / thumb_cache / deletion_thumbs 下的空日期目录。
+    只删「YYYY-MM-DD」格式的空目录，跳过今天，非空目录绝不删。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    removed = await _run_clean_empty_dirs()
+    return {"ok": True, "removed": removed, "message": f"已清理 {removed} 个空日期目录"}
 
 
 @app.post("/api/admin/gc/backfill-thumbnails")
@@ -7769,12 +8032,14 @@ async def _run_backfill_thumbnails():
                 async with _backfill_lock:
                     _backfill_status["skipped"] += 1
                 continue
-            uid = _uuid.uuid4().hex[:12]
-            DELETION_THUMBS_DIR.mkdir(parents=True, exist_ok=True)
-            dst = DELETION_THUMBS_DIR / f"{uid}.webp"
+            safe_name = path.replace("\\", "/").replace("/", "_")
+            _dd = _time_module.strftime("%Y-%m-%d", _time_module.localtime())
+            thumb_rel = f"{_dd}/{safe_name}.webp"
+            dst = DELETION_THUMBS_DIR / thumb_rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
             try:
                 _shutil.copy2(str(src_thumb), str(dst))
-                db.update_thumb_file(r["id"], dst.name)
+                db.update_thumb_file(r["id"], thumb_rel)
                 async with _backfill_lock:
                     _backfill_status["filled"] += 1
             except Exception:
@@ -7843,8 +8108,6 @@ async def api_admin_stats_generation(request: Request, date_from: float = 0, dat
 @app.get("/api/announcement")
 async def api_announcement():
     return {"announcement": dict(_announcement)}
-
-
 
 
 @app.get("/api/admin/announcement")
@@ -8003,119 +8266,6 @@ async def api_admin_character_thumbnail_upload(request: Request, file: UploadFil
     return {"ok": True, "filename": filename}
 
 
-@app.post("/api/admin/scan-thumbnails")
-async def api_admin_scan_thumbnails(request: Request, payload: Dict[str, Any]):
-    if not getattr(request.state, "is_admin", False):
-        raise HTTPException(403)
-    stype = payload.get("type", "all")
-    result = {}
-
-    async def _scan_one(data_list: List[Dict], thumb_dir: Path, name: str) -> dict:
-        total = len(data_list)
-        matched = 0
-        missing = 0
-        changed = False
-        import tempfile
-        for entry in data_list:
-            img = entry.get("image", "")
-            if not img:
-                continue
-            found = False
-            for ext in THUMB_EXTS:
-                p = thumb_dir / (img + ext)
-                try:
-                    if p.is_file():
-                        # 强制 128x128 WebP
-                        with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as tf:
-                            tpath = tf.name
-                        from PIL import Image as _PIL
-                        _PIL.open(p).convert("RGB").resize((128, 128), _PIL.LANCZOS).save(tpath, "WEBP", quality=80, optimize=True)
-                        final_name = img[:img.rfind(".")] + ".webp" if "." in img else img + ".webp"
-                        dest = thumb_dir / final_name
-                        import shutil
-                        shutil.move(tpath, dest)
-                        # 删除旧文件
-                        if str(dest) != str(p.resolve()):
-                            p.unlink(missing_ok=True)
-                        if entry.get("image") != final_name:
-                            entry["image"] = final_name
-                            changed = True
-                        matched += 1
-                        found = True
-                        break
-                except Exception:
-                    pass
-            if not found:
-                missing += 1
-        if changed:
-            if name == "styles":
-                await _save_styles(data_list)
-            else:
-                await _save_characters(data_list)
-        return {"total": total, "matched": matched, "missing": missing}
-
-    if stype in ("styles", "all"):
-        result["styles"] = await _scan_one(_styles, STYLE_THUMB_DIR, "styles")
-    if stype in ("characters", "all"):
-        result["characters"] = await _scan_one(_characters, CHAR_THUMB_DIR, "characters")
-    if stype in ("workflows", "all"):
-        wf_total = 0
-        wf_matched = 0
-        wf_missing = 0
-        wf_changed = False
-        import tempfile, shutil
-        # 先扫描未注册到 workflow_meta 的工作流（按文件名发现缩略图）
-        all_wf_paths = set()
-        try:
-            for rel in scan_workflow_files():
-                if rel not in _workflow_meta:
-                    thumb = find_thumbnail(rel)
-                    if thumb:
-                        _workflow_meta[rel] = {"thumbnail": thumb.name}
-                        wf_changed = True
-        except Exception:
-            pass
-        for wf_path, meta in list(_workflow_meta.items()):
-            img = meta.get("thumbnail", "")
-            if not img:
-                # 自动发现：按工作流文件名匹配 thumbnails/ 下的文件
-                found_path = find_thumbnail(wf_path)
-                if found_path:
-                    img = found_path.name
-                else:
-                    continue
-            wf_total += 1
-            found = False
-            img_base = img[:img.rfind(".")] if "." in img else img
-            for ext in THUMB_EXTS:
-                p = THUMB_DIR / (img_base + ext)
-                try:
-                    if p.is_file():
-                        with tempfile.NamedTemporaryFile(suffix=".webp", delete=False) as tf:
-                            tpath = tf.name
-                        from PIL import Image as _PIL
-                        _PIL.open(p).convert("RGB").resize((128, 128), _PIL.LANCZOS).save(tpath, "WEBP", quality=80, optimize=True)
-                        final_name = img_base + ".webp"
-                        dest = THUMB_DIR / final_name
-                        shutil.move(tpath, dest)
-                        if str(dest) != str(p.resolve()):
-                            p.unlink(missing_ok=True)
-                        if meta.get("thumbnail") != final_name:
-                            meta["thumbnail"] = final_name
-                            wf_changed = True
-                        wf_matched += 1
-                        found = True
-                        break
-                except Exception:
-                    pass
-            if not found:
-                wf_missing += 1
-        if wf_changed:
-            await asyncio.to_thread(_save_workflow_meta_file, _workflow_meta)
-        result["workflows"] = {"total": wf_total, "matched": wf_matched, "missing": wf_missing}
-    return {"ok": True, **result}
-
-
 # ---------------- 分辨率端点 ----------------
 
 @app.get("/api/admin/resolutions")
@@ -8183,8 +8333,19 @@ def _verify_and_resize_thumb(dest: Path, dest_dir: Path, safe_name: str, ext: st
     return safe_name
 
 
-async def _save_upload(file: UploadFile, dest_dir: Path) -> str:
-    """流式保存上传文件，边写边校验大小（上限 5 MB）并验证是有效图片。"""
+def _sanitize_base_name(name: str) -> str:
+    """把任意名称清洗成安全的文件名 stem（无扩展名、无路径分隔符）。"""
+    stem = Path(name).stem  # 去掉 .json 等扩展名
+    # 只保留中文、字母、数字、下划线、连字符，其余替换为下划线
+    stem = _re.sub(r"[^\w\u4e00-\u9fff-]+", "_", stem, flags=_re.UNICODE).strip("_")
+    return stem[:80]
+
+
+async def _save_upload(file: UploadFile, dest_dir: Path, base_name: str = "") -> str:
+    """流式保存上传文件，边写边校验大小（上限 5 MB）并验证是有效图片。
+
+    base_name 非空时，用它作为缩略图文件名（清洗后），便于按业务名命名。
+    """
     if not file.filename:
         raise HTTPException(400, "no filename")
     ext = Path(file.filename).suffix.lower()
@@ -8194,7 +8355,12 @@ async def _save_upload(file: UploadFile, dest_dir: Path) -> str:
     raw_name = Path(file.filename).name
     if not raw_name or ".." in raw_name or "/" in raw_name or "\\" in raw_name:
         raise HTTPException(400, "invalid filename")
-    safe_name = f"{uuid.uuid4().hex[:8]}_{raw_name}"
+    clean_base = _sanitize_base_name(base_name) if base_name else ""
+    if clean_base:
+        # 用业务名命名；追加短随机串避免浏览器缓存命中旧图（_t 参数已带文件名做 cache-bust）
+        safe_name = f"{clean_base}_{uuid.uuid4().hex[:6]}{ext}"
+    else:
+        safe_name = f"{uuid.uuid4().hex[:8]}_{raw_name}"
     dest = dest_dir / safe_name
     MAX_SIZE = 5 * 1024 * 1024
     written = 0
@@ -8357,11 +8523,131 @@ async def api_admin_workflow_meta_set(request: Request, payload: Dict[str, Any])
 
 
 @app.post("/api/admin/wf_thumbnail")
-async def api_admin_wf_thumbnail_upload(request: Request, file: UploadFile):
+async def api_admin_wf_thumbnail_upload(request: Request, file: UploadFile, name: str = Form("")):
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
-    safe_name = await _save_upload(file, THUMB_DIR)
+    safe_name = await _save_upload(file, THUMB_DIR, base_name=name)
     return {"ok": True, "filename": safe_name}
+
+
+@app.post("/api/admin/wf_thumbnail_batch")
+async def api_admin_wf_thumbnail_batch(request: Request, files: List[UploadFile]):
+    """批量上传工作流缩略图。
+
+    匹配规则：上传文件名去扩展名后，与工作流文件名（去 .json）**严格区分大小写**精确匹配。
+    例如 `MyWorkflow.png` 匹配 `文生图/MyWorkflow.json`。同名工作流（不同目录）会全部更新。
+    """
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+
+    # 构建：工作流文件名 stem（区分大小写） -> 完整工作流路径列表
+    wf_paths = await _scan_workflow_files_async()
+    stem_map: Dict[str, List[str]] = {}
+    for wf in wf_paths:
+        base = wf.rsplit("/", 1)[-1]  # MyWorkflow.json
+        stem = base[:-5] if base.lower().endswith(".json") else base
+        stem_map.setdefault(stem, []).append(wf)
+
+    results = []
+    meta_changed = False
+    for f in files:
+        item = {"filename": f.filename or "", "matched": [], "status": "", "error": ""}
+        try:
+            up_stem = Path(f.filename or "").stem
+            targets = stem_map.get(up_stem)
+            if not targets:
+                item["status"] = "unmatched"
+                results.append(item)
+                continue
+            # 保存并校验缩略图（命名以工作流 stem 开头）
+            safe_name = await _save_upload(f, THUMB_DIR, base_name=up_stem)
+            for wf in targets:
+                meta = _workflow_meta.get(wf, {})
+                meta["thumbnail"] = safe_name
+                _workflow_meta[wf] = meta
+                item["matched"].append(wf)
+            meta_changed = True
+            item["status"] = "ok"
+        except HTTPException as he:
+            item["status"] = "error"
+            item["error"] = he.detail if isinstance(he.detail, str) else "上传失败"
+        except Exception as e:
+            item["status"] = "error"
+            item["error"] = str(e)
+        results.append(item)
+
+    if meta_changed:
+        await asyncio.to_thread(_save_workflow_meta_file, _workflow_meta)
+
+    ok = sum(1 for r in results if r["status"] == "ok")
+    unmatched = sum(1 for r in results if r["status"] == "unmatched")
+    errored = sum(1 for r in results if r["status"] == "error")
+    return {"ok": True, "matched": ok, "unmatched": unmatched, "errored": errored, "results": results}
+
+
+async def _entry_thumbnail_batch(files: List[UploadFile], data_list: List[Dict[str, Any]], thumb_dir: Path):
+    """画风/角色批量上传缩略图：按 name 区分大小写精确匹配。
+
+    返回 (汇总结果, 是否有变更)。同名条目会全部更新。
+    """
+    # name（区分大小写） -> 条目列表
+    name_map: Dict[str, List[Dict[str, Any]]] = {}
+    for entry in data_list:
+        nm = str(entry.get("name", ""))
+        if nm:
+            name_map.setdefault(nm, []).append(entry)
+
+    results = []
+    changed = False
+    for f in files:
+        item = {"filename": f.filename or "", "matched": [], "status": "", "error": ""}
+        try:
+            up_stem = Path(f.filename or "").stem
+            targets = name_map.get(up_stem)
+            if not targets:
+                item["status"] = "unmatched"
+                results.append(item)
+                continue
+            safe_name = await _save_upload(f, thumb_dir, base_name=up_stem)
+            for entry in targets:
+                entry["image"] = safe_name
+                item["matched"].append(str(entry.get("name", "")))
+            changed = True
+            item["status"] = "ok"
+        except HTTPException as he:
+            item["status"] = "error"
+            item["error"] = he.detail if isinstance(he.detail, str) else "上传失败"
+        except Exception as e:
+            item["status"] = "error"
+            item["error"] = str(e)
+        results.append(item)
+
+    ok = sum(1 for r in results if r["status"] == "ok")
+    unmatched = sum(1 for r in results if r["status"] == "unmatched")
+    errored = sum(1 for r in results if r["status"] == "error")
+    return {"ok": True, "matched": ok, "unmatched": unmatched, "errored": errored, "results": results}, changed
+
+
+@app.post("/api/admin/style_thumbnail_batch")
+async def api_admin_style_thumbnail_batch(request: Request, files: List[UploadFile]):
+    """批量上传画风缩略图：文件名（去扩展名）与画风 name 区分大小写精确匹配。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    summary, changed = await _entry_thumbnail_batch(files, _styles, STYLE_THUMB_DIR)
+    if changed:
+        await _save_styles(_styles)
+    return summary
+
+
+@app.post("/api/admin/character_thumbnail_batch")
+async def api_admin_character_thumbnail_batch(request: Request, files: List[UploadFile]):
+    """批量上传角色缩略图：文件名（去扩展名）与角色 name 区分大小写精确匹配。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    summary, changed = await _entry_thumbnail_batch(files, _characters, CHAR_THUMB_DIR)
+    if changed:
+        await _save_characters(_characters)
+    return summary
 
 
 # ---------------- LLM 配置端点 ----------------
@@ -8986,10 +9272,17 @@ async def _run_orphan_scan(date_from: float = 0, date_to: float = 0):
             async with _orphan_scan_lock:
                 _orphan_scan_status["processed"] = idx + 1
         orphans.sort(key=lambda x: -x["created_at"])
+        # 汇总孤儿的日期区间，方便前端展示「孤儿分布在哪几天」
+        date_range = None
+        if orphans:
+            cts = [o["created_at"] for o in orphans if o.get("created_at")]
+            if cts:
+                date_range = {"min": min(cts), "max": max(cts), "count": len(orphans)}
         async with _orphan_scan_lock:
             _orphan_scan_status["status"] = "done"
             _orphan_scan_status["found"] = len(orphans)
             _orphan_scan_status["orphans"] = orphans
+            _orphan_scan_status["date_range"] = date_range
     except Exception as e:
         async with _orphan_scan_lock:
             _orphan_scan_status["status"] = "error"
@@ -9026,6 +9319,89 @@ async def api_admin_gen_logs_scan_result(request: Request, login: str = "", date
     return {"orphans": items, "total": len(items)}
 
 
+# ───────────── 补充缩略图：原图还在但 thumb_cache 缩略图丢失的记录，重新生成 ─────────────
+@app.post("/api/admin/gen-logs/backfill-thumbs")
+async def api_admin_gen_logs_backfill_thumbs(request: Request, payload: Dict[str, Any] = {}):
+    """后台扫描 gen_logs，为「原图存在但缩略图丢失」的记录重新生成缩略图。支持 date_from/date_to 限定范围。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    global _backfill_thumbs_status
+    date_from = (payload or {}).get("date_from", 0) or 0
+    date_to = (payload or {}).get("date_to", 0) or 0
+    async with _backfill_thumbs_lock:
+        if _backfill_thumbs_status.get("status") == "running":
+            return {"ok": False, "error": "已有补充缩略图任务运行中"}
+        _backfill_thumbs_status = {"status": "running", "total": 0, "processed": 0,
+                                   "regenerated": 0, "skipped": 0, "failed": 0}
+    _safe_task(_run_backfill_thumbs(date_from, date_to), "backfill_thumbs")
+    return {"ok": True}
+
+
+async def _run_backfill_thumbs(date_from: float = 0, date_to: float = 0):
+    """后台补充缩略图：遍历 gen_logs，原图在且缩略图丢失则重新生成。"""
+    global _backfill_thumbs_status
+    try:
+        all_logs = await asyncio.to_thread(db.get_gen_logs_raw_range, date_from, date_to)
+        total = len(all_logs)
+        async with _backfill_thumbs_lock:
+            _backfill_thumbs_status["total"] = total
+        regenerated = skipped = failed = 0
+        for idx, r in enumerate(all_logs):
+            try:
+                fps = json.loads(r.get("file_paths", "[]"))
+            except Exception:
+                fps = []
+            for fp in fps:
+                if not _validate_rel_path(fp):
+                    skipped += 1
+                    continue
+                try:
+                    orig = _resolve_output_path(fp)
+                    if not (orig and orig.is_file()):
+                        skipped += 1          # 原图已不在，不补（属孤儿，归孤儿清理处理）
+                        continue
+                    rel = fp.replace("\\", "/")
+                    if _thumb_exists(rel):
+                        skipped += 1          # 缩略图已存在，跳过
+                        continue
+                    ok = await asyncio.to_thread(_generate_thumb, orig, rel)
+                    if ok:
+                        regenerated += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+            if (idx + 1) % 50 == 0 or idx + 1 == total:
+                async with _backfill_thumbs_lock:
+                    _backfill_thumbs_status["processed"] = idx + 1
+                    _backfill_thumbs_status["regenerated"] = regenerated
+                    _backfill_thumbs_status["skipped"] = skipped
+                    _backfill_thumbs_status["failed"] = failed
+        async with _backfill_thumbs_lock:
+            _backfill_thumbs_status["status"] = "done"
+            _backfill_thumbs_status["processed"] = total
+            _backfill_thumbs_status["regenerated"] = regenerated
+            _backfill_thumbs_status["skipped"] = skipped
+            _backfill_thumbs_status["failed"] = failed
+        if regenerated:
+            print(f"[backfill-thumbs] 补充缩略图: {regenerated} 张, 跳过 {skipped}, 失败 {failed}")
+    except Exception as e:
+        async with _backfill_thumbs_lock:
+            _backfill_thumbs_status["status"] = "error"
+            _backfill_thumbs_status["error"] = str(e)
+
+
+@app.get("/api/admin/gen-logs/backfill-thumbs/status")
+async def api_admin_gen_logs_backfill_thumbs_status(request: Request):
+    """查询补充缩略图任务进度。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    global _backfill_thumbs_status
+    if not _backfill_thumbs_status:
+        return {"status": "idle"}
+    return dict(_backfill_thumbs_status)
+
+
 @app.post("/api/admin/gen-logs/delete")
 async def api_admin_gen_logs_delete(request: Request, payload: Dict[str, Any] = {}):
     """批量删除指定 log_id 的生图日志。"""
@@ -9036,6 +9412,72 @@ async def api_admin_gen_logs_delete(request: Request, payload: Dict[str, Any] = 
         raise HTTPException(400, "ids (list) required")
     removed = db.delete_gen_logs_by_ids(ids)
     return {"ok": True, "removed": removed}
+
+
+async def _delete_orphan_gen_logs(date_from: float = 0, date_to: float = 0) -> Dict[str, int]:
+    """删除指定时间区间内「原图全部丢失」的孤儿 gen_logs，并清掉其残留缩略图。
+    只删原图确实都不存在的死记录，原图还在的记录一律保留（溯源）。"""
+    logs = await asyncio.to_thread(db.get_gen_logs_raw_range, date_from, date_to)
+    orphan_ids: List[str] = []
+    orphan_paths: List[str] = []
+    for r in logs:
+        try:
+            fps = json.loads(r.get("file_paths", "[]"))
+        except Exception:
+            fps = []
+        if not fps:
+            continue
+        all_missing = True
+        for fp in fps:
+            try:
+                p = _resolve_output_path(fp)
+                if p and p.is_file():
+                    all_missing = False
+                    break
+            except Exception:
+                pass
+        if all_missing:
+            orphan_ids.append(r["log_id"])
+            orphan_paths.extend(fps)
+    removed = db.delete_gen_logs_by_ids(orphan_ids) if orphan_ids else 0
+    # 清掉这些死记录关联的残留缩略图（原图已没，缩略图也无溯源价值）
+    thumb_removed = 0
+    for fp in orphan_paths:
+        if not _validate_rel_path(fp):
+            continue
+        try:
+            tp = _thumb_cache_path(fp)
+            if tp.is_file():
+                tp.unlink()
+                thumb_removed += 1
+        except Exception:
+            pass
+    return {"removed_logs": removed, "removed_thumbs": thumb_removed}
+
+
+@app.post("/api/admin/gen-logs/delete-orphans-by-range")
+async def api_admin_gen_logs_delete_orphans_by_range(request: Request, payload: Dict[str, Any] = {}):
+    """删除指定日期区间内「原图全丢」的孤儿日志 + 残留缩略图。
+    入参 date_from/date_to 为 epoch 秒，不传则不限。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    date_from = float((payload or {}).get("date_from") or 0)
+    date_to = float((payload or {}).get("date_to") or 0)
+    result = await _delete_orphan_gen_logs(date_from, date_to)
+    return {"ok": True, **result,
+            "message": f"已清理 {result['removed_logs']} 条孤儿日志，{result['removed_thumbs']} 张残留缩略图"}
+
+
+@app.post("/api/admin/gen-logs/delete-orphans-week-ago")
+async def api_admin_gen_logs_delete_orphans_week_ago(request: Request):
+    """一键清理「一周前 且 原图全丢」的孤儿日志 + 残留缩略图。
+    只动一周前的孤儿，一周内的、原图还在的记录全部保留（溯源）。"""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(403)
+    cutoff = _time_module.time() - 7 * 86400
+    result = await _delete_orphan_gen_logs(0, cutoff)
+    return {"ok": True, **result,
+            "message": f"已清理一周前 {result['removed_logs']} 条孤儿日志，{result['removed_thumbs']} 张残留缩略图"}
 
 
 @app.get("/api/admin/gen-logs/info")
@@ -9083,18 +9525,18 @@ async def api_admin_deletion_log(request: Request, search: str = "",
         e["sort_ts"] = e.get("deleted_at", 0)
         e["file_url"] = f"/api/output/file?path={quote(e.get('path', ''), safe='')}"
         if e.get("thumb_file"):
-            e["thumb_url"] = f"/api/admin/deletion-thumb/{e['thumb_file']}"
+            e["thumb_url"] = f"/api/admin/deletion-thumb/{quote(e['thumb_file'], safe='')}"
         else:
             e["thumb_url"] = ""
     return {"items": log, "total": total}
 
 
-@app.get("/api/admin/deletion-thumb/{filename}")
+@app.get("/api/admin/deletion-thumb/{filename:path}")
 async def api_admin_deletion_thumb(request: Request, filename: str):
-    """获取删除记录缩略图（仅管理员）。"""
+    """获取删除记录缩略图（仅管理员）。filename 可含日期子目录，如 2026-06-21/xxx.webp。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
-    if ".." in filename or "/" in filename or "\\" in filename:
+    if ".." in filename or "\\" in filename:
         raise HTTPException(400)
     fp = (DELETION_THUMBS_DIR / filename).resolve()
     if not fp.is_relative_to(DELETION_THUMBS_DIR.resolve()) or not fp.is_file():

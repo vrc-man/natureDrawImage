@@ -5,25 +5,30 @@
 ```
 natureDrawImage-main-sqlit/
 ├── web/
-│   ├── app.py                  # FastAPI 后端（~8900 行）
-│   ├── db.py                   # SQLite 数据库操作
+│   ├── app.py                  # FastAPI 后端
+│   ├── db/
+│   │   ├── schema.py           # SQLite Schema / 初始化 / 迁移
+│   │   └── operations.py       # SQLite 数据操作
+│   ├── email_auth.py           # 邮箱登录/注册/邮箱管理 API
 │   ├── static/
-│   │   ├── admin.html          # 原始管理后台（3630 行，前端参考）
-│   │   ├── index.html          # 原始首页
-│   │   └── dist/               # Vue 构建输出
-│   └── 各种.json                # 数据存储文件
+│   │   ├── admin.html          # 旧版管理后台（历史参考，/admin 不再使用）
+│   │   ├── index.html          # 旧版首页（历史参考）
+│   │   └── dist/               # Vue 构建输出，/、/access、/admin 使用
+│   └── db/natureDrawImage.db   # SQLite 主数据库（本地运行时文件）
 ├── frontend/
 │   ├── src/
 │   │   ├── pages/
-│   │   │   ├── Admin.vue       # 管理后台（模块化，21 个子组件）
+│   │   │   ├── Admin.vue       # 管理后台（模块化组件）
 │   │   │   ├── Home.vue        # 用户首页（5 Tab 页）
 │   │   │   └── ...
 │   │   ├── components/
-│   │   │   ├── admin/          # 21 个管理板块子组件
+│   │   │   ├── admin/          # 管理后台板块组件
 │   │   │   │   ├── useAdminApi.ts       # 共享 API 工具
 │   │   │   │   ├── AdminLightbox.vue    # 灯箱
+│   │   │   │   ├── StatsSection.vue      # 系统统计
 │   │   │   │   ├── QueueSection.vue     # 队列管理
 │   │   │   │   ├── AnnSection.vue       # 公告管理
+│   │   │   │   ├── ResSection.vue       # 分辨率管理
 │   │   │   │   ├── StyleSection.vue     # 画风管理
 │   │   │   │   ├── CharacterSection.vue # 角色管理
 │   │   │   │   ├── WfMetaSection.vue    # 工作流元数据
@@ -53,6 +58,98 @@ natureDrawImage-main-sqlit/
 └── documentation/
     └── Project-documentation.md  # 本文件
 ```
+
+---
+
+## 运行入口与路由关系
+
+### 后端入口
+
+- 主后端入口是 `web/app.py`，FastAPI 应用对象为 `app`。
+- 邮箱登录、注册、邀请码、邮箱用户管理等路由由 `web/email_auth.py` 提供，并在 `app.py` 底部 SPA fallback 之前调用 `init_email_auth()` 注册。
+- SQLite 初始化和迁移在 `web/db/schema.py`，常用读写封装在 `web/db/operations.py`。
+
+### 前端入口
+
+- Vue 源码在 `frontend/src/`。
+- `frontend/vite.config.ts` 设置 `outDir` 为 `../web/static/dist`，所以 `npm run build` 后产物直接进入后端静态目录。
+- `vite.config.ts` 设置 `base: '/spa-assets/'`，构建后的 JS/CSS 通过 `/spa-assets/assets/...` 加载。
+- 后端 `app.py` 里的 `/spa-assets/{rest:path}` 会把 URL 映射到 `web/static/dist/{rest}`。
+
+### 页面入口
+
+| URL | 实际返回 | 说明 |
+|-----|---------|------|
+| `/` | 未登录返回欢迎页；已登录返回 `web/static/dist/index.html` | Vue 用户端首页 |
+| `/access` | `web/static/dist/index.html` | 访问密钥输入页，由 Vue 根据 `/api/whoami` 状态渲染 |
+| `/admin` | `web/static/dist/index.html` | Vue 管理后台，需管理员权限 |
+| `/static/admin.html` | 302 到 `/admin` | 旧后台入口不再直接使用 |
+
+### 旧静态页面说明
+
+- `web/static/admin.html` 和 `web/static/index.html` 是旧版页面/历史参考，不是当前主入口。
+- 当前管理后台以 `frontend/src/pages/Admin.vue` 为外壳，业务板块在 `frontend/src/components/admin/`。
+- 当前用户首页是 `frontend/src/pages/Home.vue`，工作流、角色、画风、精选、我的作品等拆分为组件。
+
+---
+
+## 认证、权限与访问密钥
+
+### 用户身份
+
+- GitHub 登录用户的唯一 ID 是 GitHub 数字 ID，例如 `163757981`。
+- 邮箱登录用户的唯一 ID 是 `email:邮箱地址`，例如 `email:admin@example.com`。
+- 主用户表是 `users`，邮箱用户额外有 `email_users`。
+- 管理员判断以 `users.role == 'admin'` 为准；邮箱用户角色会同步到 `email_users.role`。
+
+### 初始管理员环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `FIRST_USER_ADMIN` | `1` | `1` 表示空库第一个注册/登录用户自动成为管理员；`0` 关闭 |
+| `INITIAL_ADMIN_USER_IDS` | 空 | 逗号分隔的初始管理员唯一 ID，例如 `163757981,email:admin@example.com` |
+| `LOG_USER_ID` | `0` | `1` 时 HTTP 日志输出 `gid=用户唯一ID`，便于获取用户 ID |
+
+规则：
+
+- `INITIAL_ADMIN_USER_IDS` 只提权，不降级。
+- 后填 `INITIAL_ADMIN_USER_IDS` 后，匹配用户下次登录会被提升为管理员。
+- `FIRST_USER_ADMIN=0` 不会降级已有管理员，只会关闭“空库第一个用户自动管理员”。
+- 如果已经有稳定管理员，可以使用：
+
+```env
+FIRST_USER_ADMIN=0
+INITIAL_ADMIN_USER_IDS=
+LOG_USER_ID=0
+```
+
+- 如果是首次公网部署，建议：
+
+```env
+FIRST_USER_ADMIN=0
+INITIAL_ADMIN_USER_IDS=你的管理员用户ID
+LOG_USER_ID=0
+```
+
+### 访问密钥门禁
+
+- 非管理员登录后必须通过 `/api/auth/claim-key` 绑定访问密钥，session 中的 `access_granted` 才会变为 true。
+- 管理员自动放行，不需要访问密钥，创建 session 时 `access_granted=true`。
+- 未验证密钥时，Vue 首页只显示访问密钥输入卡，不加载工作流、角色、画风、精选、我的作品等功能组件。
+- `/api/notifications` 豁免访问密钥，用于顶部通知/队列圆点。
+- `/api/output/featured` 不豁免访问密钥，未验证密钥时后端会返回 `ACCESS_KEY_REQUIRED`。
+- 访问密钥绑定信息存放在 `access_keys.used_by`，当前 session 使用的密钥记录在 `sessions.claimed_key`。
+
+### 管理员升降级
+
+- 后端接口：`POST /api/admin/users/set_role`。
+- 请求体：`{ "github_id": "用户唯一ID", "role": "admin" | "user" }`。
+- Vue 后台入口：`UsersSection.vue` 和 `EmailSection.vue` 的“设为管理员 / 降为普通用户”按钮。
+- 角色变更后会调用 `_release_user_access_bindings()` 释放该用户绑定的访问密钥。
+- 升为管理员：该用户 session 自动放行，且不再占用访问密钥。
+- 降为普通用户：该用户已绑定密钥会释放，session 需要重新输入访问密钥。
+- 允许管理员在还有其他管理员时给自己降级；前端成功后跳回首页。
+- 后端禁止移除最后一位管理员，防止后台锁死。
 
 ---
 
@@ -108,29 +205,33 @@ GC 触发（手动/定时）：
 ### 锁保护
 
 ```python
-_user_images_lock = asyncio.Lock()      # 保护 user_images.json
-_deleted_images_lock = asyncio.Lock()    # 保护 deleted_images.json
+_user_images_lock = asyncio.Lock()      # 保护 user_images 归属记录读写链路
+_deleted_images_lock = asyncio.Lock()    # 保护 deleted_images 删除标记读写链路
 _creator_map_lock = asyncio.Lock()       # 保护 creator_ip 映射
 _featured_lock = asyncio.Lock()          # 保护 featured 精选
 ```
 
+> 变量名沿用 JSON 迁移前命名，当前实际读写大多已经落到 SQLite 表。
+
 **加锁原则：** 校验（读）和删除（写）必须在同一个锁内完成，消除 TOCTOU 窗口。
 
 **已修复的锁遗漏（2026-06）：**
-- `POST /api/admin/delete` line 7262: 缺 `_user_images_lock` ✅ 已加
-- `POST /api/admin/delete_batch` line 7333: 缺 `_user_images_lock` ✅ 已加
-- `POST /api/admin/mark_delete_batch` line 7436,7438: 缺 `_deleted_images_lock` + `_user_images_lock` ✅ 已加
-- 举报处理删图 line 8388: 缺 `_user_images_lock` ✅ 已加
+- `POST /api/admin/delete`: 缺 `_user_images_lock` ✅ 已加
+- `POST /api/admin/delete_batch`: 缺 `_user_images_lock` ✅ 已加
+- `POST /api/admin/mark_delete_batch`: 缺 `_deleted_images_lock` + `_user_images_lock` ✅ 已加
+- 举报处理删图: 缺 `_user_images_lock` ✅ 已加
 
-### 数据文件
+### SQLite 数据表
 
-| 文件 | 用途 | 读 | 写 |
+| 表 | 用途 | 读 | 写 |
 |------|------|----|-----|
-| `user_images.json` | `{github_id: [{path, ...}]}` 用户图片归属 | `_load_user_images()` | `db.remove_user_image()` |
-| `deleted_images.json` | `{github_id: [path, ...]}` GC 待清理标记 | `_load_deleted_images()` | `db.add_deleted_image()` |
-| `deletion_log.json` | 删除记录日志（含缩略图归档） | `db.query_deletion_log()` | `db.add_deletion_log_entry()` |
-| `gen_log.json` | 生图日志 | `app.py` 各查询函数 | app 内部 |
-| `featured.json` | 精选列表 | `_read_featured()` | `_write_featured()` |
+| `user_images` | 用户图片归属 | `_load_user_images()` | `db.save_user_image()` / `db.remove_user_image()` |
+| `deleted_images` | GC 待清理标记 | `_load_deleted_images()` | `db.add_deleted_image()` |
+| `deletion_logs` | 删除记录日志（含缩略图归档） | `db.query_deletion_log()` | `db.add_deletion_log_entry()` |
+| `gen_logs` | 生图日志 | `_load_gen_logs()` | `db.save_gen_log()` |
+| `featured` | 精选列表 | `_read_featured()` | `_write_featured()` |
+
+> 部分 `app.py` 函数仍保留 `_load_*` 命名，这是从 JSON 迁移到 SQLite 后的兼容包装，不代表仍写 JSON 文件。
 
 ---
 
@@ -176,7 +277,7 @@ _featured_lock = asyncio.Lock()          # 保护 featured 精选
 | GET/POST | `/api/admin/styles` | 画风管理 |
 | GET/POST | `/api/admin/characters` | 角色管理 |
 | GET/POST | `/api/admin/workflow_meta` | 工作流元数据 |
-| GET/POST | `/api/admin/workflow_files` | 工作流文件列表 |
+| GET | `/api/admin/workflow_files` | 工作流文件列表 |
 | POST | `/api/admin/workflow_rename` | 工作流重命名 |
 | GET/POST | `/api/admin/llm` | LLM 配置 |
 | POST | `/api/admin/llm/test` | 测试 LLM |
@@ -184,43 +285,63 @@ _featured_lock = asyncio.Lock()          # 保护 featured 精选
 | GET/POST | `/api/admin/limits` | 限流配置 |
 | GET/POST | `/api/admin/maintenance` | 维护模式 |
 | GET/POST | `/api/admin/custom_head` | 自定义 Head |
-| GET/POST | `/api/admin/bans` | IP 封禁 |
-| GET/POST | `/api/admin/ip-whitelist` | IP 白名单 |
+| GET | `/api/admin/bans` | IP 封禁列表 |
+| GET | `/api/admin/ip-whitelist` | IP 白名单列表 |
+| POST | `/api/admin/ip-whitelist/add` | 添加 IP 白名单 |
+| POST | `/api/admin/ip-whitelist/remove` | 移除 IP 白名单 |
 | POST | `/api/admin/ban` | 封禁 IP |
 | POST | `/api/admin/unban` | 解封 IP |
-| GET/POST | `/api/admin/users` | 用户管理 |
-| GET/POST | `/api/admin/email-dashboard` | 邮箱仪表盘 |
-| GET/POST | `/api/admin/email-users` | 邮箱用户 |
-| GET/POST | `/api/admin/email-logs` | 发信日志 |
+| GET | `/api/admin/users` | 用户列表 |
+| POST | `/api/admin/users/set_role` | 用户升/降级管理员 |
+| POST | `/api/admin/users/ban` | 封禁用户 |
+| POST | `/api/admin/users/unban` | 解封用户 |
+| GET | `/api/admin/email-dashboard` | 邮箱仪表盘 |
+| GET | `/api/admin/email-users` | 邮箱用户列表 |
+| POST | `/api/admin/email-users/resend-verify` | 重发验证邮件 |
+| POST | `/api/admin/email-users/reset-totp` | 重置邮箱用户 2FA |
+| POST | `/api/admin/email-users/reset-password` | 发送重置密码链接 |
+| POST | `/api/admin/email-users/send-custom-email` | 发送自定义邮件 |
+| GET | `/api/admin/email-logs` | 发信日志 |
+| POST | `/api/admin/email-logs/clear` | 清理发信日志 |
 | GET/POST | `/api/admin/email-config` | 邮箱配置 |
+| GET | `/api/admin/rate-limits` | 读取邮箱/认证速率限制 |
 | POST | `/api/admin/rate-limits` | 速率限制 |
+| GET | `/api/admin/invite-codes` | 邀请码列表 |
 | POST | `/api/admin/invite-codes/generate` | 生成邀请码 |
 | POST | `/api/admin/invite-codes/delete` | 删除邀请码 |
-| GET/POST | `/api/admin/access-keys` | 访问密钥管理 |
+| GET | `/api/admin/access-keys` | 访问密钥列表 |
 | POST | `/api/admin/access-keys/generate` | 生成密钥 |
 | POST | `/api/admin/access-keys/delete` | 禁用密钥 |
 | POST | `/api/admin/access-keys/enable` | 重新启用 |
 | POST | `/api/admin/access-keys/remove` | 彻底删除 |
 | POST | `/api/admin/access-keys/reveal` | 查看完整密钥 |
 | POST | `/api/admin/access-keys/cleanup` | 清理失效 |
-| GET/POST | `/api/admin/gen-logs` | 生图日志 |
+| GET | `/api/admin/gen-logs` | 生图日志 |
 | DELETE | `/api/admin/gen-logs` | 清空生图日志 |
-| GET/POST | `/api/admin/deletion-log` | 删除记录 |
+| POST | `/api/admin/gen-logs/delete` | 删除指定生图日志 |
+| GET | `/api/admin/deletion-log` | 删除记录 |
 | POST | `/api/admin/deletion-log/clear` | 清空删除记录 |
 | GET | `/api/admin/recent` | 最近生图 |
 | GET | `/api/admin/images` | 图片列 |
+| GET | `/api/admin/images_by_ip` | 按 IP 查看图片 |
+| POST | `/api/admin/delete` | 管理员单图删除 |
+| POST | `/api/admin/delete_batch` | 管理员批量删除 |
+| POST | `/api/admin/mark_delete_batch` | 管理员批量标记 GC 删除 |
 | POST | `/api/admin/images/delete-by-query` | 按条件删除图片 |
-| GET/POST | `/api/admin/featured` | 精选管理 |
-| GET/POST | `/api/admin/reports` | 举报管理 |
+| GET | `/api/admin/featured` | 精选列表 |
+| POST | `/api/admin/featured/add` | 添加精选 |
+| POST | `/api/admin/featured/remove` | 移除精选 |
+| POST | `/api/admin/featured/reorder` | 精选排序 |
+| GET | `/api/admin/reports` | 举报列表 |
 | POST | `/api/admin/report/resolve` | 处理举报 |
-| GET/POST | `/api/admin/gc/stats` | GC 统计 |
-| GET/POST | `/api/admin/gc/logs` | GC 日志 |
+| GET | `/api/admin/gc/stats` | GC 统计 |
+| GET | `/api/admin/gc/logs` | GC 日志 |
 | POST | `/api/admin/gc` | 触发 GC |
 | GET | `/api/admin/gc/status` | GC 状态 |
 | POST | `/api/admin/gc/logs/clear` | 清空 GC 日志 |
 | POST | `/api/admin/force-restart` | 强制重启 |
 | POST | `/api/admin/graceful-restart` | 优雅重启 |
-| GET/POST | `/api/admin/scan-thumbnails` | 扫描缩略图 |
+| POST | `/api/admin/scan-thumbnails` | 扫描缩略图 |
 
 ### 缩略图上传
 
@@ -247,7 +368,7 @@ _featured_lock = asyncio.Lock()          # 保护 featured 精选
 
 ### Admin 模块化架构
 
-管理后台由 `Admin.vue` 作为外壳 + 21 个子组件构成。每个子组件对应一个板块，独立管理状态和数据。
+管理后台由 `Admin.vue` 作为外壳 + 多个板块子组件构成。每个子组件对应一个板块，独立管理状态和数据。
 
 **组件间共享：**
 - `useAdminApi.ts` 提供 `api()`, `fmt()`, `fmtShort()`, `relTime()`, `copyText()`, `resizeImage()` 等工具函数
@@ -294,7 +415,7 @@ _featured_lock = asyncio.Lock()          # 保护 featured 精选
 正确: api('POST', '/api/admin/maintenance', { enabled, message })
 ```
 
-admin.html 的 save 函数是扁平结构，不要额外包一层 `{config:...}` 或 `{announcement:...}`。
+旧版 `admin.html` 和当前 Vue 组件都应直接按后端 payload 结构提交，不要额外包一层 `{config:...}` 或 `{announcement:...}`。
 
 ### 布尔真值判断
 
@@ -336,9 +457,9 @@ admin.html 的 save 函数是扁平结构，不要额外包一层 `{config:...}`
 
 ### 路由注册顺序（2026-06-19）
 
-**问题：** 邮箱认证模块 `init_email_auth()` 在 `web/app.py` 最底部（第 8891 行）调用，但 SPA 兜底路由 `/{path:path}` 在第 8881 行已注册。Starlette 按注册顺序匹配，`/{path:path}` 截获所有 `/api/*` 请求并返回 404，导致邮箱管理 API 全部不可用。
+**问题：** 邮箱认证模块 `init_email_auth()` 曾经在 SPA 兜底路由 `/{path:path}` 之后注册。Starlette 按注册顺序匹配，`/{path:path}` 会截获后注册的 `/api/*` 请求并返回 404，导致邮箱管理 API 全部不可用。
 
-**修复：** 将 `init_email_auth()` 移到 SPA fallback 之前（`app.py:8880`），在 `/{path:path}` 注册前完成邮箱路由注册。
+**修复：** 将 `init_email_auth()` 移到 SPA fallback 之前，在 `/{path:path}` 注册前完成邮箱路由注册。
 
 **其他 admin 路由不受影响的原因：** 它们直接在 `app.py` 顶部用 `@app.get(...)` 注册，早于 `/{path:path}`。
 
@@ -356,7 +477,7 @@ admin.html 的 save 函数是扁平结构，不要额外包一层 `{config:...}`
 
 | 层 | 位置 | 机制 |
 |----|------|------|
-| ① 启动兜底 | `_cleanup_stale_user_images()` → `app.py:1938` | 检查文件是否存在，不存在则删 user_images 记录 |
+| ① 启动兜底 | `_cleanup_stale_user_images()` | 检查文件是否存在，不存在则删 user_images 记录 |
 | ② API 过滤 | `app.py GET /api/my-images` | 显式排除 deleted_images 中的路径 |
 | ③ API 二次过滤 | 同一函数 | 顺便检查磁盘文件是否存在 |
 
@@ -372,6 +493,13 @@ cd frontend
 npm run build
 # 输出到 web/static/dist/
 ```
+
+构建产物说明：
+
+- `web/static/dist/index.html` 是 Vue SPA 入口。
+- `web/static/dist/assets/` 存放带 hash 的 JS/CSS chunk。
+- 产物被 `.gitignore` 忽略，部署时需要在目标机器重新构建，或由部署流程复制该目录。
+- 如果访问 `/admin` 或 `/access` 返回“SPA 前端未构建”，说明 `web/static/dist/index.html` 不存在，需要执行 `npm run build`。
 
 ## 后端部署
 
@@ -468,6 +596,10 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8080/api/admin/images/delete-by-query" 
 | 邮箱 API 返回 404 | `init_email_auth()` 在 SPA 兜底之后注册 | 检查 `app.py` 底部路由顺序 |
 | 修改代码后不生效 | Python 字节码缓存 | 删除 `web/__pycache__/` 重启 |
 | 前端修改不生效 | 浏览器缓存 | Ctrl+F5 强制刷新 |
+| `/admin` 返回 SPA 未构建 | `web/static/dist/index.html` 不存在 | 在 `frontend` 运行 `npm run build` |
+| `/spa-assets/...` 404 | 构建产物缺失或 hash 已变但浏览器缓存旧 HTML | 重新构建并 Ctrl+F5 |
+| 普通用户只看到密钥卡 | 未通过访问密钥验证 | 管理员生成访问密钥，用户提交后解锁 |
+| 精选接口返回 `ACCESS_KEY_REQUIRED` | `/api/output/featured` 不豁免访问密钥 | 先输入访问密钥，或用管理员账号访问 |
 | 邮箱日志状态全红 | 前端不认 `"ok"` 状态码 | 检查 `logStatusText()` 是否包含 `'ok'` |
 | 删除操作无响应 | 锁竞争或数据文件损坏 | 查看服务端日志，确认锁是否释放 |
 
@@ -477,4 +609,4 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8080/api/admin/images/delete-by-query" 
 
 | 日期 | 提交 | 说明 |
 |------|------|------|
-| 2026-06-19 | `f264714` | 管理后台模块化重构：21 个独立组件、邮箱管理 API 修复、SPA 路由顺序修复、GC del_set 清理、项目文档 |
+| 2026-06-19 | `f264714` | 管理后台模块化重构、邮箱管理 API 修复、SPA 路由顺序修复、GC del_set 清理、项目文档 |

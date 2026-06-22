@@ -118,6 +118,67 @@ async function clearLogs() {
     gcResult.value = '清空失败: ' + e.message
   }
 }
+
+const orphanScanRunning = ref(false)
+const orphanScanResult = ref('')
+const orphanScanDetails = ref<any>(null)
+let orphanPollTimer: ReturnType<typeof setInterval> | null = null
+
+async function runOrphanScan() {
+  if (!confirm('确认执行孤儿文件清扫？将扫描无 gen_logs 关联的原图，备份到 gcbackups 后删除，并清理关联缩略图。')) return
+  if (prompt('确认清扫') !== '确认清扫') { alert('输入不匹配'); return }
+  orphanScanRunning.value = true
+  orphanScanResult.value = ''
+  orphanScanDetails.value = null
+  try {
+    await api('POST', '/api/admin/gc/orphan-scan')
+    orphanPollTimer = setInterval(async () => {
+      try {
+        const s = await api('GET', '/api/admin/gc/orphan-scan/status')
+        if (s.status === 'done') {
+          if (orphanPollTimer) { clearInterval(orphanPollTimer); orphanPollTimer = null }
+          orphanScanRunning.value = false
+          const c = s.cleaned || {}
+          const parts = []
+          if (c.originals > 0) parts.push(`原图 ${c.originals} 已删`)
+          if (c.originals_failed > 0) parts.push(`失败 ${c.originals_failed}`)
+          if (c.thumbs > 0) parts.push(`缩略图 ${c.thumbs} 已清`)
+          orphanScanResult.value = parts.length ? '清扫完成：' + parts.join('，') : '清扫完成，无孤儿文件'
+          orphanScanDetails.value = s.result || null
+          loadGcStats()
+        } else if (s.status === 'error') {
+          if (orphanPollTimer) { clearInterval(orphanPollTimer); orphanPollTimer = null }
+          orphanScanRunning.value = false
+          orphanScanResult.value = '孤儿文件清扫出错: ' + (s.error || '未知错误')
+        }
+      } catch {
+        if (orphanPollTimer) { clearInterval(orphanPollTimer); orphanPollTimer = null }
+        orphanScanRunning.value = false
+      }
+    }, 1000)
+  } catch (e: any) {
+    orphanScanRunning.value = false
+    orphanScanResult.value = '孤儿文件清扫启动失败: ' + e.message
+  }
+}
+
+const cleanDirsRunning = ref(false)
+const cleanDirsResult = ref('')
+
+async function runCleanEmptyDirs() {
+  if (!confirm('确认清理空目录？只删除 output / thumb_cache / deletion_thumbs 下「YYYY-MM-DD」格式的空目录（跳过今天），非空目录不受影响。')) return
+  cleanDirsRunning.value = true
+  cleanDirsResult.value = ''
+  try {
+    const d = await api('POST', '/api/admin/gc/clean-empty-dirs')
+    cleanDirsResult.value = `清理完成：删除 ${d.removed ?? 0} 个空日期目录`
+    setTimeout(() => { if (cleanDirsResult.value.includes('清理完成')) cleanDirsResult.value = '' }, 5000)
+  } catch (e: any) {
+    cleanDirsResult.value = '清理失败: ' + e.message
+  } finally {
+    cleanDirsRunning.value = false
+  }
+}
 onMounted(() => {
   loadGcStats()
   loadGcLogs()
@@ -126,6 +187,7 @@ onMounted(() => {
 onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
   if (pollTimer) clearInterval(pollTimer)
+  if (orphanPollTimer) clearInterval(orphanPollTimer)
 })
 </script>
 
@@ -153,9 +215,34 @@ onUnmounted(() => {
     <div class="flex flex-wrap items-center gap-2 mb-3">
       <button @click="gcWithBackup" :disabled="gcRunning" class="px-3 py-1 bg-red-500 text-white rounded-lg text-xs hover:bg-red-600 disabled:opacity-40 cursor-pointer border-0">⚠️ 立即执行GC</button>
       <button @click="gcWithoutBackup" :disabled="gcRunning" class="px-3 py-1 bg-orange-500 text-white rounded-lg text-xs hover:bg-orange-600 disabled:opacity-40 cursor-pointer border-0">⚠️ GC不备份</button>
+      <button @click="runOrphanScan" :disabled="orphanScanRunning" class="px-3 py-1 bg-purple-500 text-white rounded-lg text-xs hover:bg-purple-600 disabled:opacity-40 cursor-pointer border-0">🧹 孤儿文件清扫</button>
+      <button @click="runCleanEmptyDirs" :disabled="cleanDirsRunning" class="px-3 py-1 bg-teal-500 text-white rounded-lg text-xs hover:bg-teal-600 disabled:opacity-40 cursor-pointer border-0">🗂️ 清理空目录</button>
       <button @click="clearLogs" class="px-3 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs hover:bg-gray-200 cursor-pointer border-0">清空日志</button>
       <span v-if="gcRunning" class="text-xs text-amber-500">GC 运行中…</span>
       <span v-if="gcResult" class="text-xs" :class="gcResult.includes('完成') ? 'text-green-500' : gcResult ? 'text-red-400' : ''">{{ gcResult }}</span>
+      <span v-if="orphanScanRunning" class="text-xs text-purple-500">孤儿文件清扫中…</span>
+      <span v-if="orphanScanResult" class="text-xs" :class="orphanScanResult.includes('完成') ? 'text-green-500' : orphanScanResult.includes('出错') || orphanScanResult.includes('失败') ? 'text-red-400' : ''">{{ orphanScanResult }}</span>
+      <span v-if="cleanDirsRunning" class="text-xs text-teal-500">清理空目录中…</span>
+      <span v-if="cleanDirsResult" class="text-xs" :class="cleanDirsResult.includes('完成') ? 'text-green-500' : 'text-red-400'">{{ cleanDirsResult }}</span>
+    </div>
+
+    <!-- 孤儿清扫详情 -->
+    <div v-if="orphanScanDetails" class="mb-3 border rounded p-3 bg-purple-50 text-xs max-h-48 overflow-y-auto">
+      <div v-if="orphanScanDetails.backup_dir" class="text-gray-500 mb-1">备份目录：<span class="font-mono">{{ orphanScanDetails.backup_dir }}</span></div>
+      <div v-if="orphanScanDetails.originals_deleted?.length" class="mb-2">
+        <div class="font-semibold text-green-600 mb-1">✓ 已删原图 ({{ orphanScanDetails.originals_deleted.length }}):</div>
+        <div v-for="d in orphanScanDetails.originals_deleted" :key="d.path" class="text-[11px] text-gray-600 pl-2">
+          <span class="text-green-500">✓</span> {{ d.path }}
+          <span v-if="!d.backed_up" class="text-amber-500 ml-1">未备份</span>
+        </div>
+      </div>
+      <div v-if="orphanScanDetails.originals_failed?.length">
+        <div class="font-semibold text-red-600 mb-1">✗ 删除失败 ({{ orphanScanDetails.originals_failed.length }}):</div>
+        <div v-for="f in orphanScanDetails.originals_failed" :key="f.path" class="text-[11px] text-red-600 pl-2">
+          <span class="text-red-500">✗</span> {{ f.path }} — {{ f.reason }}
+        </div>
+      </div>
+      <div v-if="!orphanScanDetails.originals_deleted?.length && !orphanScanDetails.originals_failed?.length" class="text-gray-400">无孤儿原图</div>
     </div>
 
     <div class="flex items-center gap-2 mb-2 flex-wrap">

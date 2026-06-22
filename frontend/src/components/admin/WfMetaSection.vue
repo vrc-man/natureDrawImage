@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { api, resizeImage, scanThumbnails, fmt } from './useAdminApi'
+import { api, resizeImage, batchUploadThumbnails, type BatchThumbItem } from './useAdminApi'
+import { showCenterToast } from '@/composables/useToast'
 
 defineProps<{ visible: boolean }>()
 
@@ -15,7 +16,6 @@ const wfCategories = ref<string[]>([])
 const wfMeta = ref<WfEntry[]>([])
 const catInput = ref('')
 const status = ref('')
-const scanResult = ref('')
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -44,6 +44,7 @@ async function saveWfMeta() {
     const d = await api('POST', '/api/admin/workflow_meta', { workflow_meta: wfMeta.value.map(w => ({ workflow: w.workflow, thumbnail: w.thumbnail || '', lora_link: w.lora_link || '', category: w.category || '' })) })
     wfMeta.value = (d.workflow_meta || []).map((m: any) => ({ workflow: m.workflow || '', thumbnail: m.thumbnail || '', lora_link: m.lora_link || '', category: m.category || '' }))
     status.value = '✓ 已保存'
+    showCenterToast('✓ 已保存')
     setTimeout(() => { if (status.value === '✓ 已保存') status.value = '' }, 2000)
   } catch (e: any) { status.value = '保存失败: ' + e.message }
 }
@@ -52,6 +53,11 @@ function autoSaveWfMeta() {
   if (saveTimer) clearTimeout(saveTimer)
   status.value = '保存中…'
   saveTimer = setTimeout(saveWfMeta, 600)
+}
+
+function setCategory(w: WfEntry, cat: string) {
+  w.category = w.category === cat ? '' : cat
+  autoSaveWfMeta()
 }
 
 async function addCategory() {
@@ -96,7 +102,7 @@ async function uploadThumb(w: WfEntry) {
   inp.onchange = async () => {
     const f = inp.files![0]; if (!f) return
     try {
-      const compressed = await resizeImage(f); const fd = new FormData(); fd.append('file', compressed)
+      const compressed = await resizeImage(f); const fd = new FormData(); fd.append('file', compressed); fd.append('name', w.workflow)
       const r = await fetch('/api/admin/wf_thumbnail', { method: 'POST', body: fd })
       if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || r.statusText) }
       const d = await r.json()
@@ -107,17 +113,36 @@ async function uploadThumb(w: WfEntry) {
   }; inp.click()
 }
 
-async function scan() {
-  scanResult.value = ''
-  try {
-    const d = await api('POST', '/api/admin/scan-thumbnails', { type: 'workflows' })
-    const r = d.workflows || {}
-    const parts = []
-    if (r.matched > 0) parts.push(`✓ ${r.matched} 匹配`)
-    if (r.missing > 0) parts.push(`⚠ ${r.missing} 缺失`)
-    scanResult.value = parts.length ? parts.join('，') + `（共 ${r.total} 条）` : '无需处理'
-    load()
-  } catch (e: any) { scanResult.value = '扫描失败: ' + e.message }
+const batchUploading = ref(false)
+const batchResult = ref('')
+const batchDetails = ref<BatchThumbItem[]>([])
+
+function batchUpload() {
+  const inp = document.createElement('input')
+  inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true
+  inp.onchange = async () => {
+    const files = Array.from(inp.files || [])
+    if (!files.length) return
+    batchUploading.value = true
+    batchResult.value = '上传中…'
+    batchDetails.value = []
+    try {
+      const d = await batchUploadThumbnails('/api/admin/wf_thumbnail_batch', files)
+      batchDetails.value = d.results
+      const parts = []
+      if (d.matched > 0) parts.push(`✓ ${d.matched} 匹配上传`)
+      if (d.unmatched > 0) parts.push(`⚠ ${d.unmatched} 未匹配`)
+      if (d.errored > 0) parts.push(`✗ ${d.errored} 失败`)
+      batchResult.value = parts.join('，') || '无文件'
+      showCenterToast(`批量上传完成：${d.matched} 张已匹配`)
+      await load()
+    } catch (e: any) {
+      batchResult.value = '批量上传失败: ' + e.message
+    } finally {
+      batchUploading.value = false
+    }
+  }
+  inp.click()
 }
 
 onMounted(load)
@@ -145,14 +170,25 @@ onMounted(load)
         </div>
       </div>
 
-      <datalist id="wf-cat-list">
-        <option value="">无分类</option>
-        <option v-for="cat in wfCategories" :key="cat" :value="cat" />
-      </datalist>
-
-      <div class="flex items-center gap-2 mb-2">
-        <button @click="scan" class="text-xs px-3 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 border-0 cursor-pointer">📂 扫描缩略图</button>
-        <span class="text-xs text-gray-500">{{ scanResult }}</span>
+      <div class="mb-3 border rounded p-3 bg-amber-50">
+        <div class="flex items-center gap-2 flex-wrap">
+          <button @click="batchUpload" :disabled="batchUploading" class="text-xs px-3 py-1 bg-amber-500 text-white rounded hover:bg-amber-600 border-0 cursor-pointer disabled:opacity-50">⬆️ 批量上传缩略图</button>
+          <span class="text-xs text-gray-500">{{ batchResult }}</span>
+        </div>
+        <p class="text-[11px] text-gray-500 mt-1.5">
+          可一次选多张图片。文件名（去扩展名）需与工作流名 <b>完全一致且区分大小写</b>，例如 <code class="bg-white px-1 rounded">MyFlow.png</code> 匹配工作流 <code class="bg-white px-1 rounded">MyFlow.json</code>。
+        </p>
+        <div v-if="batchDetails.length" class="mt-2 max-h-40 overflow-y-auto text-[11px] space-y-0.5">
+          <div v-for="(r, i) in batchDetails" :key="i" class="flex items-center gap-1.5">
+            <span v-if="r.status === 'ok'" class="text-green-600">✓</span>
+            <span v-else-if="r.status === 'unmatched'" class="text-amber-600">⚠</span>
+            <span v-else class="text-red-500">✗</span>
+            <span class="font-mono text-gray-600">{{ r.filename }}</span>
+            <span v-if="r.status === 'ok'" class="text-gray-400">→ {{ r.matched.length }} 个工作流</span>
+            <span v-else-if="r.status === 'unmatched'" class="text-amber-600">未找到匹配工作流</span>
+            <span v-else class="text-red-500">{{ r.error }}</span>
+          </div>
+        </div>
       </div>
 
       <div class="flex flex-col gap-2 mb-3">
@@ -162,13 +198,35 @@ onMounted(load)
             <div v-else class="w-12 h-12 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">无图</div>
             <label class="text-[10px] text-blue-600 cursor-pointer hover:underline" @click.prevent="uploadThumb(w)">上传</label>
           </div>
-          <div class="flex flex-col gap-1 flex-1 text-sm min-w-0">
+          <div class="flex flex-col gap-1.5 flex-1 text-sm min-w-0">
             <div class="flex items-center gap-1">
               <input :value="w.workflow.replace(/\.json$/i, '')" @change="onRename(w, $event)" type="text" placeholder="工作流名称" class="flex-1 min-w-0 border rounded px-2 py-1 font-mono text-xs outline-none" />
               <span class="text-xs text-gray-400">.json</span>
             </div>
             <input v-model="w.lora_link" @input="autoSaveWfMeta()" type="text" placeholder="Lora 链接 URL（可选）" class="border rounded px-2 py-1 font-mono text-xs outline-none" />
-            <input v-model="w.category" @input="autoSaveWfMeta()" type="text" placeholder="无分类" class="border rounded px-2 py-1 text-xs outline-none" list="wf-cat-list" autocomplete="off" />
+            <!-- 分类标签：直接点选 -->
+            <div class="flex flex-wrap items-center gap-1">
+              <span class="text-[11px] text-gray-400 shrink-0">分类：</span>
+              <button
+                v-for="cat in wfCategories"
+                :key="cat"
+                type="button"
+                @click="setCategory(w, cat)"
+                class="text-[11px] px-2 py-0.5 rounded-full border cursor-pointer transition-colors"
+                :class="w.category === cat
+                  ? 'bg-blue-500 text-white border-blue-500'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-blue-500'"
+              >{{ cat }}</button>
+              <!-- 工作流当前分类已不在分类列表中（历史遗留） -->
+              <button
+                v-if="w.category && !wfCategories.includes(w.category)"
+                type="button"
+                @click="setCategory(w, w.category)"
+                class="text-[11px] px-2 py-0.5 rounded-full border border-amber-300 bg-amber-50 text-amber-600 cursor-pointer"
+                title="该分类不在分类标签列表中，点击清除"
+              >{{ w.category }} ✕</button>
+              <span v-if="!wfCategories.length" class="text-[11px] text-gray-300">请先在上方添加分类标签</span>
+            </div>
           </div>
         </div>
       </div>

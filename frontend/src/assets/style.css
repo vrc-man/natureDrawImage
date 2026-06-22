@@ -207,10 +207,48 @@ body {
   .tab-page .space-y-6 > .rounded-3xl { padding: 12px !important; }
 }
 
+/* 管理后台横向滚动表格：手机上启用触摸惯性滚动 */
+.admin-root .overflow-x-auto { -webkit-overflow-scrolling: touch; }
+
+/* 管理后台手机竖屏适配 */
+@media (max-width: 639px) {
+  .admin-root .admin-container { padding: 8px !important; }
+  /* 板块卡片内边距收窄 */
+  .admin-root .admin-container .bg-white.rounded.shadow.p-4 { padding: 12px !important; }
+  /* 标题字号下调 */
+  .admin-root h1 { font-size: 18px !important; }
+  .admin-root h3.text-lg { font-size: 15px !important; }
+  /* 表单控件统一最小字号，避免 iOS 聚焦自动放大 */
+  .admin-root input:not([type="checkbox"]):not([type="radio"]),
+  .admin-root textarea,
+  .admin-root select { font-size: 16px !important; }
+  /* 横向滚动表格保留紧凑字号 */
+  .admin-root .overflow-x-auto table { font-size: 12px !important; }
+  .admin-root .overflow-x-auto input,
+  .admin-root .overflow-x-auto select { font-size: 12px !important; }
+}
+
 /* Toast 动画 */
 @keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes toastOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
 .toast-el { animation: toastIn 0.3s ease; max-width: min(90vw, 420px); pointer-events: auto; }
+
+/* 屏幕中心提示 */
+#center-toast-container {
+  position: fixed; inset: 0; z-index: 70;
+  display: flex; align-items: center; justify-content: center;
+  pointer-events: none;
+}
+@keyframes centerToastIn { from { transform: scale(0.9); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@keyframes centerToastOut { from { transform: scale(1); opacity: 1; } to { transform: scale(0.9); opacity: 0; } }
+.center-toast-el {
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(255,255,255,0.96); backdrop-filter: blur(12px);
+  border: 1px solid rgba(244,114,182,0.2); border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.18);
+  padding: 14px 22px; font-size: 15px; font-weight: 600; color: #374151;
+  animation: centerToastIn 0.2s ease;
+}
 
 /* 灯箱 */
 #lb-root { position: fixed; inset: 0; z-index: 60; background: #000; display: none; flex-direction: column; }

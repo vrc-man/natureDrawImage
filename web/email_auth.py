@@ -428,7 +428,9 @@ def init_email_auth():
                             db2.execute("SELECT COUNT(*) as c FROM email_users").fetchone()["c"] == 0
                             and db2.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"] == 0
                         )
-                        user_role = "admin" if _first else "user"
+                        from web.app import FIRST_USER_ADMIN, _is_initial_admin_user_id
+                        uid = "email:" + email
+                        user_role = "admin" if ((FIRST_USER_ADMIN and _first) or _is_initial_admin_user_id(uid)) else "user"
                         verify_token = "" if has_invite else secrets.token_urlsafe(32)
                         created_at = time.time()
                         db2.execute("""INSERT INTO email_users VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
@@ -436,7 +438,7 @@ def init_email_auth():
                              1 if has_invite else 0, verify_token, "", 0, 0, 0, invite_code))
                         db2.execute("""INSERT OR IGNORE INTO users (github_id, login, email, avatar_url, role, banned, banned_reason, created_at)
                             VALUES (?,?,?,?,?,?,?,?)""",
-                            ("email:" + email, email.split("@")[0], email, "", user_role, 0, "", created_at))
+                            (uid, email.split("@")[0], email, "", user_role, 0, "", created_at))
                         db2.commit()
                         main_db.invalidate_users_cache()
                     except Exception:
@@ -682,20 +684,30 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             if eu.get("totp_enabled"):
                 if not totp_code or not _verify_totp(eu["totp_secret"], totp_code):
                     raise HTTPException(401, "Invalid TOTP code")
+            uid = "email:" + email
+            from web.app import _is_initial_admin_user_id, _release_user_access_bindings
+            if _is_initial_admin_user_id(uid) and eu.get("role") != "admin":
+                db2 = get_db()
+                db2.execute("UPDATE email_users SET role='admin' WHERE email=?", (email,))
+                db2.execute("UPDATE users SET role='admin' WHERE github_id=?", (uid,))
+                db2.commit()
+                main_db.invalidate_users_cache()
+                eu["role"] = "admin"
+                await _release_user_access_bindings(uid, as_admin=True)
         token = secrets.token_urlsafe(32)
         now = time.time()
         from web.app import _load_sessions, _save_sessions, _sessions_lock
         async with _sessions_lock:
             sessions = _load_sessions()
             # 清理过期和同用户旧会话
-            uid = "email:" + email
             sessions = {k: v for k, v in sessions.items() if v.get("expires_at", 0) > now}
             sessions = {k: v for k, v in sessions.items() if str(v.get("github_id", "")) != uid}
             token_hash = hashlib.sha256(token.encode()).hexdigest()
+            is_admin = eu.get("role") == "admin"
             sessions[token_hash] = {
                 "github_id": uid,
                 "expires_at": now + SESSION_MAX_AGE_SEC,
-                "access_granted": False,
+                "access_granted": is_admin,
                 "claimed_key": "",
             }
             await _save_sessions(sessions)

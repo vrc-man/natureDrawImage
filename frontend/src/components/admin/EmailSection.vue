@@ -128,6 +128,22 @@ async function unbanUser(user: any) {
   if (prompt('确认解封') !== '确认解封') { alert('输入不匹配'); return }
   try { await api('POST', '/api/admin/users/unban', { github_id: user.github_id }); loadUsers() } catch (e: any) { alert('解封失败: ' + e.message) }
 }
+async function setRole(user: any, role: 'admin' | 'user') {
+  const label = user.login || user.email || user.github_id
+  let isSelf = false
+  if (role === 'admin') {
+    if (!confirm(`确认将 ${label} 设为管理员？`)) return
+    if (prompt('确认设为管理员') !== '确认设为管理员') { alert('输入不匹配'); return }
+  } else {
+    try { isSelf = (await api('GET', '/api/admin/whoami')).github_id === user.github_id } catch {}
+    const msg = isSelf
+      ? `确认将自己降为普通用户？成功后你将失去后台权限，该账号绑定的访问密钥会被释放。`
+      : `确认将管理员 ${label} 降为普通用户？该用户绑定的访问密钥会被释放。`
+    if (!confirm(msg)) return
+    if (prompt('确认降级管理员') !== '确认降级管理员') { alert('输入不匹配'); return }
+  }
+  try { await api('POST', '/api/admin/users/set_role', { github_id: user.github_id, role }); if (isSelf) { location.href = '/'; return }; loadUsers() } catch (e: any) { alert('角色修改失败: ' + e.message) }
+}
 function openEmailModal(user: any) { emailModalUser.value = user; emailModalSubject.value = ''; emailModalBody.value = ''; emailModalStatus.value = '' }
 function closeEmailModal() { emailModalUser.value = null }
 async function sendCustomEmail() {
@@ -224,7 +240,7 @@ onUnmounted(() => stopAuto())
         <button @click="saveConfig" class="px-2 py-0.5 bg-pink-500 text-white rounded hover:bg-pink-600 cursor-pointer border-0 text-xs">保存</button>
         <span class="text-xs text-gray-500">{{ configStatus }}</span>
       </div>
-      <div class="grid grid-cols-3 gap-2 text-xs">
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
         <label class="flex items-center gap-1">每小时IP：<input type="number" v-model.number="hourlyIP" min="0" max="999" class="w-full border border-gray-200 rounded px-1 py-0.5 text-xs" /></label>
         <label class="flex items-center gap-1">每天IP：<input type="number" v-model.number="dailyIP" min="0" max="9999" class="w-full border border-gray-200 rounded px-1 py-0.5 text-xs" /></label>
         <label class="flex items-center gap-1">每天邮箱：<input type="number" v-model.number="dailyEmail" min="0" max="999" class="w-full border border-gray-200 rounded px-1 py-0.5 text-xs" /></label>
@@ -262,6 +278,8 @@ onUnmounted(() => stopAuto())
               <td class="py-1">
                 <div class="flex flex-wrap gap-1">
                   <button v-if="u.totp_enabled" @click="resetTOTP(u)" class="px-1.5 py-0.5 bg-orange-100 text-orange-600 rounded hover:bg-orange-200 cursor-pointer border-0 text-[10px]">重置2FA</button>
+                  <button v-if="u.role === 'admin'" @click="setRole(u, 'user')" class="px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded hover:bg-purple-200 cursor-pointer border-0 text-[10px]">降为普通用户</button>
+                  <button v-else @click="setRole(u, 'admin')" class="px-1.5 py-0.5 bg-purple-100 text-purple-600 rounded hover:bg-purple-200 cursor-pointer border-0 text-[10px]">设为管理员</button>
                   <span v-if="u.role === 'admin'" class="text-[10px] text-gray-400">不可封禁</span>
                   <button v-else-if="u.banned" @click="unbanUser(u)" class="px-1.5 py-0.5 bg-emerald-100 text-emerald-600 rounded hover:bg-emerald-200 cursor-pointer border-0 text-[10px]">解封</button>
                   <button v-else @click="banUser(u)" class="px-1.5 py-0.5 bg-red-100 text-red-600 rounded hover:bg-red-200 cursor-pointer border-0 text-[10px]">封禁</button>
@@ -289,8 +307,8 @@ onUnmounted(() => stopAuto())
         <button @click="saveRateLimits" class="px-2 py-0.5 bg-pink-500 text-white rounded hover:bg-pink-600 cursor-pointer border-0 text-xs">保存（重启生效）</button>
         <span class="text-xs text-gray-500">{{ rlStatus }}</span>
       </div>
-      <div class="grid grid-cols-3 gap-2 text-xs">
-        <label v-for="(v, k) in rateLimits" :key="k" class="flex items-center gap-1">
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
+        <label v-for="(v, k) in rateLimits" :key="k" class="flex flex-col sm:flex-row sm:items-center gap-1">
           <span class="text-gray-500">{{ ({'login_max_per_email_per_min':'登录/min/邮箱','login_max_per_ip_per_min':'登录/min/IP','login_lockout_fails':'锁定失败次数','login_lockout_seconds':'锁定时间(秒)','reg_per_ip_per_hour':'注册/hr/IP','reg_per_ip_per_day':'注册/天/IP','reg_per_email_per_day':'注册/天/邮箱','reg_ip_cooldown_seconds':'IP冷却(秒)','forgot_pw_per_email_per_hour':'重置密码/hr','forgot_pw_per_email_per_day':'重置密码/天','reset_link_expire_seconds':'重置链接过期(秒)','email_global_per_day':'发信/天','email_global_per_min':'发信/分','verify_retry_max':'验证重试上限','verify_abuse_threshold':'恶意标记阈值'}[k] || k) }}:</span>
           <input type="number" v-model.number="rateLimits[k]" class="w-full border border-gray-200 rounded px-1 py-0.5 text-xs" />
         </label>

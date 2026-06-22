@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { api, resizeImage, scanThumbnails, fmt } from './useAdminApi'
+import { api, resizeImage, batchUploadThumbnails, type BatchThumbItem } from './useAdminApi'
+import { showCenterToast } from '@/composables/useToast'
 
 defineProps<{ visible: boolean }>()
 
 const items = ref<any[]>([])
 const status = ref('')
-const scanResult = ref('')
 let timer: any = null
 
 async function load() {
@@ -56,17 +56,36 @@ async function uploadThumb(i: number) {
   }; inp.click()
 }
 
-async function scan() {
-  scanResult.value = ''
-  try {
-    const d = await scanThumbnails('styles')
-    const r = d.styles || {}
-    const parts = []
-    if (r.matched > 0) parts.push(`✓ ${r.matched} 匹配`)
-    if (r.missing > 0) parts.push(`⚠ ${r.missing} 缺失`)
-    scanResult.value = parts.length ? parts.join('，') + `（共 ${r.total} 条）` : '无需处理'
-    load()
-  } catch (e: any) { scanResult.value = '扫描失败: ' + e.message }
+const batchUploading = ref(false)
+const batchResult = ref('')
+const batchDetails = ref<BatchThumbItem[]>([])
+
+function batchUpload() {
+  const inp = document.createElement('input')
+  inp.type = 'file'; inp.accept = 'image/*'; inp.multiple = true
+  inp.onchange = async () => {
+    const files = Array.from(inp.files || [])
+    if (!files.length) return
+    batchUploading.value = true
+    batchResult.value = '上传中…'
+    batchDetails.value = []
+    try {
+      const d = await batchUploadThumbnails('/api/admin/style_thumbnail_batch', files)
+      batchDetails.value = d.results
+      const parts = []
+      if (d.matched > 0) parts.push(`✓ ${d.matched} 匹配上传`)
+      if (d.unmatched > 0) parts.push(`⚠ ${d.unmatched} 未匹配`)
+      if (d.errored > 0) parts.push(`✗ ${d.errored} 失败`)
+      batchResult.value = parts.join('，') || '无文件'
+      showCenterToast(`批量上传完成：${d.matched} 张已匹配`)
+      await load()
+    } catch (e: any) {
+      batchResult.value = '批量上传失败: ' + e.message
+    } finally {
+      batchUploading.value = false
+    }
+  }
+  inp.click()
 }
 
 onMounted(load)
@@ -79,9 +98,25 @@ onMounted(load)
     </div>
     <div>
       <p class="text-xs text-gray-500 mb-2">配置可选画风。tags 为必填项（英文 Danbooru 标签），名称为可选别名（不填则前端直接显示 tags）。用户选择画风后，tags 会被追加到最终 prompt 最前面。</p>
-      <div class="flex items-center gap-2 mb-2">
-        <button @click="scan" class="text-xs px-3 py-1 bg-purple-100 text-purple-700 rounded hover:bg-purple-200 border-0 cursor-pointer">📂 扫描缩略图</button>
-        <span class="text-xs text-gray-500">{{ scanResult }}</span>
+      <div class="mb-3 border rounded p-3 bg-amber-50">
+        <div class="flex items-center gap-2 flex-wrap">
+          <button @click="batchUpload" :disabled="batchUploading" class="text-xs px-3 py-1 bg-amber-500 text-white rounded hover:bg-amber-600 border-0 cursor-pointer disabled:opacity-50">⬆️ 批量上传缩略图</button>
+          <span class="text-xs text-gray-500">{{ batchResult }}</span>
+        </div>
+        <p class="text-[11px] text-gray-500 mt-1.5">
+          可一次选多张图片。文件名（去扩展名）需与画风<b>别名完全一致且区分大小写</b>。未填别名的画风无法批量匹配，请手动上传。
+        </p>
+        <div v-if="batchDetails.length" class="mt-2 max-h-40 overflow-y-auto text-[11px] space-y-0.5">
+          <div v-for="(r, i) in batchDetails" :key="i" class="flex items-center gap-1.5">
+            <span v-if="r.status === 'ok'" class="text-green-600">✓</span>
+            <span v-else-if="r.status === 'unmatched'" class="text-amber-600">⚠</span>
+            <span v-else class="text-red-500">✗</span>
+            <span class="font-mono text-gray-600">{{ r.filename }}</span>
+            <span v-if="r.status === 'ok'" class="text-gray-400">→ {{ r.matched.length }} 个画风</span>
+            <span v-else-if="r.status === 'unmatched'" class="text-amber-600">未找到匹配画风</span>
+            <span v-else class="text-red-500">{{ r.error }}</span>
+          </div>
+        </div>
       </div>
       <div class="flex flex-col gap-2 mb-3">
         <div v-for="(s, i) in items" :key="i" class="flex items-start gap-2 p-2 border rounded bg-gray-50">

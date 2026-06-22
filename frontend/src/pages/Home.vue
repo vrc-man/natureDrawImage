@@ -20,6 +20,7 @@ import TotpSettings from '@/components/TotpSettings.vue'
 const userStore = useUserStore()
 const sound = useSound()
 const { lbOpen, lbState, current, open: openLb, close: closeLb, prev: prevLb, next: nextLb } = useLightbox()
+const needsAccessKey = computed(() => !userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn)
 
 // ===== Tab =====
 type TabKey = 'generate'|'gallery'|'featured'|'myworks'|'more'
@@ -37,10 +38,18 @@ const tabs = computed(() => {
 })
 
 watch(activeTab, (t) => {
+  if (needsAccessKey.value && t !== 'generate') {
+    activeTab.value = 'generate'
+    return
+  }
   if (t === 'gallery') { nextTick(() => galleryRef.value?.load(true)) }
-  if (t === 'myworks') { nextTick(() => myworksRef.value?.load(true)) }
-  if (t === 'featured') tabLoaded.value.featured = true
+  if (t === 'myworks' && !needsAccessKey.value) { nextTick(() => myworksRef.value?.load(true)) }
+  if (t === 'featured' && !needsAccessKey.value) tabLoaded.value.featured = true
   if (t === 'more') tabLoaded.value['more'] = true
+})
+
+watch(needsAccessKey, (needKey) => {
+  if (needKey) activeTab.value = 'generate'
 })
 
 const galleryRef = ref<InstanceType<typeof GalleryGrid> | null>(null)
@@ -98,6 +107,7 @@ let statusWS: WebSocket | null = null
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let gpuTimer: ReturnType<typeof setInterval> | null = null
 let notifyTimer: ReturnType<typeof setInterval> | null = null
+let authedServicesStarted = false
 
 // Notification state
 const notifyQueueCount = ref(0)
@@ -194,13 +204,8 @@ function initSakuraPetals() {
 
 onMounted(async () => {
   await userStore.fetchWhoami()
-  startPolling()
-  connectStatusWS()
   loadAnnouncement()
-  startGPUPoll()
   startNotifyPoll()
-  loadResolutions()
-  await loadList()
   if (darkMode.value) document.documentElement.classList.add('dark')
   initTooltips()
   initSakuraPetals()
@@ -230,7 +235,7 @@ onMounted(async () => {
       if (meta.default_height) height.value = meta.default_height
     }
   } catch {}
-  await ensureWorkflowForMode(mode.value)
+  if (!needsAccessKey.value) startAuthedServices()
 })
 
 onUnmounted(() => {
@@ -240,6 +245,21 @@ onUnmounted(() => {
   if (notifyTimer) clearInterval(notifyTimer)
   if (cooldownTimer) clearInterval(cooldownTimer)
 })
+
+function startAuthedServices() {
+  if (authedServicesStarted) return
+  authedServicesStarted = true
+  startPolling()
+  connectStatusWS()
+  startGPUPoll()
+  loadGenerationData()
+}
+
+async function loadGenerationData() {
+  loadResolutions()
+  await loadList()
+  await ensureWorkflowForMode(mode.value)
+}
 
 // ===== Form Persistence =====
 const FORM_FIELDS = ['direct', 'negative_prompt', 'nl', 'rewrite', 'promptMode', 'w', 'h']
@@ -649,7 +669,7 @@ async function submitKey() {
   accessKeyError.value = ''; accessKeySuccess.value = ''
   try {
     const d = await api<any>('POST', '/api/auth/claim-key', { key: accessKeyInput.value.trim() })
-    if (d.ok) { accessKeySuccess.value = '✅ ' + (d.message || '密钥验证成功'); await userStore.fetchWhoami() }
+    if (d.ok) { accessKeySuccess.value = '✅ ' + (d.message || '密钥验证成功'); await userStore.fetchWhoami(); startAuthedServices() }
     else { accessKeyError.value = d.detail || '密钥无效' }
   } catch (e: any) { accessKeyError.value = e.message }
 }
@@ -811,7 +831,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <div v-if="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
           <div class="max-w-5xl mx-auto space-y-6">
             <!-- Access Key (only for non-admin, no key, logged-in) -->
-            <div v-if="!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-8 text-center max-w-md mx-auto">
+            <div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-8 text-center max-w-md mx-auto">
               <p class="text-4xl mb-4">🔑</p>
               <p class="text-sm text-gray-500 mb-4">{{ keyExpired ? '您的密钥已过期，请输入新密钥或联系管理员获取' : '需要使用管理员分配的访问密钥才能使用生图服务' }}</p>
               <input v-model="accessKeyInput" @keydown.enter="submitKey" type="text" placeholder="输入访问密钥" class="w-full border border-pink-200 rounded-xl px-4 py-2.5 text-sm text-center mb-3 outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border" />
@@ -821,7 +841,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
             </div>
 
             <!-- Main generate area (always visible) -->
-            <div>
+            <div v-else>
               <!-- Fork badge -->
               <div v-if="forkedWorkflow" class="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-700 mb-2">
                 🍴 Fork: {{ forkedMeta?.display_path || '自定义工作流' }}
@@ -916,8 +936,8 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                   class="w-full py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl font-semibold text-base shadow-lg shadow-pink-300/30 transition-all active:scale-[0.98] disabled:from-gray-200 disabled:to-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed border-0"
                 id="btn-run"
                 :class="{cooldown: cooldownSec > 0}"
-                :disabled="_isGenerating || (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn)">
-                {{ _isGenerating ? '⏳ 生成中...' : cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : (!userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn) ? '🔑 需要访问密钥' : '▶ 开始生成' }}
+                :disabled="_isGenerating || needsAccessKey">
+                {{ _isGenerating ? '⏳ 生成中...' : cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : needsAccessKey ? '🔑 需要访问密钥' : '▶ 开始生成' }}
               </button>
               </div>
 
@@ -964,9 +984,9 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <!-- ============ GALLERY ============ -->
         <div v-if="activeTab === 'gallery'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><GalleryGrid ref="galleryRef" /><div class="h-20"></div></div></div>
         <!-- ============ FEATURED ============ -->
-        <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><FeaturedGrid /><div class="h-20"></div></div></div>
+        <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-8 text-center text-sm text-gray-500">需要访问密钥后查看精选</div><FeaturedGrid v-else /><div class="h-20"></div></div></div>
         <!-- ============ MY WORKS ============ -->
-        <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><MyWorksGrid ref="myworksRef" /><div class="h-20"></div></div></div>
+        <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-8 text-center text-sm text-gray-500">需要访问密钥后查看作品</div><MyWorksGrid v-else ref="myworksRef" /><div class="h-20"></div></div></div>
         <!-- ============ MORE ============ -->
         <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-6">
           <h1 class="text-xl sm:text-2xl font-bold text-gray-800">⚙️ 更多</h1>
@@ -1013,7 +1033,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
       </div>
 
       <!-- ============ TAB BAR ============ -->
-      <div id="tab-bar">
+      <div v-if="!needsAccessKey" id="tab-bar">
         <button v-for="tab in tabs" :key="tab.key" :class="['cursor-pointer border-0 bg-transparent', {active: activeTab === tab.key}]" @click="activeTab = tab.key">
           <span class="tab-icon">{{ tab.icon }}</span>
           <span>{{ tab.label }}</span>
@@ -1091,7 +1111,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                     <span>🔍 界面缩放</span>
                     <span>{{ Math.round(uiZoom * 100) }}%</span>
                   </div>
-                  <input type="range" min="70" max="130" step="5" :value="Math.round(uiZoom * 100)" @input="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-full accent-pink-500 h-1 cursor-pointer" />
+                  <input type="range" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @input="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-full accent-pink-500 h-1 cursor-pointer" />
                 </div>
                 <!-- 布局密度 -->
                 <label class="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-pink-50 cursor-pointer transition-all select-none">

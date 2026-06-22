@@ -81,7 +81,53 @@ const orphanSearch = ref('')
 const orphanDateFrom = ref('')
 const orphanDateTo = ref('')
 const orphanMsg = ref('')
+const orphanRange = ref<{min:number;max:number;count:number}|null>(null)
+const scanDone = ref(false)
 let orphanPollTimer: ReturnType<typeof setInterval> | null = null
+
+// 补充缩略图
+const backfilling = ref(false)
+const backfillMsg = ref('')
+let backfillPollTimer: ReturnType<typeof setInterval> | null = null
+async function backfillThumbs() {
+  if (backfilling.value) return
+  const df = scanDateFrom.value, dt = scanDateTo.value
+  const label = (df || dt) ? `区间 ${df || '不限'} ~ ${dt || '不限'}` : '全部记录'
+  if (!confirm(`确定为【${label}】中「原图还在但缩略图丢失」的记录补充缩略图？`)) return
+  backfilling.value = true
+  backfillMsg.value = ''
+  const body: any = {}
+  if (df) body.date_from = new Date(df + 'T00:00:00').getTime() / 1000
+  if (dt) body.date_to = new Date(dt + 'T23:59:59').getTime() / 1000
+  try {
+    const r = await api('POST', '/api/admin/gen-logs/backfill-thumbs', body)
+    if (!r.ok) { backfilling.value = false; alert(r.error || '启动失败'); return }
+    pollBackfill()
+  } catch { backfilling.value = false }
+}
+function pollBackfill() {
+  if (backfillPollTimer) clearInterval(backfillPollTimer)
+  backfillPollTimer = setInterval(async () => {
+    try {
+      const s = await api('GET', '/api/admin/gen-logs/backfill-thumbs/status')
+      if (s.status === 'running') {
+        backfillMsg.value = `补充缩略图中… ${s.processed || 0}/${s.total || 0}（已补 ${s.regenerated || 0}）`
+      } else if (s.status === 'done') {
+        if (backfillPollTimer) clearInterval(backfillPollTimer); backfillPollTimer = null
+        backfilling.value = false
+        backfillMsg.value = `✓ 补充完成：新增 ${s.regenerated || 0} 张，跳过 ${s.skipped || 0}，失败 ${s.failed || 0}`
+        setTimeout(() => { if (backfillMsg.value.startsWith('✓')) backfillMsg.value = '' }, 8000)
+      } else if (s.status === 'error') {
+        if (backfillPollTimer) clearInterval(backfillPollTimer); backfillPollTimer = null
+        backfilling.value = false
+        backfillMsg.value = '补充失败: ' + (s.error || '')
+      } else {
+        if (backfillPollTimer) clearInterval(backfillPollTimer); backfillPollTimer = null
+        backfilling.value = false
+      }
+    } catch {}
+  }, 1500)
+}
 
 function fmtDate(ts: number) {
   if (!ts) return ''
@@ -96,8 +142,10 @@ async function loadGenlogsInfo() {
 }
 async function scanOrphans() {
   scanning.value = true
+  scanDone.value = false
   orphanMsg.value = ''
   orphans.value = []
+  orphanRange.value = null
   orphanSearch.value = ''
   orphanDateFrom.value = ''
   orphanDateTo.value = ''
@@ -121,6 +169,8 @@ function pollOrphanScan() {
       } else if (s.status === 'done') {
         if (orphanPollTimer) clearInterval(orphanPollTimer); orphanPollTimer = null
         scanning.value = false
+        scanDone.value = true
+        orphanRange.value = s.date_range || null
         loadOrphanResults()
       } else if (s.status === 'error') {
         if (orphanPollTimer) clearInterval(orphanPollTimer); orphanPollTimer = null
@@ -156,6 +206,7 @@ async function clearOrphans() {
     await api('POST', '/api/admin/gen-logs/delete', { ids: orphans.value.map((o: any) => o.id) })
     const cnt = orphans.value.length
     orphans.value = []
+    scanDone.value = false
     orphanSearch.value = ''
     orphanDateFrom.value = ''
     orphanDateTo.value = ''
@@ -164,8 +215,38 @@ async function clearOrphans() {
   } catch (e: any) { orphanMsg.value = '删除失败: ' + e.message }
 }
 
+// 按当前孤儿筛选区间清理（原图全丢的孤儿日志 + 残留缩略图）
+async function clearOrphansByRange() {
+  const df = orphanDateFrom.value, dt = orphanDateTo.value
+  const label = (df || dt) ? `区间 ${df || '不限'} ~ ${dt || '不限'}` : '全部扫描范围'
+  if (!confirm(`确定清理【${label}】内原图已全部丢失的孤儿日志 + 残留缩略图？`)) return
+  if (prompt('请输入"确认清理"以继续：') !== '确认清理') { alert('输入不匹配，已取消'); return }
+  const body: any = {}
+  if (df) body.date_from = new Date(df + 'T00:00:00').getTime() / 1000
+  if (dt) body.date_to = new Date(dt + 'T23:59:59').getTime() / 1000
+  try {
+    const d = await api('POST', '/api/admin/gen-logs/delete-orphans-by-range', body)
+    orphanMsg.value = `✓ ${d.message || '清理完成'}`
+    orphans.value = []; orphanRange.value = null
+    setTimeout(() => { if (orphanMsg.value.startsWith('✓')) orphanMsg.value = '' }, 5000)
+  } catch (e: any) { orphanMsg.value = '清理失败: ' + e.message }
+}
+
+// 一键清理一周前的孤儿日志（仅原图全丢的）
+async function clearOrphansWeekAgo() {
+  if (!confirm('确定清理「一周前 且 原图已全部丢失」的孤儿日志 + 残留缩略图？一周内的、原图还在的记录都会保留。')) return
+  if (prompt('请输入"确认清理"以继续：') !== '确认清理') { alert('输入不匹配，已取消'); return }
+  try {
+    const d = await api('POST', '/api/admin/gen-logs/delete-orphans-week-ago')
+    orphanMsg.value = `✓ ${d.message || '清理完成'}`
+    orphans.value = []; orphanRange.value = null
+    loadGenlogsInfo()
+    setTimeout(() => { if (orphanMsg.value.startsWith('✓')) orphanMsg.value = '' }, 5000)
+  } catch (e: any) { orphanMsg.value = '清理失败: ' + e.message }
+}
+
 onMounted(() => { load(); loadGenlogsInfo() })
-onUnmounted(() => { stopAuto(); if (orphanPollTimer) clearInterval(orphanPollTimer) })
+onUnmounted(() => { stopAuto(); if (orphanPollTimer) clearInterval(orphanPollTimer); if (backfillPollTimer) clearInterval(backfillPollTimer) })
 </script>
 
 <template>
@@ -194,15 +275,28 @@ onUnmounted(() => { stopAuto(); if (orphanPollTimer) clearInterval(orphanPollTim
       <input v-model="scanDateTo" type="date" class="border rounded px-2 py-1 text-xs outline-none" />
       <span class="text-gray-400 text-[10px]">不填=全扫</span>
       <button @click="scanOrphans" :disabled="scanning" class="px-2 py-1 bg-purple-500 text-white rounded hover:bg-purple-600 disabled:opacity-40 text-xs cursor-pointer border-0">{{ scanning ? '扫描中…' : '开始扫描' }}</button>
+      <button @click="backfillThumbs" :disabled="backfilling" class="px-2 py-1 bg-teal-500 text-white rounded hover:bg-teal-600 disabled:opacity-40 text-xs cursor-pointer border-0" title="为原图还在但缩略图丢失的记录重新生成缩略图（用上方日期框限定范围，不填=全量）">{{ backfilling ? '补充中…' : '🖼 补充缩略图' }}</button>
+      <button @click="clearOrphansWeekAgo" class="px-2 py-1 bg-rose-500 text-white rounded hover:bg-rose-600 text-xs cursor-pointer border-0" title="一键清理一周前且原图全丢的孤儿日志">🗓 清理一周前孤儿</button>
     </div>
+
+    <div v-if="backfillMsg" class="mb-2 text-xs" :class="backfillMsg.startsWith('✓')?'text-green-600':(backfillMsg.startsWith('补充失败')?'text-red-500':'text-teal-600')">{{ backfillMsg }}</div>
 
     <div v-if="scanning" class="mb-2 text-xs text-purple-600">扫描中，请稍候…</div>
     <div v-if="orphanMsg" class="mb-2 text-xs" :class="orphanMsg.startsWith('✓')?'text-green-600':'text-red-500'">{{ orphanMsg }}</div>
 
+    <!-- 扫描完成但无孤儿时的反馈 -->
+    <div v-if="scanDone && !scanning && !orphans.length && !orphanMsg" class="mb-2 p-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+      ✓ 扫描完成，未发现原图已丢失的孤儿日志
+      <span v-if="orphanRange && orphanRange.count" class="text-green-600 ml-1">(分布: {{ fmtDate(orphanRange.min) }} ~ {{ fmtDate(orphanRange.max) }}，共 {{ orphanRange.count }} 条，但当前筛选下无结果)</span>
+    </div>
+
     <!-- Orphan results -->
     <div v-if="orphans.length" class="mb-2 p-2 bg-amber-50 border border-amber-200 rounded-lg text-xs">
       <div class="flex items-center justify-between mb-2">
-        <span class="text-amber-800">发现 <strong>{{ orphans.length }}</strong> 条已无原图的生图日志</span>
+        <span class="text-amber-800">
+          发现 <strong>{{ orphans.length }}</strong> 条已无原图的生图日志
+          <span v-if="orphanRange" class="text-amber-600 ml-1">(分布: {{ fmtDate(orphanRange.min) }} ~ {{ fmtDate(orphanRange.max) }})</span>
+        </span>
         <div class="flex gap-1">
           <input v-model="orphanSearch" type="text" placeholder="用户筛选" class="border rounded px-1.5 py-0.5 text-[10px] w-20 outline-none" @keyup.enter="loadOrphanResults" />
           <input v-model="orphanDateFrom" type="date" class="border rounded px-1.5 py-0.5 text-[10px] w-28 outline-none" />
@@ -213,7 +307,10 @@ onUnmounted(() => { stopAuto(); if (orphanPollTimer) clearInterval(orphanPollTim
       </div>
       <div class="flex items-center justify-between">
         <span class="text-amber-700 text-[10px]">扫描结果缓存在内存中，刷新页面后需重新扫描</span>
-        <button @click="clearOrphans" class="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs cursor-pointer border-0 shrink-0">🗑 删除这些</button>
+        <div class="flex gap-1 shrink-0">
+          <button @click="clearOrphansByRange" class="px-2 py-1 bg-orange-500 text-white rounded hover:bg-orange-600 text-xs cursor-pointer border-0" title="按上方日期区间清理原图全丢的孤儿+残留缩略图">🗂 清理此区间</button>
+          <button @click="clearOrphans" class="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 text-xs cursor-pointer border-0">🗑 删除这些</button>
+        </div>
       </div>
       <div class="mt-2 max-h-48 overflow-y-auto space-y-1">
         <div v-for="o in orphans" :key="o.id" class="flex items-center gap-2 text-[10px] bg-white/60 rounded px-2 py-1 border border-amber-100">

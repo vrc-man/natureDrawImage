@@ -8,6 +8,7 @@ SQLite 数据操作层 (Data Access Layer)
 """
 
 import json
+import sqlite3
 import time as _time_module
 import secrets
 import hashlib as _hashlib
@@ -16,6 +17,15 @@ from typing import Dict, Any, List, Optional, Tuple
 from db.schema import get_db, config_get, config_set, config_get_section
 
 _db = get_db  # 函数别名
+
+
+def backup_database(dst_path: str) -> None:
+    """使用 SQLite 在线备份 API 生成事务一致快照，包含 WAL 中的最新数据。"""
+    dst = sqlite3.connect(dst_path)
+    try:
+        _db().backup(dst)
+    finally:
+        dst.close()
 
 # ── 写穿透缓存（内存 dict + TTL 兜底） ──
 _CACHE_TTL = 60

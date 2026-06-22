@@ -35,10 +35,6 @@ export function copyText(text: string, btn: HTMLElement | null) {
     }
   }).catch(() => {})
 }
-export async function scanThumbnails(type: string) {
-  return api('POST', '/api/admin/scan-thumbnails', { type })
-}
-
 export async function resizeImage(file: File): Promise<File> {
   return new Promise((resolve, reject) => {
     const img = new Image(), url = URL.createObjectURL(file)
@@ -46,7 +42,11 @@ export async function resizeImage(file: File): Promise<File> {
       URL.revokeObjectURL(url)
       const c = document.createElement('canvas')
       c.width = 128; c.height = 128
-      c.getContext('2d')!.drawImage(img, 0, 0, 128, 128)
+      // 保持宽高比的居中裁剪（cover），避免非正方形原图被拉伸变形
+      const side = Math.min(img.width, img.height)
+      const sx = (img.width - side) / 2
+      const sy = (img.height - side) / 2
+      c.getContext('2d')!.drawImage(img, sx, sy, side, side, 0, 0, 128, 128)
       c.toBlob(b => {
         if (b) resolve(new File([b], file.name.replace(/\.\w+$/i, '.webp'), { type: 'image/webp' }))
         else reject(new Error('缩略图生成失败'))
@@ -55,6 +55,62 @@ export async function resizeImage(file: File): Promise<File> {
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')) }
     img.src = url
   })
+}
+
+export interface BatchThumbItem {
+  filename: string
+  status: 'ok' | 'unmatched' | 'error'
+  matched: string[]
+  error: string
+}
+export interface BatchThumbResult {
+  matched: number
+  unmatched: number
+  errored: number
+  results: BatchThumbItem[]
+}
+
+/**
+ * 批量上传缩略图：前端逐个压缩，单个文件压缩失败时跳过并记录原因，不影响其它文件。
+ * 压缩成功的文件提交后端，最后把"前端压缩失败"与"后端处理结果"合并返回。
+ */
+export async function batchUploadThumbnails(url: string, files: File[]): Promise<BatchThumbResult> {
+  const fd = new FormData()
+  const frontErrors: BatchThumbItem[] = []
+  let appended = 0
+  for (const f of files) {
+    try {
+      const compressed = await resizeImage(f)
+      const stem = f.name.replace(/\.[^.]+$/, '')
+      fd.append('files', compressed, stem + '.webp')
+      appended++
+    } catch (e: any) {
+      frontErrors.push({
+        filename: f.name,
+        status: 'error',
+        matched: [],
+        error: e?.message || '前端处理失败',
+      })
+    }
+  }
+
+  let backend: BatchThumbResult = { matched: 0, unmatched: 0, errored: 0, results: [] }
+  if (appended > 0) {
+    const r = await fetch(url, { method: 'POST', body: fd })
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}))
+      throw new Error(e.detail || r.statusText)
+    }
+    backend = await r.json()
+  }
+
+  const results = [...(backend.results || []), ...frontErrors]
+  return {
+    matched: backend.matched || 0,
+    unmatched: backend.unmatched || 0,
+    errored: (backend.errored || 0) + frontErrors.length,
+    results,
+  }
 }
 
 export const onlineGithubIds = ref<Set<string>>(new Set())

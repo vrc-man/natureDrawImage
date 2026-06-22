@@ -19,11 +19,16 @@ const limitFields: LimitField[] = [
   { key: 'report_pending_max', label: '待处理举报上限', desc: '最多待处理举报数' },
   { key: 'gpu_poll_interval_ms', label: 'GPU轮询间隔', desc: 'GPU 状态轮询间隔（毫秒）' },
   { key: 'gpu_cache_ttl_ms', label: 'GPU缓存', desc: 'GPU 缓存有效期（毫秒）' },
-  { key: 'gc_interval_hours', label: 'GC间隔', desc: '自动 GC 执行间隔（小时）' },
+  { key: 'gc_interval_hours', label: 'GC间隔', desc: '自动 GC 执行间隔（小时）· 设 0 关闭自动 GC' },
+  { key: 'gc_orphan_scan', label: 'GC孤儿文件清扫', desc: 'GC时扫描OUTPUT_DIR中无gen_logs记录的原图，自动备份到gcbackups后删除并清理关联缩略图（1=开，0=关）' },
+  { key: 'startup_orphan_scan', label: '启动孤儿文件清扫', desc: '服务启动时扫描OUTPUT_DIR中无gen_logs记录的原图，自动备份到gcbackups后删除并清理关联缩略图（1=开，0=关）' },
+  { key: 'gc_clean_empty_dirs', label: 'GC清理空目录', desc: 'GC时清理 output/thumb_cache/deletion_thumbs 下「YYYY-MM-DD」格式的空目录（跳过今天，非空不删，1=开，0=关）' },
 ]
 
 function defaultFor(key: string): number {
   if (key.includes('max') || key.includes('pending')) return 1
+  if (key.includes('orphan_scan')) return 1
+  if (key === 'gc_clean_empty_dirs') return 1
   if (key.includes('poll') || key.includes('cache')) return 5000
   return 0
 }
@@ -110,7 +115,7 @@ onMounted(load)
 
 <template>
   <div v-if="visible" class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-3">
-    <div class="grid grid-cols-3 gap-3 text-xs mb-4">
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs mb-4">
       <div v-for="f in limitFields" :key="f.key">
         <label class="text-gray-500 block mb-0.5">{{ f.label }}</label>
         <input v-model="limits[f.key]" type="number" class="w-full border border-gray-200 rounded-lg px-2 py-1 outline-none focus:border-pink-400 box-border" />

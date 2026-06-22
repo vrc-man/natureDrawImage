@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, type Component } from 'vue'
 import { api } from '@/components/admin/useAdminApi'
 import AdminLightbox from '@/components/admin/AdminLightbox.vue'
 import QueueSection from '@/components/admin/QueueSection.vue'
@@ -28,44 +28,122 @@ import StatsSection from '@/components/admin/StatsSection.vue'
 const isAdmin = ref(false), loading = ref(true)
 const expanded = ref<Record<string, boolean>>({})
 
+interface SectionDef { key: string; title: string; comp: Component }
+interface GroupDef { id: string; title: string; sections: SectionDef[] }
+
+const groups: GroupDef[] = [
+  {
+    id: 'overview', title: '📊 概览',
+    sections: [
+      { key: 'stats', title: '📊 系统统计', comp: StatsSection },
+      { key: 'queue', title: '🏃 队列管理', comp: QueueSection },
+    ],
+  },
+  {
+    id: 'content', title: '🎨 内容设置',
+    sections: [
+      { key: 'ann', title: '📢 公告管理', comp: AnnSection },
+      { key: 'res', title: '📐 分辨率管理', comp: ResSection },
+      { key: 'styles', title: '🖌️ 画风管理', comp: StyleSection },
+      { key: 'characters', title: '🎭 角色管理', comp: CharacterSection },
+      { key: 'wfmeta', title: '🔗 工作流缩略图 & Lora 链接', comp: WfMetaSection },
+      { key: 'featured', title: '⭐ 精选管理', comp: FeaturedSection },
+    ],
+  },
+  {
+    id: 'system', title: '⚙️ 系统设置',
+    sections: [
+      { key: 'llm', title: '🤖 LLM 配置', comp: LlmSection },
+      { key: 'limits', title: '⚙️ 限流配置', comp: LimitsSection },
+      { key: 'maint', title: '🔧 维护模式', comp: MaintSection },
+      { key: 'chead', title: '📎 自定义 Head', comp: CheadSection },
+    ],
+  },
+  {
+    id: 'security', title: '👤 用户与安全',
+    sections: [
+      { key: 'users', title: '👤 用户管理', comp: UsersSection },
+      { key: 'email', title: '📧 邮箱认证管理', comp: EmailSection },
+      { key: 'keys', title: '🔑 访问密钥管理', comp: AccessKeySection },
+      { key: 'bans', title: '🛡️ IP 封禁管理', comp: BanSection },
+      { key: 'reports', title: '🚩 举报管理', comp: ReportSection },
+    ],
+  },
+  {
+    id: 'moderation', title: '🗂️ 内容审核',
+    sections: [
+      { key: 'genlogs', title: '📋 生图日志', comp: GenLogSection },
+      { key: 'recent', title: '📋 生图记录', comp: RecentSection },
+      { key: 'images', title: '🖼️ 图片管理', comp: ImageSection },
+      { key: 'dellog', title: '🗑️ 删除记录', comp: DeletionLogSection },
+      { key: 'gc', title: '🧹 GC 系统', comp: GcSection },
+    ],
+  },
+]
+
 onMounted(async () => {
   try { isAdmin.value = (await api('GET', '/api/admin/whoami')).is_admin } catch { isAdmin.value = false }
   loading.value = false
 })
+
 function toggle(k: string) { expanded.value[k] = !expanded.value[k] }
+
+function setGroup(g: GroupDef, open: boolean) {
+  for (const s of g.sections) expanded.value[s.key] = open
+}
+
+function scrollToGroup(id: string) {
+  document.getElementById('grp-' + id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 </script>
 <template>
-  <div class="min-h-screen bg-gray-100" style="overflow-y: auto; height: 100vh;">
+  <div class="admin-root min-h-screen bg-gray-100" style="overflow-y: auto; height: 100vh;">
     <AdminLightbox />
-    <div class="max-w-6xl mx-auto p-4">
+    <div class="admin-container max-w-6xl mx-auto p-4">
       <div class="flex items-center justify-between mb-4">
         <h1 class="text-2xl font-bold">&#x1F6E1;&#xFE0F; 管理员控制台</h1>
         <a href="/" class="text-sm text-blue-600 hover:underline">&larr; 返回首页</a>
       </div>
-      <div v-if="!isAdmin && !loading" class="max-w-md mx-auto mt-20 text-center p-8 bg-white rounded-2xl shadow-sm"><p class="text-4xl mb-4">&#x1F512;</p><p class="text-gray-500">需要管理员权限</p></div>
+
+      <div v-if="!isAdmin && !loading" class="max-w-md mx-auto mt-20 text-center p-8 bg-white rounded-2xl shadow-sm">
+        <p class="text-4xl mb-4">&#x1F512;</p>
+        <p class="text-gray-500">需要管理员权限</p>
+      </div>
+
       <template v-if="isAdmin">
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('stats')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.stats?'rotate-90':''">&#x25B8;</span> &#x1F4CA; 系统统计</h2></div><div v-show="expanded.stats"><StatsSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('queue')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.queue?'rotate-90':''">&#x25B8;</span> &#x1F3C3; 队列管理</h2></div><div v-show="expanded.queue"><QueueSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('ann')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.ann?'rotate-90':''">&#x25B8;</span> &#x1F4E2; 公告管理</h2></div><div v-show="expanded.ann"><AnnSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('res')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.res?'rotate-90':''">&#x25B8;</span> &#x1F4D0; 分辨率管理</h2></div><div v-show="expanded.res"><ResSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('styles')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.styles?'rotate-90':''">&#x25B8;</span> &#x1F58C;&#xFE0F; 画风管理</h2></div><div v-show="expanded.styles"><StyleSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('characters')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.characters?'rotate-90':''">&#x25B8;</span> &#x1F3AD; 角色管理</h2></div><div v-show="expanded.characters"><CharacterSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('wfmeta')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.wfmeta?'rotate-90':''">&#x25B8;</span> &#x1F517; 工作流缩略图 &amp; Lora 链接</h2></div><div v-show="expanded.wfmeta"><WfMetaSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('llm')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.llm?'rotate-90':''">&#x25B8;</span> &#x1F916; LLM 配置</h2></div><div v-show="expanded.llm"><LlmSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('limits')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.limits?'rotate-90':''">&#x25B8;</span> &#x2699;&#xFE0F; 限流配置</h2></div><div v-show="expanded.limits"><LimitsSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('maint')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.maint?'rotate-90':''">&#x25B8;</span> &#x1F527; 维护模式</h2></div><div v-show="expanded.maint"><MaintSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('chead')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.chead?'rotate-90':''">&#x25B8;</span> &#x1F4CE; 自定义 Head</h2></div><div v-show="expanded.chead"><CheadSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('users')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.users?'rotate-90':''">&#x25B8;</span> &#x1F464; 用户管理</h2></div><div v-show="expanded.users"><UsersSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('email')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.email?'rotate-90':''">&#x25B8;</span> &#x1F4E7; 邮箱认证管理</h2></div><div v-show="expanded.email"><EmailSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('keys')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.keys?'rotate-90':''">&#x25B8;</span> &#x1F511; 访问密钥管理</h2></div><div v-show="expanded.keys"><AccessKeySection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('genlogs')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.genlogs?'rotate-90':''">&#x25B8;</span> &#x1F4CB; 生图日志</h2></div><div v-show="expanded.genlogs"><GenLogSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('dellog')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.dellog?'rotate-90':''">&#x25B8;</span> &#x1F5D1;&#xFE0F; 删除记录</h2></div><div v-show="expanded.dellog"><DeletionLogSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('bans')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.bans?'rotate-90':''">&#x25B8;</span> &#x1F6E1;&#xFE0F; IP 封禁管理</h2></div><div v-show="expanded.bans"><BanSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('reports')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.reports?'rotate-90':''">&#x25B8;</span> &#x1F6A9; 举报管理</h2></div><div v-show="expanded.reports"><ReportSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('featured')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.featured?'rotate-90':''">&#x25B8;</span> &#x2B50; 精选管理</h2></div><div v-show="expanded.featured"><FeaturedSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('recent')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.recent?'rotate-90':''">&#x25B8;</span> &#x1F4CB; 生图记录</h2></div><div v-show="expanded.recent"><RecentSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('images')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.images?'rotate-90':''">&#x25B8;</span> &#x1F5BC;&#xFE0F; 图片管理</h2></div><div v-show="expanded.images"><ImageSection :visible="true" /></div></div>
-        <div class="bg-white rounded shadow p-4 mb-4"><div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle('gc')"><h2 class="text-lg font-semibold"><span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded.gc?'rotate-90':''">&#x25B8;</span> &#x1F9F9; GC 系统</h2></div><div v-show="expanded.gc"><GcSection :visible="true" /></div></div>
+        <!-- 顶部分组锚点导航 -->
+        <nav class="sticky top-0 z-10 -mx-4 px-4 py-2 mb-4 bg-gray-100/90 backdrop-blur border-b border-gray-200">
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="g in groups"
+              :key="g.id"
+              @click="scrollToGroup(g.id)"
+              class="px-3 py-1 text-xs rounded-full bg-white border border-gray-200 text-gray-600 hover:bg-pink-50 hover:text-pink-600 hover:border-pink-200 cursor-pointer transition-colors"
+            >{{ g.title }}</button>
+          </div>
+        </nav>
+
+        <!-- 分组 + 手风琴 -->
+        <section v-for="g in groups" :key="g.id" :id="'grp-' + g.id" class="mb-6 scroll-mt-16">
+          <div class="flex items-center gap-3 mb-2">
+            <h2 class="text-sm font-bold text-gray-400 tracking-wide uppercase">{{ g.title }}</h2>
+            <div class="flex-1 border-t border-gray-200"></div>
+            <button @click="setGroup(g, true)" class="text-[11px] text-gray-400 hover:text-pink-500 cursor-pointer border-0 bg-transparent">全部展开</button>
+            <button @click="setGroup(g, false)" class="text-[11px] text-gray-400 hover:text-pink-500 cursor-pointer border-0 bg-transparent">全部折叠</button>
+          </div>
+
+          <div v-for="s in g.sections" :key="s.key" class="bg-white rounded shadow p-4 mb-3">
+            <div class="flex items-center justify-between mb-2 cursor-pointer select-none" @click="toggle(s.key)">
+              <h3 class="text-lg font-semibold">
+                <span class="inline-block w-4 text-gray-400 transition-transform" :class="expanded[s.key] ? 'rotate-90' : ''">&#x25B8;</span>
+                {{ s.title }}
+              </h3>
+            </div>
+            <div v-show="expanded[s.key]">
+              <component :is="s.comp" :visible="true" />
+            </div>
+          </div>
+        </section>
       </template>
     </div>
   </div>
