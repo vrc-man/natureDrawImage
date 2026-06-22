@@ -12,6 +12,8 @@ const genHours = ref(24)
 const genMins = ref(0)
 const genMaxUses = ref(10)
 const generatedKeys = ref<string[]>([])
+const genMsg = ref('')
+const newKeyPreviews = ref<Set<string>>(new Set())
 
 async function loadKeys() {
   try { const r = await api('GET', '/api/admin/access-keys'); keys.value = r.items || [] } catch {}
@@ -25,8 +27,22 @@ async function generateKeys() {
     if (genType.value === 'count' || genType.value === 'both') body.max_uses = genMaxUses.value
     const r = await api('POST', '/api/admin/access-keys/generate', body)
     generatedKeys.value = r.keys || []
-    loadKeys()
+    // 标记新密钥用于列表高亮：完整密钥的 preview 段 = 前8 + ... + 后4（与后端 key_preview 一致）
+    newKeyPreviews.value = new Set((r.keys || []).map((k: string) => k.length >= 12 ? k.slice(0, 8) + '...' + k.slice(-4) : k))
+    genMsg.value = `✓ 已生成 ${generatedKeys.value.length} 个，并加入列表顶部（请立即复制保存，完整密钥仅此一次显示）`
+    await loadKeys()
+    // 5 秒后清除高亮
+    setTimeout(() => { newKeyPreviews.value = new Set() }, 5000)
   } catch (e: any) { alert('生成失败: ' + e.message) }
+}
+
+function dismissGenerated() {
+  generatedKeys.value = []
+  genMsg.value = ''
+}
+
+function isNewKey(k: any): boolean {
+  return newKeyPreviews.value.has(k.key_preview || k.preview || '')
 }
 
 function statusLabel(k: any): string {
@@ -78,6 +94,15 @@ async function removeKey(preview: string) {
 async function revealKey(preview: string) {
   try { const r = await api('POST', '/api/admin/access-keys/reveal', { key_preview: preview }); alert('完整密钥：' + r.key) } catch (e: any) { alert('查看失败: ' + e.message) }
 }
+// 列表「复制密钥」：列表只有 preview，需先 reveal 取完整密钥再复制（修复复制空串问题）
+async function copyFullKey(preview: string, btn: HTMLElement) {
+  if (!preview) { alert('无效密钥'); return }
+  try {
+    const r = await api('POST', '/api/admin/access-keys/reveal', { key_preview: preview })
+    if (!r.key) { alert('未取到完整密钥'); return }
+    copyText(r.key, btn)
+  } catch (e: any) { alert('复制失败: ' + e.message) }
+}
 async function cleanupKeys() {
   if (!confirm('清理已过期/次数用尽的密钥？')) return
   if (prompt('输入"确认清理"') !== '确认清理') { alert('输入不匹配'); return }
@@ -117,11 +142,17 @@ onMounted(loadKeys)
       </div>
 
       <!-- Generated keys display -->
-      <div v-if="generatedKeys.length" class="mt-3 space-y-1">
-        <div v-for="(key, i) in generatedKeys" :key="i" class="bg-green-50 border border-green-200 rounded px-2 py-1 text-xs font-mono text-green-700 cursor-pointer select-all" @click="copyText(key, $event.currentTarget as HTMLElement)" :title="'点击复制'">
-          {{ key }}
+      <div v-if="generatedKeys.length" class="mt-3">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-[11px] text-green-700 flex-1">{{ genMsg }}</span>
+          <button @click="dismissGenerated" class="px-2 py-0.5 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 cursor-pointer border-0 text-[10px] shrink-0">✕ 我已保存</button>
         </div>
-        <p class="text-[10px] text-gray-400 mt-1">点击密钥复制到剪贴板</p>
+        <div class="space-y-1">
+          <div v-for="(key, i) in generatedKeys" :key="i" class="bg-green-50 border border-green-200 rounded px-2 py-1 text-xs font-mono text-green-700 cursor-pointer select-all" @click="copyText(key, $event.currentTarget as HTMLElement)" :title="'点击复制'">
+            {{ key }}
+          </div>
+          <p class="text-[10px] text-gray-400 mt-1">点击密钥复制到剪贴板</p>
+        </div>
       </div>
     </div>
 
@@ -146,8 +177,11 @@ onMounted(loadKeys)
             </tr>
           </thead>
           <tbody>
-            <tr v-for="k in keys" :key="k.preview || k.id" class="border-b border-gray-50 hover:bg-gray-50">
-              <td class="py-1 pr-2 font-mono text-gray-700">{{ k.preview || k.key_preview || (k.key ? k.key.slice(0, 16) + '...' : '-') }}</td>
+            <tr v-for="k in keys" :key="k.preview || k.id" class="border-b border-gray-50 hover:bg-gray-50 transition-colors" :class="{ 'bg-yellow-50 ring-1 ring-yellow-300': isNewKey(k) }">
+              <td class="py-1 pr-2 font-mono text-gray-700">
+                <span v-if="isNewKey(k)" class="inline-block mr-1 px-1 py-0.5 bg-yellow-400 text-white rounded text-[9px] font-sans">新</span>
+                {{ k.preview || k.key_preview || (k.key ? k.key.slice(0, 16) + '...' : '-') }}
+              </td>
               <td class="py-1 pr-2"><span class="px-1 py-0.5 rounded text-[10px]" :class="statusClass(statusLabel(k))">{{ statusLabel(k) }}</span></td>
               <td class="py-1 pr-2"><span class="px-1 py-0.5 rounded text-[10px] bg-gray-100 text-gray-600">{{ typeLabel(k) }}</span></td>
               <td class="py-1 pr-2">{{ k.login || k.github_id || k.user || '-' }}</td>
@@ -155,7 +189,7 @@ onMounted(loadKeys)
               <td class="py-1 pr-2 text-gray-500 whitespace-nowrap">{{ fmtShort(k.created_at) }}</td>
               <td class="py-1 pr-2 text-gray-500 whitespace-nowrap">{{ k.expires_at ? fmtShort(k.expires_at) : '-' }}</td>
               <td class="py-1 flex flex-wrap gap-1">
-                <button @click="copyText(k.key || k.preview || '', $event.currentTarget as HTMLElement)" class="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 cursor-pointer border-0 text-[10px]">复制密钥</button>
+                <button @click="copyFullKey(k.preview || k.key_preview, $event.currentTarget as HTMLElement)" class="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 cursor-pointer border-0 text-[10px]">复制密钥</button>
                 <button v-if="k.disabled" @click="enableKey(k.preview || k.key_preview)" class="px-1.5 py-0.5 bg-emerald-100 text-emerald-600 rounded hover:bg-emerald-200 cursor-pointer border-0 text-[10px]">重新启用</button>
                 <button v-else @click="disableKey(k.preview || k.key_preview)" class="px-1.5 py-0.5 bg-yellow-100 text-yellow-600 rounded hover:bg-yellow-200 cursor-pointer border-0 text-[10px]">禁用</button>
                 <button @click="revealKey(k.preview || k.key_preview)" class="px-1.5 py-0.5 bg-gray-100 text-gray-600 rounded hover:bg-gray-200 cursor-pointer border-0 text-[10px]">查看</button>
