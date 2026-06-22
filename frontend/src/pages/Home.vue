@@ -77,6 +77,8 @@ const img2imgUsePreset = ref(false)
 // Fork
 const forkedWorkflow = ref<any>(null)
 const forkedMeta = ref<any>(null)
+// fork 还原时暂存工作流路径，待工作流列表(wfDirs)加载后再判定文生图/图生图
+const pendingForkPath = ref<string>('')
 
 // Run state
 const _isGenerating = ref(false)
@@ -228,9 +230,15 @@ onMounted(async () => {
       if (meta.workflow_name) {
         currentWorkflowPath.value = meta.workflow_name
         localStorage.setItem('currentWorkflow', meta.workflow_name)
+        // 补设工作流显示名，让 WorkflowPicker 标题正确显示 fork 的工作流
+        const wfName = String(meta.workflow_name).replace(/^.*[\\/]/, '').replace(/\.json$/i, '')
+        localStorage.setItem('currentWorkflowName', wfName)
+        // mode 判定依赖 wfDirs，此时可能尚未加载 —— 暂存，待 loadList 后再判
+        pendingForkPath.value = meta.workflow_name
       }
-      if (meta.prompt) directPrompt.value = meta.prompt
-      if (meta.negative_prompt) negativePrompt.value = meta.negative_prompt
+      // Fork = 复刻原图状态：强制清空默认提示词后再注入 fork 的提示词
+      directPrompt.value = meta.prompt || ''
+      negativePrompt.value = meta.negative_prompt || ''
       if (meta.default_width) width.value = meta.default_width
       if (meta.default_height) height.value = meta.default_height
     }
@@ -258,6 +266,11 @@ function startAuthedServices() {
 async function loadGenerationData() {
   loadResolutions()
   await loadList()
+  // wfDirs 已就绪：若有 fork 暂存路径，此时才能准确判定文生图/图生图
+  if (pendingForkPath.value) {
+    mode.value = workflowPathMatchesMode(pendingForkPath.value, 'img2img') ? 'img2img' : 'txt2img'
+    pendingForkPath.value = ''
+  }
   await ensureWorkflowForMode(mode.value)
 }
 
@@ -844,7 +857,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
             <div v-else>
               <!-- Fork badge -->
               <div v-if="forkedWorkflow" class="flex items-center gap-2 px-4 py-2 bg-amber-50 border border-amber-200 rounded-2xl text-xs text-amber-700 mb-2">
-                🍴 Fork: {{ forkedMeta?.display_path || '自定义工作流' }}
+                🍴 Fork: {{ forkedMeta?.workflow_name ? String(forkedMeta.workflow_name).replace(/^.*[\\/]/, '').replace(/\.json$/i, '') : (forkedMeta?.display_path || '自定义工作流') }}
                 <button @click="clearFork" class="ml-auto text-amber-400 hover:text-amber-600 cursor-pointer border-0 bg-transparent">✕ 取消</button>
               </div>
 

@@ -1903,6 +1903,8 @@ async def _run_gc():
         if fail_list:
             cleaned["orphan_originals_fail_detail"] = fail_list[:20]  # 最多 20 条
         cleaned["orphan_thumbs"] = (cleaned.get("orphan_thumbs", 0) + result.get("thumbs_deleted", 0))
+        if result.get("featured_removed"):
+            cleaned["orphan_featured_removed"] = result.get("featured_removed", 0)
 
     # 8. 清空日期空目录（必须在删图/孤儿扫描之后，清掉当轮产生的空壳）
     if _limits.get("gc_clean_empty_dirs", 1):
@@ -2169,10 +2171,24 @@ def _do_orphan_scan(prefix: str = "orphan") -> dict:
                     thumbs_deleted += 1
             except Exception:
                 pass
+    # 清理 featured 表中「原图已被本轮孤儿清理删除」的死记录
+    featured_removed = 0
+    deleted_rels = {d["path"].replace("\\", "/") for d in originals_deleted}
+    if deleted_rels:
+        try:
+            feats = db.load_featured()
+            kept = [f for f in feats if f.replace("\\", "/") not in deleted_rels]
+            if len(kept) < len(feats):
+                db.save_featured(kept)
+                featured_removed = len(feats) - len(kept)
+                print(f"[{prefix}] 清理死精选记录: {featured_removed} 条")
+        except Exception as e:
+            print(f"[{prefix}] 清理死精选记录失败: {e}")
     return {
         "originals_deleted": originals_deleted,
         "originals_failed": originals_failed,
         "thumbs_deleted": thumbs_deleted,
+        "featured_removed": featured_removed,
         "backup_dir": str(obackup_dir) if originals_deleted else "",
     }
 
@@ -2293,6 +2309,13 @@ async def robots_txt():
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# ---------------- 外挂功能模块（features/，新功能在此挂载，本文件不再膨胀） ----------------
+try:
+    from features import register_all as _register_features
+    _register_features(app)
+except Exception as _e:
+    print(f"[features] 注册外挂模块失败（不影响主应用）: {type(_e).__name__}: {_e}")
 
 
 # ---------------- WebP 转码（轻量级图片压缩） ----------------
@@ -4366,7 +4389,7 @@ async def api_output_creator(request: Request, path: str = ""):
 
 
 @app.get("/api/output/file")
-async def api_output_file(request: Request, path: str, full: int = 0):
+async def api_output_file(request: Request, path: str, full: int = 0, download: int = 0):
     user = _get_user_from_session(request)
     if not user:
         raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
@@ -4396,7 +4419,16 @@ async def api_output_file(request: Request, path: str, full: int = 0):
     if full:
         ext = p.suffix.lower().lstrip(".")
         media = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, f"image/{ext}")
-        return FileResponse(str(p), media_type=media)  # 原图下载不缓存
+        headers = {}
+        if download:
+            # 强制浏览器下载而非新标签预览；文件名用原图名（ASCII 回退 + UTF-8 兼容）
+            from urllib.parse import quote as _q
+            fname = p.name
+            ascii_fallback = fname.encode("ascii", "ignore").decode("ascii") or "image"
+            headers["Content-Disposition"] = (
+                f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{_q(fname)}"
+            )
+        return FileResponse(str(p), media_type=media, headers=headers)  # 原图下载不缓存
     resp = _serve_image_maybe_webp(request, p, quality=82, max_side=1600)
     resp.headers["Cache-Control"] = "public, max-age=2592000"  # 1600px 灯箱图缓存30天
     return resp
@@ -4476,7 +4508,7 @@ async def api_output_file_dl(path: str, exp: int, sig: str, full: int = 1):
 
 @app.get("/api/output/thumb")
 async def api_output_thumb(request: Request, path: str):
-    """返回缓存的缩略图（短边 512px WebP），鉴权同 /api/output/file"""
+    """返回缓存的缩略图（短边 256px WebP），鉴权同 /api/output/file"""
     user = _get_user_from_session(request)
     if not user:
         raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
@@ -7955,6 +7987,7 @@ async def api_admin_gc_orphan_scan(request: Request):
                     "originals": len(result["originals_deleted"]),
                     "originals_failed": len(result["originals_failed"]),
                     "thumbs": result["thumbs_deleted"],
+                    "featured_removed": result.get("featured_removed", 0),
                     "backup_dir": result["backup_dir"],
                 },
                 "result": result,

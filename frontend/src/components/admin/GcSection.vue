@@ -143,6 +143,7 @@ async function runOrphanScan() {
           if (c.originals > 0) parts.push(`原图 ${c.originals} 已删`)
           if (c.originals_failed > 0) parts.push(`失败 ${c.originals_failed}`)
           if (c.thumbs > 0) parts.push(`缩略图 ${c.thumbs} 已清`)
+          if (c.featured_removed > 0) parts.push(`死精选 ${c.featured_removed} 已清`)
           orphanScanResult.value = parts.length ? '清扫完成：' + parts.join('，') : '清扫完成，无孤儿文件'
           orphanScanDetails.value = s.result || null
           loadGcStats()
@@ -179,6 +180,53 @@ async function runCleanEmptyDirs() {
     cleanDirsRunning.value = false
   }
 }
+
+// ───── 外挂模块：图片目录健康检查（只读统计，不改任何数据）─────
+const healthRunning = ref(false)
+const healthResult = ref('')
+const healthDetails = ref<any>(null)
+let healthPollTimer: ReturnType<typeof setInterval> | null = null
+
+function fmtBytes(n: number) {
+  if (!n) return '0 B'
+  const u = ['B', 'KB', 'MB', 'GB', 'TB']
+  let i = 0, v = n
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
+  return v.toFixed(i ? 1 : 0) + ' ' + u[i]
+}
+
+async function runHealthCheck() {
+  healthRunning.value = true
+  healthResult.value = ''
+  healthDetails.value = null
+  try {
+    const r = await api('POST', '/api/admin/features/health/scan')
+    if (!r.ok) { healthRunning.value = false; healthResult.value = r.error || '启动失败'; return }
+    healthPollTimer = setInterval(async () => {
+      try {
+        const s = await api('GET', '/api/admin/features/health/scan/status')
+        if (s.status === 'done') {
+          if (healthPollTimer) { clearInterval(healthPollTimer); healthPollTimer = null }
+          healthRunning.value = false
+          healthDetails.value = s
+          healthResult.value = '检查完成'
+          setTimeout(() => { if (healthResult.value === '检查完成') healthResult.value = '' }, 5000)
+        } else if (s.status === 'error') {
+          if (healthPollTimer) { clearInterval(healthPollTimer); healthPollTimer = null }
+          healthRunning.value = false
+          healthResult.value = '检查出错: ' + (s.error || '未知错误')
+        }
+      } catch {
+        if (healthPollTimer) { clearInterval(healthPollTimer); healthPollTimer = null }
+        healthRunning.value = false
+      }
+    }, 1000)
+  } catch (e: any) {
+    healthRunning.value = false
+    healthResult.value = '检查启动失败: ' + e.message
+  }
+}
+
 onMounted(() => {
   loadGcStats()
   loadGcLogs()
@@ -188,6 +236,7 @@ onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer)
   if (pollTimer) clearInterval(pollTimer)
   if (orphanPollTimer) clearInterval(orphanPollTimer)
+  if (healthPollTimer) clearInterval(healthPollTimer)
 })
 </script>
 
@@ -217,6 +266,7 @@ onUnmounted(() => {
       <button @click="gcWithoutBackup" :disabled="gcRunning" class="px-3 py-1 bg-orange-500 text-white rounded-lg text-xs hover:bg-orange-600 disabled:opacity-40 cursor-pointer border-0">⚠️ GC不备份</button>
       <button @click="runOrphanScan" :disabled="orphanScanRunning" class="px-3 py-1 bg-purple-500 text-white rounded-lg text-xs hover:bg-purple-600 disabled:opacity-40 cursor-pointer border-0">🧹 孤儿文件清扫</button>
       <button @click="runCleanEmptyDirs" :disabled="cleanDirsRunning" class="px-3 py-1 bg-teal-500 text-white rounded-lg text-xs hover:bg-teal-600 disabled:opacity-40 cursor-pointer border-0">🗂️ 清理空目录</button>
+      <button @click="runHealthCheck" :disabled="healthRunning" class="px-3 py-1 bg-sky-500 text-white rounded-lg text-xs hover:bg-sky-600 disabled:opacity-40 cursor-pointer border-0" title="外挂模块：只读扫描，统计图片总数/占用/缺缩略图/孤儿文件">🩺 健康检查</button>
       <button @click="clearLogs" class="px-3 py-1 bg-gray-100 text-gray-600 rounded-lg text-xs hover:bg-gray-200 cursor-pointer border-0">清空日志</button>
       <span v-if="gcRunning" class="text-xs text-amber-500">GC 运行中…</span>
       <span v-if="gcResult" class="text-xs" :class="gcResult.includes('完成') ? 'text-green-500' : gcResult ? 'text-red-400' : ''">{{ gcResult }}</span>
@@ -224,6 +274,28 @@ onUnmounted(() => {
       <span v-if="orphanScanResult" class="text-xs" :class="orphanScanResult.includes('完成') ? 'text-green-500' : orphanScanResult.includes('出错') || orphanScanResult.includes('失败') ? 'text-red-400' : ''">{{ orphanScanResult }}</span>
       <span v-if="cleanDirsRunning" class="text-xs text-teal-500">清理空目录中…</span>
       <span v-if="cleanDirsResult" class="text-xs" :class="cleanDirsResult.includes('完成') ? 'text-green-500' : 'text-red-400'">{{ cleanDirsResult }}</span>
+      <span v-if="healthRunning" class="text-xs text-sky-500">健康检查扫描中…</span>
+      <span v-if="healthResult" class="text-xs" :class="healthResult.includes('完成') ? 'text-green-500' : 'text-red-400'">{{ healthResult }}</span>
+    </div>
+
+    <!-- 健康检查结果（外挂模块，只读统计）-->
+    <div v-if="healthDetails" class="mb-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+      <div class="bg-sky-50 rounded-xl p-3">
+        <div class="text-sky-500 text-[10px]">图片总数</div>
+        <div class="text-lg font-bold text-sky-700">{{ healthDetails.total_images ?? 0 }}</div>
+      </div>
+      <div class="bg-indigo-50 rounded-xl p-3">
+        <div class="text-indigo-500 text-[10px]">总占用</div>
+        <div class="text-lg font-bold text-indigo-700">{{ fmtBytes(healthDetails.total_size_bytes ?? 0) }}</div>
+      </div>
+      <div class="bg-amber-50 rounded-xl p-3">
+        <div class="text-amber-500 text-[10px]">缺缩略图</div>
+        <div class="text-lg font-bold text-amber-700">{{ healthDetails.missing_thumb ?? 0 }}</div>
+      </div>
+      <div class="bg-rose-50 rounded-xl p-3">
+        <div class="text-rose-500 text-[10px]">孤儿文件</div>
+        <div class="text-lg font-bold text-rose-700">{{ healthDetails.orphan_files ?? 0 }}</div>
+      </div>
     </div>
 
     <!-- 孤儿清扫详情 -->

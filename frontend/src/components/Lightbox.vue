@@ -83,7 +83,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
         <span id="lb-title" class="text-sm mr-auto break-all">{{ current()?.title || '' }}</span>
         <span v-if="current()?.time" class="text-xs text-white/40">{{ current()!.time }}</span>
         <span v-if="lbCreator || current()?.creator" class="text-xs text-amber-300">{{ lbCreator || current()?.creator }}</span>
-        <a v-if="current()?.filename" :href="'/api/output/file?path=' + encodeURIComponent(current()!.path || current()!.filename || '') + '&full=1'" target="_blank" class="text-white/60 hover:text-white no-underline text-base" title="下载原图">⬇️</a>
+        <a v-if="current()?.filename" :href="'/api/output/file?path=' + encodeURIComponent(current()!.path || current()!.filename || '') + '&full=1&download=1'" class="text-white/60 hover:text-white no-underline text-base" title="下载原图">⬇️</a>
         <button @click="doFork" class="text-pink-300 hover:text-pink-100 cursor-pointer border-0 bg-transparent text-base" title="Fork 工作流">🍴</button>
         <button @click="doCopyLink" class="text-white/50 hover:text-white cursor-pointer border-0 bg-transparent text-base" title="复制链接">🔗</button>
         <button @click="showReport=true" class="text-white/50 hover:text-red-400 cursor-pointer border-0 bg-transparent text-base" title="举报">📮</button>
