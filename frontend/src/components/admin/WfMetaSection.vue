@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { api, resizeImage, batchUploadThumbnails, type BatchThumbItem } from './useAdminApi'
 import { showCenterToast } from '@/composables/useToast'
 
@@ -16,6 +16,14 @@ const wfCategories = ref<string[]>([])
 const wfMeta = ref<WfEntry[]>([])
 const catInput = ref('')
 const status = ref('')
+const searchKey = ref('')
+
+// 按工作流名过滤（不区分大小写，实时）。返回 {w, idx} 保留在 wfMeta 中的真实索引，确保编辑/重命名正确指向原对象
+const filteredMeta = computed(() => {
+  const q = searchKey.value.trim().toLowerCase()
+  if (!q) return wfMeta.value
+  return wfMeta.value.filter(w => w.workflow.toLowerCase().includes(q))
+})
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -150,7 +158,12 @@ onMounted(load)
 
 <template>
   <div v-if="visible" class="bg-white rounded shadow p-4 mb-4">
-    <div class="flex items-center justify-end mb-2">
+    <div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
+      <div class="flex items-center gap-1">
+        <input v-model="searchKey" type="text" placeholder="🔍 工作流名称搜索" class="border rounded px-2 py-1 text-xs w-44 outline-none" />
+        <button v-if="searchKey" @click="searchKey=''" class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 cursor-pointer border-0">清除</button>
+        <span v-if="searchKey" class="text-[11px] text-gray-400">{{ filteredMeta.length }} / {{ wfMeta.length }} 个匹配</span>
+      </div>
       <button @click="load" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 border-0 cursor-pointer">刷新</button>
     </div>
     <div>
@@ -192,7 +205,10 @@ onMounted(load)
       </div>
 
       <div class="flex flex-col gap-2 mb-3">
-        <div v-for="(w, i) in wfMeta" :key="w.workflow + i" class="flex items-start gap-2 p-2 border rounded bg-gray-50">
+        <div v-if="!filteredMeta.length" class="text-xs text-gray-400 py-6 text-center">
+          {{ searchKey ? '没有匹配的工作流' : '暂无工作流' }}
+        </div>
+        <div v-for="(w, i) in filteredMeta" :key="w.workflow + i" class="flex items-start gap-2 p-2 border rounded bg-gray-50">
           <div class="flex-shrink-0 flex flex-col items-center gap-1">
             <img v-if="w.thumbnail" :src="'/api/thumbnail?path=' + encodeURIComponent(w.workflow) + '&_t=' + encodeURIComponent(w.thumbnail)" class="w-12 h-12 object-cover rounded bg-gray-50" alt="" />
             <div v-else class="w-12 h-12 rounded bg-gray-100 flex items-center justify-center text-gray-300 text-[10px]">无图</div>
