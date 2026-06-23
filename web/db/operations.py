@@ -741,13 +741,16 @@ def update_thumb_file(log_id: int, thumb_file: str) -> None:
 
 
 def query_deletion_log(search: str = "", date_from: float = 0, date_to: float = 0,
-                       limit: int = 60, offset: int = 0) -> Tuple[List[Dict], int]:
+                       limit: int = 60, offset: int = 0, path: str = "") -> Tuple[List[Dict], int]:
     conditions = []
     params = []
     if search:
         conditions.append("(deleted_by_login LIKE ? OR creator_login LIKE ? OR path LIKE ?)")
         s = f"%{search}%"
         params.extend([s, s, s])
+    if path:
+        conditions.append("path LIKE ?")
+        params.append(f"%{path}%")
     if date_from:
         conditions.append("deleted_at >= ?")
         params.append(date_from)

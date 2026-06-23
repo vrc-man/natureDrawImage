@@ -5,7 +5,7 @@ import { api, fmt, copyText } from './useAdminApi'
 defineProps<{ visible: boolean }>()
 
 const items = ref<any[]>([]), total = ref(0), page = ref(0), statusText = ref('')
-const search = ref(''), dateFrom = ref(''), dateTo = ref('')
+const search = ref(''), pathSearch = ref(''), dateFrom = ref(''), dateTo = ref('')
 const autoEnabled = ref(false), autoInterval = ref(10), editMode = ref(false), selected = ref<string[]>([])
 const bfRunning = ref(false)
 const bfResult = ref('')
@@ -37,6 +37,7 @@ async function load() {
   try {
     let u = `/api/admin/deletion-log?limit=${PAGE_SIZE}&offset=${page.value * PAGE_SIZE}`
     if (search.value) u += '&search=' + encodeURIComponent(search.value)
+    if (pathSearch.value) u += '&path=' + encodeURIComponent(pathSearch.value)
     if (dateFrom.value) u += '&date_from=' + (new Date(dateFrom.value + 'T00:00:00').getTime() / 1000)
     if (dateTo.value) u += '&date_to=' + (new Date(dateTo.value + 'T23:59:59').getTime() / 1000)
     const r = await api('GET', u)
@@ -48,7 +49,7 @@ async function load() {
 }
 
 function filter() { page.value = 0; load() }
-function resetFilter() { search.value = ''; dateFrom.value = ''; dateTo.value = ''; page.value = 0; load() }
+function resetFilter() { search.value = ''; pathSearch.value = ''; dateFrom.value = ''; dateTo.value = ''; page.value = 0; load() }
 
 function toggleEdit() { editMode.value = !editMode.value; if (!editMode.value) selected.value = [] }
 function toggleAll() { selected.value = selected.value.length === items.value.length ? [] : items.value.map(d => d.path) }
@@ -138,6 +139,7 @@ onUnmounted(() => { stopAuto(); if (bfPollTimer) clearInterval(bfPollTimer) })
 
     <div class="flex flex-wrap gap-2 mb-2 items-center text-xs">
       <input v-model="search" type="text" placeholder="用户名搜索" class="border rounded px-2 py-1 text-xs w-28 outline-none" @keyup.enter="filter" />
+      <input v-model="pathSearch" type="text" placeholder="图片名搜索" class="border rounded px-2 py-1 text-xs w-28 outline-none" @keyup.enter="filter" />
       <label class="text-gray-500">日期:</label>
       <input v-model="dateFrom" type="date" class="border rounded px-2 py-1 text-xs outline-none" />
       <span class="text-gray-400">—</span>

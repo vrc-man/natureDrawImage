@@ -1,24 +1,25 @@
 """
 试水模块 A：图片目录健康检查（纯只读统计，不改任何数据）。
 
-验证外挂架构是否打通：APIRouter 注册、中间件鉴权继承、db / _deps 单向依赖。
-
 接口：
-  GET /api/admin/features/health/ping       —— 探活，确认模块已挂载
-  POST /api/admin/features/health/scan      —— 后台扫描 OUTPUT_DIR，统计健康状况
-  GET /api/admin/features/health/scan/status —— 轮询扫描进度/结果
+  GET  /api/admin/features/health/ping          —— 探活
+  POST /api/admin/features/health/scan          —— 后台扫描 OUTPUT_DIR
+  GET  /api/admin/features/health/scan/status   —— 轮询进度/结果
+  GET  /api/admin/features/health/detail        —— 明细分页（type=missing_thumb|orphan）
 
 统计内容（只读）：
   - total_images          OUTPUT_DIR 下图片总数
   - total_size_bytes      图片总占用字节
   - missing_thumb         原图存在但 thumb_cache 缺缩略图的数量
   - orphan_files          不在任何 gen_logs 记录中的"无主"原图数量
+明细：扫描时收集缺缩略图/孤儿的路径清单（每类最多 _DETAIL_CAP 条），分页查询。
 """
 
 import asyncio
 import json
+import time
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from fastapi import APIRouter, Request
 
@@ -36,7 +37,9 @@ router = APIRouter(prefix="/api/admin/features/health", tags=["health-check"])
 _scan_status: Dict[str, Any] = {}
 _scan_lock = asyncio.Lock()
 
-FEATURE_VERSION = "1.0.0"
+FEATURE_VERSION = "1.1.0"
+_DETAIL_CAP = 5000   # 每类明细最多缓存的路径数，防极端情况内存膨胀
+_SAFE_WINDOW = 300   # 秒：5 分钟内的新文件不计入孤儿/缺缩略图（与孤儿扫描一致，避竞态误报）
 
 
 @router.get("/ping")
@@ -69,12 +72,36 @@ async def start_scan(request: Request):
 
 @router.get("/scan/status")
 async def scan_status(request: Request):
-    """查询扫描进度 / 结果。"""
+    """查询扫描进度 / 结果（不含明细大列表，明细走 /detail）。"""
     require_admin(request)
     global _scan_status
     if not _scan_status:
         return {"status": "idle"}
-    return dict(_scan_status)
+    # 复制一份，剔除明细大列表，只回计数 + 截断标记
+    out = {k: v for k, v in _scan_status.items()
+           if k not in ("missing_thumb_list", "orphan_files_list")}
+    return out
+
+
+@router.get("/detail")
+async def scan_detail(request: Request, type: str = "missing_thumb",
+                      offset: int = 0, limit: int = 50):
+    """分页查询明细路径列表。type=missing_thumb | orphan。"""
+    require_admin(request)
+    global _scan_status
+    if _scan_status.get("status") != "done":
+        return {"items": [], "total": 0, "truncated": False}
+    key = "orphan_files_list" if type == "orphan" else "missing_thumb_list"
+    full: List[str] = _scan_status.get(key, []) or []
+    truncated = bool(_scan_status.get(
+        "orphan_truncated" if type == "orphan" else "missing_thumb_truncated"))
+    offset = max(0, offset)
+    limit = max(1, min(limit, 200))
+    return {
+        "items": full[offset:offset + limit],
+        "total": len(full),
+        "truncated": truncated,
+    }
 
 
 def _spawn(coro):
@@ -111,14 +138,21 @@ def _collect_gen_log_stems() -> set:
     return stems
 
 
-def _scan_blocking() -> Dict[str, int]:
-    """同步扫描（在线程里跑，避免阻塞事件循环）。"""
-    result = {"total_images": 0, "total_size_bytes": 0,
-              "missing_thumb": 0, "orphan_files": 0, "scanned": 0}
+def _scan_blocking() -> Dict[str, Any]:
+    """同步扫描（在线程里跑，避免阻塞事件循环）。同时收集明细路径（封顶 _DETAIL_CAP）。"""
+    result: Dict[str, Any] = {
+        "total_images": 0, "total_size_bytes": 0,
+        "missing_thumb": 0, "orphan_files": 0, "scanned": 0,
+        "missing_thumb_list": [], "orphan_files_list": [],
+        "missing_thumb_truncated": False, "orphan_truncated": False,
+    }
     if not OUTPUT_DIR.exists():
         return result
     base = OUTPUT_DIR.resolve()
+    now_ts = time.time()
     gen_stems = _collect_gen_log_stems()
+    mt_list: List[str] = result["missing_thumb_list"]
+    of_list: List[str] = result["orphan_files_list"]
     for p in OUTPUT_DIR.rglob("*"):
         if not p.is_file():
             continue
@@ -133,13 +167,26 @@ def _scan_blocking() -> Dict[str, int]:
             result["total_size_bytes"] += p.stat().st_size
         except Exception:
             pass
-        # 缺缩略图？
-        if not thumb_exists(rel):
+        # 新文件保护：5 分钟内落盘的图，缩略图/日志可能尚未就绪，不计入问题数
+        try:
+            is_new = (now_ts - p.stat().st_mtime) < _SAFE_WINDOW
+        except Exception:
+            is_new = False
+        # 缺缩略图？（新文件跳过，避免把异步生成中的算成缺）
+        if not is_new and not thumb_exists(rel):
             result["missing_thumb"] += 1
-        # 孤儿（不在任何 gen_logs）？
+            if len(mt_list) < _DETAIL_CAP:
+                mt_list.append(rel)
+            else:
+                result["missing_thumb_truncated"] = True
+        # 孤儿（不在任何 gen_logs）？（新文件跳过，避免把日志未落库的算成孤儿）
         stem = Path(rel).with_suffix("").as_posix()
-        if stem not in gen_stems:
+        if not is_new and stem not in gen_stems:
             result["orphan_files"] += 1
+            if len(of_list) < _DETAIL_CAP:
+                of_list.append(rel)
+            else:
+                result["orphan_truncated"] = True
         result["scanned"] += 1
     return result
 

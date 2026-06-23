@@ -199,6 +199,8 @@ async function runHealthCheck() {
   healthRunning.value = true
   healthResult.value = ''
   healthDetails.value = null
+  healthDetailType.value = ''
+  healthDetailItems.value = []
   try {
     const r = await api('POST', '/api/admin/features/health/scan')
     if (!r.ok) { healthRunning.value = false; healthResult.value = r.error || '启动失败'; return }
@@ -226,6 +228,35 @@ async function runHealthCheck() {
     healthResult.value = '检查启动失败: ' + e.message
   }
 }
+
+// 健康检查明细（分页）
+const healthDetailType = ref<'' | 'missing_thumb' | 'orphan'>('')
+const healthDetailItems = ref<string[]>([])
+const healthDetailTotal = ref(0)
+const healthDetailTruncated = ref(false)
+const healthDetailOffset = ref(0)
+const HEALTH_PAGE = 50
+const healthDetailLoading = ref(false)
+
+async function loadHealthDetail(type: 'missing_thumb' | 'orphan', offset = 0) {
+  healthDetailLoading.value = true
+  healthDetailType.value = type
+  healthDetailOffset.value = offset
+  try {
+    const d = await api('GET', `/api/admin/features/health/detail?type=${type}&offset=${offset}&limit=${HEALTH_PAGE}`)
+    healthDetailItems.value = d.items || []
+    healthDetailTotal.value = d.total || 0
+    healthDetailTruncated.value = !!d.truncated
+  } catch (e: any) {
+    healthDetailItems.value = []
+    healthResult.value = '明细加载失败: ' + e.message
+  } finally {
+    healthDetailLoading.value = false
+  }
+}
+function closeHealthDetail() { healthDetailType.value = ''; healthDetailItems.value = [] }
+function healthDetailPrev() { if (healthDetailOffset.value > 0) loadHealthDetail(healthDetailType.value as any, Math.max(0, healthDetailOffset.value - HEALTH_PAGE)) }
+function healthDetailNext() { if (healthDetailOffset.value + HEALTH_PAGE < healthDetailTotal.value) loadHealthDetail(healthDetailType.value as any, healthDetailOffset.value + HEALTH_PAGE) }
 
 onMounted(() => {
   loadGcStats()
@@ -288,13 +319,36 @@ onUnmounted(() => {
         <div class="text-indigo-500 text-[10px]">总占用</div>
         <div class="text-lg font-bold text-indigo-700">{{ fmtBytes(healthDetails.total_size_bytes ?? 0) }}</div>
       </div>
-      <div class="bg-amber-50 rounded-xl p-3">
-        <div class="text-amber-500 text-[10px]">缺缩略图</div>
+      <div class="bg-amber-50 rounded-xl p-3 cursor-pointer hover:ring-2 hover:ring-amber-300 transition-all" @click="healthDetails.missing_thumb ? loadHealthDetail('missing_thumb', 0) : null" :class="{ 'ring-2 ring-amber-400': healthDetailType==='missing_thumb' }" title="点击查看具体图片">
+        <div class="text-amber-500 text-[10px]">缺缩略图 {{ healthDetails.missing_thumb ? '👁' : '' }}</div>
         <div class="text-lg font-bold text-amber-700">{{ healthDetails.missing_thumb ?? 0 }}</div>
       </div>
-      <div class="bg-rose-50 rounded-xl p-3">
-        <div class="text-rose-500 text-[10px]">孤儿文件</div>
+      <div class="bg-rose-50 rounded-xl p-3 cursor-pointer hover:ring-2 hover:ring-rose-300 transition-all" @click="healthDetails.orphan_files ? loadHealthDetail('orphan', 0) : null" :class="{ 'ring-2 ring-rose-400': healthDetailType==='orphan' }" title="点击查看具体图片">
+        <div class="text-rose-500 text-[10px]">孤儿文件 {{ healthDetails.orphan_files ? '👁' : '' }}</div>
         <div class="text-lg font-bold text-rose-700">{{ healthDetails.orphan_files ?? 0 }}</div>
+      </div>
+    </div>
+
+    <!-- 健康检查明细（分页，点上方卡片展开）-->
+    <div v-if="healthDetailType" class="mb-3 border rounded-lg p-3 bg-gray-50 text-xs">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="font-semibold text-gray-600">
+          {{ healthDetailType==='orphan' ? '🔴 孤儿文件' : '🟡 缺缩略图' }} 明细
+          <span class="text-gray-400">（共 {{ healthDetailTotal }} 条{{ healthDetailTruncated ? '，仅缓存前 5000 条' : '' }}）</span>
+        </span>
+        <button @click="closeHealthDetail" class="ml-auto px-2 py-0.5 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 cursor-pointer border-0 text-[10px]">✕ 收起</button>
+      </div>
+      <div v-if="healthDetailLoading" class="text-gray-400 py-2">加载中…</div>
+      <div v-else class="max-h-64 overflow-y-auto space-y-0.5 font-mono text-[11px] text-gray-600">
+        <div v-for="(path, i) in healthDetailItems" :key="i" class="break-all py-0.5 border-b border-gray-100">
+          {{ healthDetailOffset + i + 1 }}. {{ path }}
+        </div>
+        <div v-if="!healthDetailItems.length" class="text-gray-400 py-2">无数据</div>
+      </div>
+      <div class="flex items-center gap-2 mt-2">
+        <button @click="healthDetailPrev" :disabled="healthDetailOffset<=0" class="text-sky-500 hover:underline disabled:text-gray-300 cursor-pointer border-0 bg-transparent">上一页</button>
+        <span class="text-gray-400">{{ Math.floor(healthDetailOffset/50)+1 }} / {{ Math.max(1, Math.ceil(healthDetailTotal/50)) }}</span>
+        <button @click="healthDetailNext" :disabled="healthDetailOffset+50>=healthDetailTotal" class="text-sky-500 hover:underline disabled:text-gray-300 cursor-pointer border-0 bg-transparent">下一页</button>
       </div>
     </div>
 

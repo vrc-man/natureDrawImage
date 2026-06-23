@@ -1737,6 +1737,7 @@ async def _run_gc():
     # 3b. 清理孤儿缩略图：thumb_cache 只保留仍被 gen_logs 引用的图片缩略图。
     orphan_thumbs = 0
     if THUMB_CACHE_DIR.exists():
+        _now_thumb = _time_module.time()
         gen_log_paths = db.get_all_gen_log_file_paths()
         gen_log_stems = {_path_stem_key(p) for p in gen_log_paths}
         for tp in THUMB_CACHE_DIR.rglob("*.webp"):
@@ -1746,6 +1747,9 @@ async def _run_gc():
                 rel_no_ext = tp.relative_to(THUMB_CACHE_DIR).with_suffix("")
                 rel_str = str(rel_no_ext).replace("\\", "/")
                 if rel_str not in gen_log_stems:
+                    # 新文件保护：刚生成的缩略图对应日志可能未落库，跳过（5分钟）
+                    if _now_thumb - tp.stat().st_mtime < 300:
+                        continue
                     tp.unlink()
                     orphan_thumbs += 1
             except Exception:
@@ -2124,8 +2128,11 @@ async def _cleanup_orphan_files_at_startup():
 
 
 def _do_orphan_scan(prefix: str = "orphan") -> dict:
-    """扫描并清理无 gen_logs 关联的原图和缩略图，返回详细结果。"""
+    """扫描并清理无 gen_logs 关联的原图和缩略图，返回详细结果。
+    新文件保护：5 分钟内落盘的文件一律跳过，避开「生成→缩略图→写日志」竞态误删。"""
     import shutil as _shutil_orphan
+    _now_ts = _time_module.time()
+    _SAFE_WINDOW = 300  # 秒：5 分钟内的新文件不当孤儿
     gen_log_paths = db.get_all_gen_log_file_paths()
     gen_log_stems = {_path_stem_key(p) for p in gen_log_paths}
     ots = _time_module.strftime("%Y%m%d_%H%M%S", _time_module.localtime())
@@ -2144,6 +2151,12 @@ def _do_orphan_scan(prefix: str = "orphan") -> dict:
             except Exception:
                 continue
             if _path_stem_key(rel) not in gen_log_stems:
+                # 新文件保护：太新的文件可能正在生成 / 日志尚未落库，跳过
+                try:
+                    if _now_ts - orig.stat().st_mtime < _SAFE_WINDOW:
+                        continue
+                except Exception:
+                    pass
                 backup_ok = False
                 try:
                     obackup_dir.mkdir(parents=True, exist_ok=True)
@@ -2167,6 +2180,9 @@ def _do_orphan_scan(prefix: str = "orphan") -> dict:
                 rel_no_ext = tp.relative_to(THUMB_CACHE_DIR).with_suffix("")
                 rel_str = str(rel_no_ext).replace("\\", "/")
                 if rel_str not in gen_log_stems:
+                    # 新文件保护：刚生成的缩略图对应日志可能未落库，跳过
+                    if _now_ts - tp.stat().st_mtime < _SAFE_WINDOW:
+                        continue
                     tp.unlink()
                     thumbs_deleted += 1
             except Exception:
@@ -7475,8 +7491,9 @@ async def api_admin_ip_whitelist_remove(request: Request, payload: Dict[str, Any
 
 
 @app.get("/api/admin/recent")
-async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0):
-    """列出 OUTPUT_DIR 下所有图片，按 mtime 倒序分页；IP 来自 SQLite creator_ips（无则空串）。"""
+async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0, name: str = ""):
+    """列出 OUTPUT_DIR 下所有图片，按 mtime 倒序分页；IP 来自 SQLite creator_ips（无则空串）。
+    name：可选图片名/路径关键字过滤（不区分大小写）。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     if not OUTPUT_DIR.exists():
@@ -7495,6 +7512,7 @@ async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0):
                 deleted_set.add(p2.replace("\\", "/"))
     except Exception:
         pass
+    _name_q = (name or "").strip().lower()
     try:
         for p in OUTPUT_DIR.rglob("*"):
             if not p.is_file():
@@ -7508,6 +7526,8 @@ async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0):
             except Exception:
                 continue
             if rel in deleted_set:
+                continue
+            if _name_q and _name_q not in rel.lower():
                 continue
             try:
                 mt = p.stat().st_mtime
@@ -7629,13 +7649,15 @@ async def api_admin_delete_batch(request: Request, payload: Dict[str, Any]):
 
 
 @app.get("/api/admin/images")
-async def api_admin_images(request: Request, limit: int = 50, offset: int = 0):
-    """分页列出全部图片（含创建者 IP 和 GitHub 用户信息）。"""
+async def api_admin_images(request: Request, limit: int = 50, offset: int = 0, name: str = ""):
+    """分页列出全部图片（含创建者 IP 和 GitHub 用户信息）。
+    name：可选图片名/路径关键字过滤（不区分大小写）。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     if not OUTPUT_DIR.exists():
         return {"items": [], "total": 0, "output_dir": str(OUTPUT_DIR), "exists": False}
     base = OUTPUT_DIR.resolve()
+    _name_q = (name or "").strip().lower()
     items: List[Tuple[float, str, int]] = []
     MAX_SCAN = 50000
     scanned = 0
@@ -7649,6 +7671,8 @@ async def api_admin_images(request: Request, limit: int = 50, offset: int = 0):
         try:
             rel = p.resolve().relative_to(base).as_posix()
         except Exception:
+            continue
+        if _name_q and _name_q not in rel.lower():
             continue
         try:
             st = p.stat()
@@ -9546,14 +9570,14 @@ async def api_admin_gen_log_thumb(request: Request, path: str):
 # ==================== 删除记录（回收站） ====================
 
 @app.get("/api/admin/deletion-log")
-async def api_admin_deletion_log(request: Request, search: str = "",
+async def api_admin_deletion_log(request: Request, search: str = "", path: str = "",
                                   date_from: float = 0, date_to: float = 0,
                                   limit: int = 60, offset: int = 0):
-    """分页查询删除记录（仅管理员），支持用户名搜索和日期筛选。"""
+    """分页查询删除记录（仅管理员），支持用户名搜索、图片名(path)搜索和日期筛选。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     from urllib.parse import quote
-    log, total = db.query_deletion_log(search.strip(), date_from, date_to, limit, offset)
+    log, total = db.query_deletion_log(search.strip(), date_from, date_to, limit, offset, path.strip())
     for e in log:
         e["sort_ts"] = e.get("deleted_at", 0)
         e["file_url"] = f"/api/output/file?path={quote(e.get('path', ''), safe='')}"

@@ -19,13 +19,16 @@ const filterDateFrom = ref('')
 const filterDateTo = ref('')
 const filterCreator = ref('')
 const filtering = ref(false)
+const nameSearch = ref('')
 
 async function loadImages(reset = true) {
   if (loading.value && !reset) return
   loading.value = true
   try {
     if (reset) { items.value = []; selected.value.clear(); loaded.value = 0 }
-    const r = await api('GET', `/api/admin/images?limit=${pageSize}&offset=${loaded.value}`)
+    let u = `/api/admin/images?limit=${pageSize}&offset=${loaded.value}`
+    if (nameSearch.value.trim()) u += '&name=' + encodeURIComponent(nameSearch.value.trim())
+    const r = await api('GET', u)
     const newItems = r.items || []
     items.value.push(...newItems)
     total.value = r.total || 0
@@ -34,6 +37,9 @@ async function loadImages(reset = true) {
     if (reset) items.value = []
   } finally { loading.value = false }
 }
+
+function searchByName() { loadImages(true) }
+function resetSearch() { nameSearch.value = ''; loadImages(true) }
 
 async function deleteByFilter() {
   const body: any = {}
@@ -90,7 +96,12 @@ onMounted(() => loadImages(true))
 
 <template>
   <div v-if="visible" class="bg-white rounded shadow p-4 mb-4">
-    <div class="flex items-center justify-end mb-2">
+    <div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
+      <div class="flex items-center gap-1">
+        <input v-model="nameSearch" type="text" placeholder="图片名搜索" class="border rounded px-2 py-1 text-xs w-32 outline-none" @keyup.enter="searchByName" />
+        <button @click="searchByName" class="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer border-0">搜索</button>
+        <button @click="resetSearch" class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 cursor-pointer border-0">重置</button>
+      </div>
       <div class="flex gap-2">
         <button @click="toggleAll" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer border-0">全选</button>
         <button v-if="selected.size > 0" @click="deleteSelected" class="text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 cursor-pointer border-0">&#x1F5D1; 删除选中 ({{ selected.size }})</button>

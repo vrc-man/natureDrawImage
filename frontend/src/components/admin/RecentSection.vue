@@ -12,6 +12,7 @@ const bannedSet = ref<Set<string>>(new Set())
 const featuredSet = ref<Set<string>>(new Set())
 const autoEnabled = ref(false)
 const interval = ref(30)
+const nameSearch = ref('')
 let autoTimer: any = null
 
 const shown = computed(() => images.value.length)
@@ -38,12 +39,17 @@ function toggleAuto() {
 async function loadRecent() {
   try {
     await refreshSets()
-    const d = await api('GET', `/api/admin/recent?limit=${pageSize}&offset=${page.value * pageSize}`)
+    let u = `/api/admin/recent?limit=${pageSize}&offset=${page.value * pageSize}`
+    if (nameSearch.value.trim()) u += '&name=' + encodeURIComponent(nameSearch.value.trim())
+    const d = await api('GET', u)
     images.value = d.items || []
     total.value = d.total || 0
     startAuto()
   } catch {}
 }
+
+function searchByName() { page.value = 0; loadRecent() }
+function resetSearch() { nameSearch.value = ''; page.value = 0; loadRecent() }
 
 async function refreshSets() {
   try {
@@ -126,7 +132,12 @@ const pageWindow = computed(() => {
 
 <template>
   <div v-if="visible" class="bg-white rounded shadow p-4 mb-4">
-    <div class="flex items-center justify-end mb-2">
+    <div class="flex items-center justify-between mb-2 gap-2 flex-wrap">
+      <div class="flex items-center gap-1">
+        <input v-model="nameSearch" type="text" placeholder="图片名搜索" class="border rounded px-2 py-1 text-xs w-32 outline-none" @keyup.enter="searchByName" />
+        <button @click="searchByName" class="text-xs px-2 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer border-0">搜索</button>
+        <button @click="resetSearch" class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 cursor-pointer border-0">重置</button>
+      </div>
       <div class="flex gap-2">
         <button @click="resetPage" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer border-0">刷新</button>
         <button @click="toggleAuto"
