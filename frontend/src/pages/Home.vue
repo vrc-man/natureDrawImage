@@ -60,7 +60,18 @@ const onlineCount = ref(0)
 const darkMode = ref(localStorage.getItem('dark') === '1')
 const genNoticeAcked = ref(document.cookie.includes('genNoticeAcked=1'))
 const showGenNoticeModal = ref(false)
-const pendingGen = ref<{direct:string;nl:string;neg:string;w:number;h:number;style:string;char:string}>({direct:'',nl:'',neg:'',w:512,h:768,style:'',char:''})
+interface PendingGen {
+  direct: string
+  nl: string
+  neg: string
+  w: number
+  h: number
+  style: string
+  char: string
+  styleName?: string
+  charNames?: string
+}
+const pendingGen = ref<PendingGen>({direct:'',nl:'',neg:'',w:512,h:768,style:'',char:''})
 
 // Generate page state
 const mode = ref<'txt2img'|'img2img'>('txt2img')
@@ -69,6 +80,13 @@ const negativePrompt = ref(localStorage.getItem('formState_negative_prompt') || 
 const nlPrompt = ref(localStorage.getItem('formState_nl') || '')
 const rewrite = ref(localStorage.getItem('formState_rewrite') === 'true')
 const promptMode = ref(localStorage.getItem('formState_promptMode') || 'tags')
+interface LlmPromptTemplate { id: number; name: string; description?: string }
+const llmTemplates = ref<LlmPromptTemplate[]>([])
+const llmTemplateId = ref(localStorage.getItem('formState_llmTemplateId') || '')
+const selectedTemplateDesc = computed(() => {
+  if (!llmTemplateId.value) return ''
+  return llmTemplates.value.find(t => String(t.id) === llmTemplateId.value)?.description || ''
+})
 const width = ref(parseInt(localStorage.getItem('formState_w') || '512'))
 const height = ref(parseInt(localStorage.getItem('formState_h') || '768'))
 const currentWorkflowPath = ref(localStorage.getItem('currentWorkflow') || '')
@@ -265,6 +283,7 @@ function startAuthedServices() {
 
 async function loadGenerationData() {
   loadResolutions()
+  loadLlmTemplates()
   await loadList()
   // wfDirs 已就绪：若有 fork 暂存路径，此时才能准确判定文生图/图生图
   if (pendingForkPath.value) {
@@ -275,13 +294,14 @@ async function loadGenerationData() {
 }
 
 // ===== Form Persistence =====
-const FORM_FIELDS = ['direct', 'negative_prompt', 'nl', 'rewrite', 'promptMode', 'w', 'h']
-watch([directPrompt, negativePrompt, nlPrompt, rewrite, promptMode, width, height], () => {
+const FORM_FIELDS = ['direct', 'negative_prompt', 'nl', 'rewrite', 'promptMode', 'llmTemplateId', 'w', 'h']
+watch([directPrompt, negativePrompt, nlPrompt, rewrite, promptMode, llmTemplateId, width, height], () => {
   localStorage.setItem('formState_direct', directPrompt.value)
   localStorage.setItem('formState_negative_prompt', negativePrompt.value)
   localStorage.setItem('formState_nl', nlPrompt.value)
   localStorage.setItem('formState_rewrite', String(rewrite.value))
   localStorage.setItem('formState_promptMode', promptMode.value)
+  localStorage.setItem('formState_llmTemplateId', llmTemplateId.value)
   localStorage.setItem('formState_w', String(width.value))
   localStorage.setItem('formState_h', String(height.value))
 })
@@ -356,6 +376,18 @@ async function loadResolutions() {
     if (r.presets) resolutions.value = r.presets
     else if (Array.isArray(r)) resolutions.value = r
   } catch {}
+}
+
+async function loadLlmTemplates() {
+  try {
+    const r = await api<any>('GET', '/api/features/llm-templates')
+    llmTemplates.value = r.templates || []
+    if (llmTemplateId.value && !llmTemplates.value.some(t => String(t.id) === llmTemplateId.value)) {
+      llmTemplateId.value = ''
+    }
+  } catch {
+    llmTemplates.value = []
+  }
 }
 
 // ===== Polling =====
@@ -489,11 +521,14 @@ function prepareGen() {
   const direct = directPrompt.value.trim()
   const nl = nlPrompt.value.trim()
   const neg = negativePrompt.value.trim()
+  const selectedStyleName = localStorage.getItem('currentStyleName') || ''
+  let selectedCharNames: string[] = []
+  try { selectedCharNames = JSON.parse(localStorage.getItem('currentCharacterNames') || '[]') } catch {}
   const style = localStorage.getItem('currentStyle') || ''
   let char = ''
   try { char = JSON.parse(localStorage.getItem('currentCharacters') || '[]').join(', '); } catch {}
   if (!direct && !nl) { showErrorToast('请输入提示词'); return null }
-  return { direct, nl, neg, w: width.value, h: height.value, style, char }
+  return { direct, nl, neg, w: width.value, h: height.value, style, char, styleName: selectedStyleName, charNames: selectedCharNames.join(', ') }
 }
 
 async function startRun() {
@@ -520,7 +555,7 @@ function cancelGenNotice() {
   _isGenerating.value = false
 }
 
-async function actuallyStartRun(g: {direct:string;nl:string;neg:string;w:number;h:number;style:string;char:string;}) {
+async function actuallyStartRun(g: PendingGen) {
   _watchingMode.value = false
   _finishing.value = false
   _doneNotified = false
@@ -555,6 +590,7 @@ async function actuallyStartRun(g: {direct:string;nl:string;neg:string;w:number;
       negative_prompt: g.neg,
       rewrite: rewrite.value,
       prompt_mode: promptMode.value,
+      llm_template_id: llmTemplateId.value ? Number(llmTemplateId.value) : null,
       width: g.w,
       height: g.h,
       style_tags: g.style,
@@ -590,10 +626,20 @@ function handleMsg(m: any) {
     pollMyQueue()
     showToast('⚡ 任务开始执行')
   }
-  else if (m.type === 'llm_start') { llmText.value = ''; progressText.value = '' }
-  else if (m.type === 'llm_chunk') { llmText.value += m.delta }
-  else if (m.type === 'llm_done') {
+  else if (m.type === 'llm_start') {
     llmText.value = ''
+    progressText.value = 'LLM 处理中...'
+    logLines.value.push('🤖 LLM 处理中...')
+  }
+  else if (m.type === 'llm_chunk') {
+    llmText.value += m.delta
+    if (!progressText.value) progressText.value = 'LLM 处理中...'
+  }
+  else if (m.type === 'llm_done') {
+    const parts: string[] = []
+    if (m.text) parts.push(`POSITIVE:\n${m.text}`)
+    if (m.negative) parts.push(`NEGATIVE:\n${m.negative}`)
+    if (parts.length) llmText.value = parts.join('\n\n')
     if (m.negative && !negativePrompt.value.trim()) negativePrompt.value = m.negative
   }
   else if (m.type === 'progress') {
@@ -609,6 +655,7 @@ function handleMsg(m: any) {
   else if (m.type === 'done') {
     logLines.value.push(`✅ 完成，共 ${m.count} 张`)
     progressText.value = '完成，请到「我的」查看'
+    llmText.value = ''
     showToast('✅ 生图完成，请到「我的」查看')
     sound.play('done')
     sound.sendNotification('✅ 生图完成，请到「我的」查看')
@@ -619,6 +666,7 @@ function handleMsg(m: any) {
   }
   else if (m.type === 'error') {
     logLines.value.push('❌ ' + m.message)
+    llmText.value = ''
     sound.play('error')
     progressText.value = '失败: ' + m.message
     sound.sendNotification('❌ ' + m.message)
@@ -925,6 +973,11 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                     <option value="tags">Danbooru Tags</option>
                     <option value="natural">自然英文</option>
                   </select>
+                  <select v-model="llmTemplateId" :disabled="!llmTemplates.length" class="text-xs border border-pink-200 rounded-lg px-2 py-1 bg-white text-gray-600 outline-none focus:border-pink-400 disabled:bg-gray-50 disabled:text-gray-400" title="自定义模板只影响 LLM 生成最终正负提示词，不改变生图日志记录方式">
+                    <option value="">内置提示词规则</option>
+                    <option v-for="tpl in llmTemplates" :key="tpl.id" :value="String(tpl.id)" :title="tpl.description || ''">{{ tpl.name }}</option>
+                  </select>
+                  <div v-if="selectedTemplateDesc" class="w-full text-xs text-gray-400 -mt-1">📝 {{ selectedTemplateDesc }}</div>
                   <div class="flex flex-wrap gap-1.5" id="res-presets">
                     <button v-for="r in resolutions" :key="r.w+'-'+r.h" @click="width=r.w;height=r.h" :title="r.w+'×'+r.h"
                       class="text-xs px-2 py-1 rounded-lg border transition-all cursor-pointer"

@@ -21,6 +21,18 @@ def register_all(app) -> None:
     except Exception as e:
         print(f"[features] health_check 加载失败: {type(e).__name__}: {e}")
 
+    try:
+        from .llm_prompt_templates import router as llm_tpl_router
+        routers.append(("llm-templates", llm_tpl_router))
+    except Exception as e:
+        print(f"[features] llm_prompt_templates 加载失败: {type(e).__name__}: {e}")
+
+    try:
+        from .access_keys import router as access_keys_router
+        routers.append(("access-keys", access_keys_router))
+    except Exception as e:
+        print(f"[features] access_keys 加载失败: {type(e).__name__}: {e}")
+
     for name, r in routers:
         try:
             app.include_router(r)

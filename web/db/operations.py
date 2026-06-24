@@ -91,6 +91,27 @@ def update_user_role(github_id: str, role: str) -> None:
     invalidate_users_cache()
 
 
+def update_user_info(github_id: str, login: str = "", email: str = "", avatar_url: str = "") -> None:
+    """更新用户非角色信息，原子单行。"""
+    if not login and not email and not avatar_url:
+        return
+    parts = []
+    params = []
+    if login:
+        parts.append("login=?")
+        params.append(login)
+    if email:
+        parts.append("email=?")
+        params.append(email)
+    if avatar_url:
+        parts.append("avatar_url=?")
+        params.append(avatar_url)
+    params.append(github_id)
+    _db().execute(f"UPDATE users SET {','.join(parts)} WHERE github_id=?", params)
+    _db().commit()
+    invalidate_users_cache()
+
+
 def ban_user(github_id: str, reason: str = "") -> None:
     _db().execute("UPDATE users SET banned=1, banned_reason=? WHERE github_id=?", (reason, github_id))
     _db().commit()
@@ -150,6 +171,22 @@ def delete_session(token: str) -> None:
     invalidate_sessions_cache()
 
 
+def clear_sessions_for_user(github_id: str) -> None:
+    """清除指定用户的所有会话。"""
+    _db().execute("DELETE FROM sessions WHERE github_id=?", (github_id,))
+    _db().commit()
+    invalidate_sessions_cache()
+
+
+def revoke_user_sessions(github_id: str, as_admin: bool = False) -> None:
+    """撤销/恢复用户的所有会话（原子单行，修改 access_granted 并清空 claimed_key）。"""
+    _db().execute(
+        "UPDATE sessions SET access_granted=?, claimed_key='' WHERE github_id=?",
+        (1 if as_admin else 0, github_id))
+    _db().commit()
+    invalidate_sessions_cache()
+
+
 def cleanup_expired_sessions(now: float) -> int:
     r = _db().execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
     _db().commit()
@@ -196,6 +233,11 @@ def save_access_keys(data: Dict[str, Any]) -> None:
 
 def increment_key_usage(key: str) -> None:
     _db().execute("UPDATE access_keys SET used_count = used_count + 1 WHERE key=?", (key,))
+    _db().commit()
+
+
+def decrement_key_usage(key: str) -> None:
+    _db().execute("UPDATE access_keys SET used_count = MAX(0, used_count - 1) WHERE key=?", (key,))
     _db().commit()
 
 
@@ -611,6 +653,27 @@ def get_all_gen_log_file_paths() -> set:
     return paths
 
 
+def load_gen_logs_path_user_map() -> Dict[str, tuple]:
+    """返回 {file_path: (github_id, login)} 映射，用于缓存路径归属查找。"""
+    result = {}
+    try:
+        rows = _db().execute(
+            "SELECT github_id, login, file_paths FROM gen_logs WHERE file_paths != '[]'"
+        ).fetchall()
+        for r in rows:
+            try:
+                fps = json.loads(r["file_paths"] or "[]")
+            except Exception:
+                continue
+            for fp in (fps if isinstance(fps, list) else []):
+                fp = str(fp).replace("\\", "/")
+                if fp and fp not in result:
+                    result[fp] = (r["github_id"], r["login"] or r["github_id"])
+    except Exception:
+        pass
+    return result
+
+
 def query_gen_logs(login: str = "", date_from: float = 0, date_to: float = 0,
                    limit: int = 20, offset: int = 0, path: str = "") -> Tuple[List[Dict], int]:
     conditions = []
@@ -845,6 +908,45 @@ def dismiss_reports_for_image_paths(image_paths: set) -> int:
         list(image_paths))
     _db().commit()
     return cur.rowcount
+
+
+def cleanup_resolved_and_orphan_reports() -> int:
+    """GC 用：清理已处理的举报 + 图片已不存在的幽灵举报。返回清理总数。"""
+    # 1. 清理已处理举报
+    removed = _db().execute("DELETE FROM reports WHERE status != 'pending'").rowcount
+    # 2. 查找幽灵举报（图已不存在的 pending 举报）
+    stale_pending = _db().execute("SELECT id FROM reports WHERE status='pending'").fetchall()
+    # 图片存在性由调用方（GC）判断，这里只返回 pending 行数，让调用方筛选
+    # 这里保持原来的逻辑：operations 层不做文件系统操作
+    return removed  # 幽灵删图由调用方读取后传 path 调 dismiss_reports_for_image_paths
+
+
+def cleanup_orphan_pending_reports() -> list[dict]:
+    """GC 用：返回所有待处理举报的记录（id / image_path），供调用方判断文件是否存在。"""
+    rows = _db().execute("SELECT id, image_path FROM reports WHERE status='pending'").fetchall()
+    return [dict(r) for r in rows]
+
+
+def count_pending_reports(reporter_ip: str) -> int:
+    """查询某 IP 的待处理举报数。"""
+    r = _db().execute(
+        "SELECT COUNT(*) as c FROM reports WHERE reporter_ip=? AND status='pending'",
+        (reporter_ip,)).fetchone()
+    return r["c"] if r else 0
+
+
+def has_pending_report(image_path: str, reporter_ip: str) -> bool:
+    """检查是否已举报过同一图片。"""
+    r = _db().execute(
+        "SELECT 1 FROM reports WHERE image_path=? AND reporter_ip=? AND status='pending'",
+        (image_path, reporter_ip)).fetchone()
+    return r is not None
+
+
+def update_email_user_role(email: str, role: str) -> None:
+    """同步角色到 email_users 表。"""
+    _db().execute("UPDATE email_users SET role=? WHERE email=?", (role, email))
+    _db().commit()
 
 
 def dismiss_reports_by_reporter_ip(reporter_ip: str, exclude_id: str = "") -> int:

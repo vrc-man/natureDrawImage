@@ -89,3 +89,22 @@ def thumb_cache_path(output_rel: str) -> Path | None:
 def thumb_exists(output_rel: str) -> bool:
     tp = thumb_cache_path(output_rel)
     return bool(tp and tp.is_file())
+
+
+# ── 中间人注入容器（app.py 启动时回填，features 绝不 import app）──
+# 设计：features 模块需要 app.py 的"数据函数 / 锁 / session 函数"时，
+#   不直接 import app（避免循环依赖），而是通过这里取 app 注入的引用。
+#   数据库读写永远走 app.py 注入的同一批函数 → 单一入口、共享锁、不争抢。
+_app_ctx: dict = {}
+
+
+def set_app_ctx(fns: dict) -> None:
+    """app.py 启动时调用，把数据函数 / 锁 / session 函数注入进来。"""
+    _app_ctx.update(fns)
+
+
+def ctx(name: str):
+    """取注入项。未注入时抛错（仅表示该模块暂不可用，绝不影响数据库）。"""
+    if name not in _app_ctx:
+        raise RuntimeError(f"features 依赖未注入: {name}（app.py 未调用 set_app_ctx 或顺序错误）")
+    return _app_ctx[name]

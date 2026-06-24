@@ -9,6 +9,7 @@ import StyleSection from '@/components/admin/StyleSection.vue'
 import CharacterSection from '@/components/admin/CharacterSection.vue'
 import WfMetaSection from '@/components/admin/WfMetaSection.vue'
 import LlmSection from '@/components/admin/LlmSection.vue'
+import LlmTemplateSection from '@/components/admin/LlmTemplateSection.vue'
 import LimitsSection from '@/components/admin/LimitsSection.vue'
 import MaintSection from '@/components/admin/MaintSection.vue'
 import CheadSection from '@/components/admin/CheadSection.vue'
@@ -54,6 +55,7 @@ const groups: GroupDef[] = [
     id: 'system', title: '⚙️ 系统设置',
     sections: [
       { key: 'llm', title: '🤖 LLM 配置', comp: LlmSection },
+      { key: 'llm-templates', title: '🧩 LLM 提示词模板', comp: LlmTemplateSection },
       { key: 'limits', title: '⚙️ 限流配置', comp: LimitsSection },
       { key: 'maint', title: '🔧 维护模式', comp: MaintSection },
       { key: 'chead', title: '📎 自定义 Head', comp: CheadSection },
