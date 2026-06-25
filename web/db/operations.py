@@ -315,15 +315,7 @@ def save_user_image(github_id: str, path: str, prompt: str) -> None:
     _db().execute(
         "INSERT INTO user_images (github_id, path, prompt, time) VALUES (?,?,?,?)",
         (github_id, path, prompt[:100], _time_module.time()))
-    # 每人最多 10000 条
-    count = _db().execute(
-        "SELECT COUNT(*) as c FROM user_images WHERE github_id=?", (github_id,)).fetchone()["c"]
-    if count > 10000:
-        oldest = _db().execute(
-            "SELECT id FROM user_images WHERE github_id=? ORDER BY time ASC LIMIT ?",
-            (github_id, count - 10000)).fetchall()
-        for o in oldest:
-            _db().execute("DELETE FROM user_images WHERE id=?", (o["id"],))
+    # 每人最多 10000 条，放到 GC 里统一清理
     _db().commit()
 
 
@@ -473,6 +465,30 @@ def mark_images_deleted(github_id: str, paths: List[str], *, owner_github_id: st
     except Exception:
         conn.execute("ROLLBACK")
         raise
+
+
+# ═══════════════════════════════════════════
+# 用户图片清理（由 GC 统一调用，不在每次写入时触发）
+# ═══════════════════════════════════════════
+
+def prune_user_images(limit_per_user: int = 10000) -> int:
+    """清理所有用户超出 limit_per_user 的最旧记录。返回删除总数。"""
+    total = 0
+    rows = _db().execute("SELECT DISTINCT github_id FROM user_images").fetchall()
+    for r in rows:
+        gid = r["github_id"]
+        count = _db().execute("SELECT COUNT(*) as c FROM user_images WHERE github_id=?", (gid,)).fetchone()["c"]
+        if count > limit_per_user:
+            excess = count - limit_per_user
+            oldest = _db().execute(
+                "SELECT id FROM user_images WHERE github_id=? ORDER BY time ASC LIMIT ?",
+                (gid, excess)).fetchall()
+            for o in oldest:
+                _db().execute("DELETE FROM user_images WHERE id=?", (o["id"],))
+                total += 1
+    if total:
+        _db().commit()
+    return total
 
 
 # ═══════════════════════════════════════════

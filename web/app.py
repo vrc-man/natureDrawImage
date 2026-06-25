@@ -1807,9 +1807,12 @@ async def _run_gc():
     if gc_deleted > 0:
         cleaned["backup_dir"] = str(gc_backup_dir)
 
-    # 4b. 清理 user_images.json 中磁盘已不存在的死记录
+    # 4b. 清理 user_images 中磁盘已不存在的死记录 + 超限最旧记录
     try:
         await _cleanup_stale_user_images()
+        pruned = db.prune_user_images(10000)
+        if pruned:
+            print(f"[gc] user_images 清理超限记录: {pruned} 条")
         cleaned["stale_user_images"] = 1
     except Exception:
         cleaned["stale_user_images"] = 0
