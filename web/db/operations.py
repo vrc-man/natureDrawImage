@@ -495,7 +495,7 @@ def prune_user_images(limit_per_user: int = 10000) -> int:
 # 生图日志
 # ═══════════════════════════════════════════
 
-_GEN_LOG_MAX = 500000  # 50万条上限
+_GEN_LOG_MAX = 500000  # 50万条上限（仅 save_gen_log 写入时自动清理，默认不动）
 
 
 def load_gen_logs() -> Dict[str, Dict]:
