@@ -2216,6 +2216,7 @@ async def _start_gc():
     try:
         _conn = get_db()
         _conn.execute("PRAGMA synchronous=NORMAL")
+        _conn.execute("PRAGMA journal_size_limit=65536")
     except Exception:
         pass
     data_dir = Path(__file__).parent
