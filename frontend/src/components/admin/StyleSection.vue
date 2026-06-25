@@ -60,6 +60,7 @@ const batchUploading = ref(false)
 const batchResult = ref('')
 const batchDetails = ref<BatchThumbItem[]>([])
 const styleCategories = ref<string[]>(['SD', 'Anima', '重绘', '反推', '通用'])
+const catInput = ref('')
 
 function batchUpload() {
   const inp = document.createElement('input')
@@ -99,6 +100,20 @@ onMounted(load)
     </div>
     <div>
       <p class="text-xs text-gray-500 mb-2">配置可选画风。tags 为必填项（英文 Danbooru 标签），名称为可选别名（不填则前端直接显示 tags）。用户选择画风后，tags 会被追加到最终 prompt 最前面。</p>
+	      <!-- 画风分类标签管理 -->
+	      <div class="mb-3 border rounded p-3 bg-blue-50">
+	        <div class="text-sm font-semibold mb-2">📁 画风分类标签管理</div>
+	        <div class="flex flex-wrap gap-1 mb-2">
+	          <span v-for="cat in styleCategories" :key="cat" class="inline-flex items-center text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">
+	            {{ cat }}
+	            <button @click="styleCategories = styleCategories.filter(c => c !== cat)" class="ml-1 text-[10px] opacity-60 hover:opacity-100 border-0 bg-transparent cursor-pointer">✕</button>
+	          </span>
+	        </div>
+	        <div class="flex gap-2">
+	          <input v-model="catInput" @keydown.enter="styleCategories.push(catInput); catInput = ''" type="text" placeholder="输入新分类名称" class="flex-1 border rounded px-2 py-1 text-xs outline-none" />
+	          <button @click="styleCategories.push(catInput); catInput = ''" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs border-0 cursor-pointer">添加分类</button>
+	        </div>
+	      </div>
       <div class="mb-3 border rounded p-3 bg-amber-50">
         <div class="flex items-center gap-2 flex-wrap">
           <button @click="batchUpload" :disabled="batchUploading" class="text-xs px-3 py-1 bg-amber-500 text-white rounded hover:bg-amber-600 border-0 cursor-pointer disabled:opacity-50">⬆️ 批量上传缩略图</button>
