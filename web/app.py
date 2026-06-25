@@ -2212,6 +2212,12 @@ async def _run_clean_empty_dirs() -> int:
 async def _start_gc():
     # 初始化 SQLite 数据库 + 首次运行时从 JSON 迁移
     init_db()
+    # WAL 模式安全写入（平衡性能与数据安全，强制掉电时可接受丢失最多 1 秒数据）
+    try:
+        _conn = get_db()
+        _conn.execute("PRAGMA synchronous=NORMAL")
+    except Exception:
+        pass
     data_dir = Path(__file__).parent
     try:
         migrate_from_json(data_dir)
