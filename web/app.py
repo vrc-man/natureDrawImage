@@ -2265,6 +2265,12 @@ async def _shutdown():
             except Exception:
                 pass
     _save_queue_state()
+    # SQLite WAL 刷盘
+    try:
+        get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        get_db().commit()
+    except Exception:
+        pass
     if _gc_task:
         _gc_task.cancel()
     if _http_client and not _http_client.is_closed:
