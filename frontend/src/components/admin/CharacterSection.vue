@@ -58,6 +58,8 @@ async function uploadThumb(i: number) {
 
 const batchUploading = ref(false)
 const batchResult = ref('')
+const charCategories = ref<string[]>(['VOCALOID', '原创', '东方', '碧蓝航线', '原神', '明日方舟'])
+const catInput = ref('')
 const batchDetails = ref<BatchThumbItem[]>([])
 
 function batchUpload() {
@@ -98,6 +100,20 @@ onMounted(load)
     </div>
     <div>
       <p class="text-xs text-gray-500 mb-2">配置可选角色。tags 为必填项（英文 Danbooru 标签），名称为可选别名（不填则前端直接显示 tags）。用户选择角色后，tags 会被追加到 prompt 中画风之后。</p>
+	      <!-- 角色分类标签管理 -->
+	      <div class="mb-3 border rounded p-3 bg-blue-50">
+	        <div class="text-sm font-semibold mb-2">📁 角色分类标签管理</div>
+	        <div class="flex flex-wrap gap-1 mb-2">
+	          <span v-for="cat in charCategories" :key="cat" class="inline-flex items-center text-xs px-2 py-0.5 rounded bg-gray-200 text-gray-700">
+	            {{ cat }}
+	            <button @click="charCategories = charCategories.filter(c => c !== cat)" class="ml-1 text-[10px] opacity-60 hover:opacity-100 border-0 bg-transparent cursor-pointer">✕</button>
+	          </span>
+	        </div>
+	        <div class="flex gap-2">
+	          <input v-model="catInput" @keydown.enter="charCategories.push(catInput); catInput = ''" type="text" placeholder="输入新分类名称" class="flex-1 border rounded px-2 py-1 text-xs outline-none" />
+	          <button @click="charCategories.push(catInput); catInput = ''" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 text-xs border-0 cursor-pointer">添加分类</button>
+	        </div>
+	      </div>
       <div class="mb-3 border rounded p-3 bg-amber-50">
         <div class="flex items-center gap-2 flex-wrap">
           <button @click="batchUpload" :disabled="batchUploading" class="text-xs px-3 py-1 bg-amber-500 text-white rounded hover:bg-amber-600 border-0 cursor-pointer disabled:opacity-50">⬆️ 批量上传缩略图</button>
@@ -128,7 +144,20 @@ onMounted(load)
           <div class="flex flex-col gap-1 flex-1 text-sm">
             <textarea v-model="c.tags" @input="debounce()" rows="2" placeholder="英文 tags（必填，逗号分隔）" class="border rounded px-2 py-1 font-mono text-xs resize-none outline-none"></textarea>
             <input v-model="c.name" @input="debounce()" placeholder="别名（可选，不填则显示 tags）" class="border rounded px-2 py-1 outline-none" />
-            <input v-model="c.category" @input="debounce()" placeholder="分类（可选，空=未分类）" class="border rounded px-2 py-1 text-xs outline-none" />
+                        <!-- 分类标签：点选 -->
+            <div class="flex flex-wrap items-center gap-1">
+              <span class="text-[11px] text-gray-400 shrink-0">分类：</span>
+              <button
+                v-for="cat in charCategories"
+                :key="cat"
+                type="button"
+                @click="c.category = c.category === cat ? '' : cat; debounce()"
+                class="text-[11px] px-2 py-0.5 rounded-full border cursor-pointer transition-colors"
+                :class="c.category === cat
+                  ? 'bg-blue-500 text-white border-blue-500'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-blue-500'"
+              >{{ cat }}</button>
+            </div>
           </div>
           <div class="flex flex-col gap-1">
             <button @click="move(i, -1)" :disabled="i === 0" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 border-0 cursor-pointer disabled:opacity-50">▲</button>
