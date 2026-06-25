@@ -6391,10 +6391,32 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
         await emit(ws, {"type": "log", "message": f"[1/4] 加载工作流 {path}"})
         data = await get_workflow(path)
     prompt_dict, positive_ref, negative_ref = workflow_to_prompt_api(data)
-    if not positive_ref:
-        await emit(ws, {"type": "error", "message": "工作流不兼容：未找到 CLIPTextEncode 节点，请确认该工作流支持文生图/图生图提示词注入"})
-        return
-    node_id, input_name = positive_ref
+
+    # 自动检测：是否洗图类工作流（按文件名关键词跳过提示词注入）
+    _is_cleanup_workflow = bool(path and ("洗图" in path or "clean" in path.lower()))
+    # 自动检测：工作流是否自带 LLM（如洗图/反推类，不需要外部提示词注入）
+    _has_internal_llm = any(
+        n.get("type", "").lower().startswith("llama_cpp")
+        for n in (data if isinstance(data, dict) else {}).get("nodes", [])
+    )
+    if _is_cleanup_workflow or _has_internal_llm:
+        await emit(ws, {"type": "log", "message": "检测到工作流自带 LLM，跳过提示词注入，仅处理图片输入"})
+        neg_text = req.negative_prompt.strip()
+        is_img2img = bool(req.image1_name or req.image2_name or req.image3_name)
+        _skip_prompt_inject = True
+        # 自带 LLM 的工作流即使 positive_ref 为空也继续（不需要注入提示词）
+        if not positive_ref:
+            await emit(ws, {"type": "log", "message": "工作流无外部CLIPTextEncode引用（自有LLM处理提示词）"})
+            node_id, input_name = None, None
+        else:
+            node_id, input_name = positive_ref
+    else:
+        _skip_prompt_inject = False
+        if not positive_ref:
+            await emit(ws, {"type": "error", "message": "工作流不兼容：未找到 CLIPTextEncode 节点，请确认该工作流支持文生图/图生图提示词注入"})
+            return
+        node_id, input_name = positive_ref
+
 
     sep = "\n" if req.prompt_mode == "natural" else ", "
 
@@ -6466,35 +6488,39 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
         sd_prompt = _join_positive_parts(positive_prefix, req.direct_prompt.strip())
         await emit(ws, {"type": "log", "message": "[2/4] 跳过 LLM"})
 
-    if not sd_prompt.strip():
-        await emit(ws, {"type": "error", "message": "最终 prompt 为空"})
-        return
+    # 自带 LLM 的工作流：不覆盖 CLIPTextEncode，跳过后续注入流程
+    if _skip_prompt_inject:
+        sd_prompt = ""
+        # 跳过 prompt 注入、负面注入、分辨率覆盖，但继续执行种子随机化和 SaveImage 前缀
+    else:
+        if not sd_prompt.strip():
+            await emit(ws, {"type": "error", "message": "最终 prompt 为空"})
+            return
+        prompt_dict[node_id]["inputs"][input_name] = sd_prompt
 
-    prompt_dict[node_id]["inputs"][input_name] = sd_prompt
+        neg_text = req.negative_prompt.strip() or (llm_negative if req.nl_prompt else "")
+        if negative_ref and neg_text:
+            if negative_ref == positive_ref:
+                await emit(ws, {"type": "log", "message": "正负指向同一节点，跳过负面注入"})
+            else:
+                neg_node_id, neg_input_name = negative_ref
+                prompt_dict[neg_node_id]["inputs"][neg_input_name] = neg_text
 
-    neg_text = req.negative_prompt.strip() or (llm_negative if req.nl_prompt else "")
-    if negative_ref and neg_text:
-        if negative_ref == positive_ref:
-            await emit(ws, {"type": "log", "message": "正负指向同一节点，跳过负面注入"})
-        else:
-            neg_node_id, neg_input_name = negative_ref
-            prompt_dict[neg_node_id]["inputs"][neg_input_name] = neg_text
-
-    # 图生图：默认保持原图尺寸，除非用户勾选注入预设
-    is_img2img = bool(req.image1_name or req.image2_name or req.image3_name)
-    if req.width and req.height and req.width > 0 and req.height > 0:
-        if is_img2img and not req.img2img_use_preset:
-            await emit(ws, {"type": "log", "message": "图生图保持原图尺寸（未勾选注入分辨率）"})
-        else:
-            presets = _resolutions.get("presets", [])
-            allowed = {(p["w"], p["h"]) for p in presets}
-            rw, rh = int(req.width), int(req.height)
-            if (rw, rh) not in allowed:
-                await emit(ws, {"type": "error", "message": f"不支持的分辨率 {rw}x{rh}，请从预设中选择"})
-                return
-            n = apply_resolution(prompt_dict, rw, rh)
-            if n:
-                await emit(ws, {"type": "log", "message": f"分辨率覆盖为 {rw}x{rh} ({n} 个节点)"})
+        # 图生图：默认保持原图尺寸，除非用户勾选注入预设
+        is_img2img = bool(req.image1_name or req.image2_name or req.image3_name)
+        if req.width and req.height and req.width > 0 and req.height > 0:
+            if is_img2img and not req.img2img_use_preset:
+                await emit(ws, {"type": "log", "message": "图生图保持原图尺寸（未勾选注入分辨率）"})
+            else:
+                presets = _resolutions.get("presets", [])
+                allowed = {(p["w"], p["h"]) for p in presets}
+                rw, rh = int(req.width), int(req.height)
+                if (rw, rh) not in allowed:
+                    await emit(ws, {"type": "error", "message": f"不支持的分辨率 {rw}x{rh}，请从预设中选择"})
+                    return
+                n = apply_resolution(prompt_dict, rw, rh)
+                if n:
+                    await emit(ws, {"type": "log", "message": f"分辨率覆盖为 {rw}x{rh} ({n} 个节点)"})
 
     for nid, ndata in prompt_dict.items():
         if ndata.get("class_type") == "KSampler":
