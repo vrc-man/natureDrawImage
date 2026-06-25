@@ -366,6 +366,14 @@ def init_db():
         except sqlite3.OperationalError as e:
             print(f"[schema] 跳过: {e}")
     db.commit()
+    # 确保 PRAGMA 生效（即使 get_db() 已缓存的连接也刷新）
+    try:
+        db.execute("PRAGMA synchronous=NORMAL")
+        db.execute("PRAGMA journal_size_limit=65536")
+        db.execute("PRAGMA busy_timeout=30000")
+        db.execute("PRAGMA foreign_keys=ON")
+    except Exception:
+        pass
     # 完整性检查
     try:
         result = db.execute("PRAGMA integrity_check").fetchone()
