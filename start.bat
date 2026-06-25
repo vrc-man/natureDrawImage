@@ -33,9 +33,9 @@ echo ========================================
 :loop
 echo.
 echo [%time%] Starting...
-echo   Ctrl+C = graceful shutdown (wait for current task), Y=exit completely
-.venv\Scripts\python.exe -m uvicorn web.app:app --host 127.0.0.1 --port 8080 --forwarded-allow-ips 127.0.0.1 --timeout-graceful-shutdown 30
+echo   Ctrl+C = graceful shutdown (wait for current task, then safe exit)
+.venv\Scripts\python.exe -m uvicorn web.app:app --host 127.0.0.1 --port 8080 --forwarded-allow-ips 127.0.0.1 --timeout-graceful-shutdown 60
 
-echo [%time%] Stopped, restarting in 3s...
+echo [%time%] Exited cleanly, restarting in 3s...
 timeout /t 3 /nobreak >nul
 goto loop
