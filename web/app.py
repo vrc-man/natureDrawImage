@@ -6392,8 +6392,11 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
         data = await get_workflow(path)
     prompt_dict, positive_ref, negative_ref = workflow_to_prompt_api(data)
 
-    # 自动检测：是否洗图类工作流（按文件名关键词跳过提示词注入）
-    _is_cleanup_workflow = bool(path and ("洗图" in path or "clean" in path.lower()))
+    # 自动检测：是否洗图/高清放大/纯处理类工作流（按文件名关键词跳过提示词注入）
+    _path_lower = path.lower() if path else ""
+    _is_cleanup_workflow = bool(path and any(
+        kw in _path_lower for kw in ("洗图", "高清", "clean", "upscale", "放大", "重绘", "转真人")
+    ))
     # 自动检测：工作流是否自带 LLM（如洗图/反推类，不需要外部提示词注入）
     _has_internal_llm = any(
         n.get("type", "").lower().startswith("llama_cpp")
