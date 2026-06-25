@@ -34,6 +34,8 @@ def get_db() -> sqlite3.Connection:
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.execute("PRAGMA foreign_keys=ON")
         _conn.execute("PRAGMA busy_timeout=30000")
+        _conn.execute("PRAGMA synchronous=NORMAL")
+        _conn.execute("PRAGMA journal_size_limit=65536")
     return _conn
 
 
