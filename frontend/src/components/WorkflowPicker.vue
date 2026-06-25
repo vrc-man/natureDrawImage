@@ -89,7 +89,10 @@ function _highlight(text: string, q: string) {
       <div class="mx-4 w-full max-w-[calc(100vw_-_10px)] bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]">
         <div class="flex items-center justify-between p-5 pb-3 border-b border-pink-100 shrink-0">
           <h3 class="text-lg font-bold text-gray-700">📋 选择工作流</h3>
-          <button @click="open = false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">✕</button>
+          <div class="flex items-center gap-2">
+            <button @click="loadAll()" class="text-gray-400 hover:text-pink-500 text-sm cursor-pointer border-0 bg-transparent px-2 py-1 rounded-lg hover:bg-pink-50 transition-all" title="刷新列表">🔄</button>
+            <button @click="open = false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">✕</button>
+          </div>
         </div>
         <div class="px-5 pt-2 pb-1">
           <input v-model="search" placeholder="搜索工作流..." class="w-full border border-pink-200 rounded-xl px-4 py-2 text-sm outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 transition-all box-border" />
