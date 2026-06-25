@@ -12,7 +12,7 @@ let timer: any = null
 async function load() {
   try {
     const d = await api('GET', '/api/admin/styles')
-    items.value = (d.styles || []).map((s: any) => ({ name: s.name || '', tags: s.tags || '', image: s.image || '' }))
+    items.value = (d.styles || []).map((s: any) => ({ name: s.name || '', tags: s.tags || '', image: s.image || '', category: s.category || '' }))
   } catch {}
 }
 
@@ -59,6 +59,7 @@ async function uploadThumb(i: number) {
 const batchUploading = ref(false)
 const batchResult = ref('')
 const batchDetails = ref<BatchThumbItem[]>([])
+const styleCategories = ref<string[]>(['SD', 'Anima', '重绘', '反推', '通用'])
 
 function batchUpload() {
   const inp = document.createElement('input')
@@ -128,6 +129,20 @@ onMounted(load)
           <div class="flex flex-col gap-1 flex-1 text-sm">
             <textarea v-model="s.tags" @input="debounce()" rows="2" placeholder="英文 tags（必填，逗号分隔）" class="border rounded px-2 py-1 font-mono text-xs resize-none outline-none"></textarea>
             <input v-model="s.name" @input="debounce()" placeholder="别名（可选，不填则显示 tags）" class="border rounded px-2 py-1 outline-none" />
+                        <!-- 分类标签：点选 -->
+            <div class="flex flex-wrap items-center gap-1">
+              <span class="text-[11px] text-gray-400 shrink-0">分类：</span>
+              <button
+                v-for="cat in styleCategories"
+                :key="cat"
+                type="button"
+                @click="s.category = s.category === cat ? '' : cat; debounce()"
+                class="text-[11px] px-2 py-0.5 rounded-full border cursor-pointer transition-colors"
+                :class="s.category === cat
+                  ? 'bg-blue-500 text-white border-blue-500'
+                  : 'bg-white text-gray-500 border-gray-200 hover:border-blue-300 hover:text-blue-500'"
+              >{{ cat }}</button>
+            </div>
           </div>
           <div class="flex flex-col gap-1">
             <button @click="move(i, -1)" :disabled="i === 0" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 border-0 cursor-pointer disabled:opacity-50">▲</button>
