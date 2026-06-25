@@ -10,11 +10,21 @@ const characters = ref<CharacterItem[]>([])
 const styleSearch = ref('')
 const charSearch = ref('')
 const charCatExpanded = ref<Record<string, boolean>>({})
+const styleCatExpanded = ref<Record<string, boolean>>({})
 
 const filteredStyles = computed(() => {
   if (!styleSearch.value) return styles.value
   const q = styleSearch.value.toLowerCase()
   return styles.value.filter(s => (s.name || s.tags).toLowerCase().includes(q))
+})
+const styleGroups = computed(() => {
+  const map: Record<string, StyleItem[]> = {}
+  for (const s of filteredStyles.value) {
+    const cat = s.category || '未分类'
+    if (!map[cat]) map[cat] = []
+    map[cat].push(s)
+  }
+  return map
 })
 const filteredChars = computed(() => {
   if (!charSearch.value) return characters.value
@@ -180,11 +190,19 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
               <h4 class="flex items-center gap-1.5 text-sm font-bold text-gray-700 mb-1.5">🖌️ 画风</h4>
               <input v-model="styleSearch" placeholder="搜索画风..." class="w-full border border-pink-200 rounded-xl px-2 py-1 text-xs outline-none focus:border-pink-400 box-border" style="font-size:12px;padding:4px 8px" />
               <div class="char-picker-grid flex flex-wrap gap-1 mt-2">
-                <div v-for="s in filteredStyles" :key="s.tags" :class="['style-card', { selected: selectedStyle === s.tags }]" @click="selectStyle(s)">
-                  <img v-if="s.image" :src="'/api/style_thumbnail?name=' + encodeURIComponent(s.image)" class="style-thumb" loading="lazy" />
-                  <div v-else class="style-thumb flex items-center justify-center text-gray-300" style="font-size:20px;width:64px;height:64px">🖌️</div>
-                  <span class="style-label">{{ s.name || s.tags }}</span>
-                </div>
+                <template v-for="(items, cat) in styleGroups" :key="cat">
+                  <div class="wf-cat-title flex items-center gap-1 cursor-pointer select-none text-xs font-semibold text-gray-400 mt-2 mb-1 w-full" @click="styleCatExpanded[cat] = !styleCatExpanded[cat]">
+                    <span>{{ styleCatExpanded[cat] !== false ? '▾' : '▸' }}</span>
+                    {{ cat }}
+                  </div>
+                  <div v-show="styleCatExpanded[cat] !== false" class="flex flex-wrap gap-1 w-full">
+                    <div v-for="s in items" :key="s.tags" :class="['style-card', { selected: selectedStyle === s.tags }]" @click="selectStyle(s)">
+                      <img v-if="s.image" :src="'/api/style_thumbnail?name=' + encodeURIComponent(s.image)" class="style-thumb" loading="lazy" />
+                      <div v-else class="style-thumb flex items-center justify-center text-gray-300" style="font-size:20px;width:64px;height:64px">🖌️</div>
+                      <span class="style-label">{{ s.name || s.tags }}</span>
+                    </div>
+                  </div>
+                </template>
               </div>
             </div>
           </div>

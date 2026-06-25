@@ -25,6 +25,7 @@ export interface StyleItem {
   tags: string
   image?: string
   thumb?: string
+  category?: string
 }
 
 export interface CharacterItem {

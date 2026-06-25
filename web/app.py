@@ -727,7 +727,7 @@ def _load_styles() -> List[Dict[str, Any]]:
         if not isinstance(d, list):
             return []
         return [
-            {"name": str(s.get("name", "")), "tags": str(s.get("tags", "")), "image": str(s.get("image", ""))}
+            {"name": str(s.get("name", "")), "tags": str(s.get("tags", "")), "image": str(s.get("image", "")), "category": str(s.get("category", "")).strip()}
             for s in d if isinstance(s, dict) and str(s.get("tags", "")).strip()
         ]
     except Exception:
@@ -8287,6 +8287,7 @@ async def api_admin_styles_set(request: Request, payload: Dict[str, Any]):
             "name": str(s.get("name", "")).strip(),
             "tags": tags,
             "image": str(s.get("image", "")).strip(),
+            "category": str(s.get("category", "")).strip(),
         })
     if not await _save_styles(cleaned):
         raise HTTPException(500, "写入 styles.json 失败")
