@@ -372,6 +372,7 @@ def init_db():
         db.execute("PRAGMA journal_size_limit=65536")
         db.execute("PRAGMA busy_timeout=30000")
         db.execute("PRAGMA foreign_keys=ON")
+        db.execute("PRAGMA journal_mode=WAL")
     except Exception:
         pass
     # 完整性检查
