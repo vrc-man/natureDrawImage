@@ -35,22 +35,25 @@ export function copyText(text: string, btn: HTMLElement | null) {
     }
   }).catch(() => {})
 }
+const THUMBNAIL_SIZE = 512
+const THUMBNAIL_QUALITY = 0.9
+
 export async function resizeImage(file: File): Promise<File> {
   return new Promise((resolve, reject) => {
     const img = new Image(), url = URL.createObjectURL(file)
     img.onload = () => {
       URL.revokeObjectURL(url)
       const c = document.createElement('canvas')
-      c.width = 128; c.height = 128
+      c.width = THUMBNAIL_SIZE; c.height = THUMBNAIL_SIZE
       // 保持宽高比的居中裁剪（cover），避免非正方形原图被拉伸变形
       const side = Math.min(img.width, img.height)
       const sx = (img.width - side) / 2
       const sy = (img.height - side) / 2
-      c.getContext('2d')!.drawImage(img, sx, sy, side, side, 0, 0, 128, 128)
+      c.getContext('2d')!.drawImage(img, sx, sy, side, side, 0, 0, THUMBNAIL_SIZE, THUMBNAIL_SIZE)
       c.toBlob(b => {
         if (b) resolve(new File([b], file.name.replace(/\.\w+$/i, '.webp'), { type: 'image/webp' }))
         else reject(new Error('缩略图生成失败'))
-      }, 'image/webp', 0.85)
+      }, 'image/webp', THUMBNAIL_QUALITY)
     }
     img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')) }
     img.src = url

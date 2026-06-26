@@ -3,6 +3,8 @@ CLAUDE.md
 
 # ── 环境 & 编辑器 ──
 .env
+.env.*
+!.env.example
 claude.bat
 start-bianxie.bat
 .venv
@@ -54,8 +56,19 @@ thumb_cache
 backups
 gcbackups
 
-# ── 临时文件 ──
+# ── 临时文件 / 备份 / 数据库导出 ──
 *.tmp
+*.bak
+*.log
+*.sql
+*.dump
+*.backup
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+*.p12
+*.pfx
 
 # ── Playwright ──
 .playwright-mcp
@@ -67,6 +80,7 @@ web/rate_limits.json
 
 # ── 个人工具 ──
 tools/
+web_output.txt
 
 # ── opencode 本地配置 ──
 .opencode/
@@ -75,6 +89,13 @@ opencode.json
 # ── 压缩包/归档 ──
 *.7z
 *.zip
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.bz2
+*.xz
 
 # ── 未使用的 CDN 资源 ──
 web/static/tailwind.min.css

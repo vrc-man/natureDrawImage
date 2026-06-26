@@ -1,7 +1,7 @@
 """
 ComfyUI 网页版控制台
 
-启动: uvicorn web.app:app --host 0.0.0.0 --port 8080 --reload
+启动: uvicorn web.app:app --host 0.0.0.0 --port 23601 --reload
 
 Modified 2026-05 by vrc-man | Based on afoim/natureDrawImage (AGPLv3)
 https://github.com/vrc-man/natureDrawImage
@@ -44,7 +44,7 @@ LMS_HOST = os.environ.get("LMS_HOST", "127.0.0.1")
 LMS_PORT = int(os.environ.get("LMS_PORT", "1234"))
 
 WEB_HOST = os.environ.get("WEB_HOST", "127.0.0.1")
-WEB_PORT = int(os.environ.get("WEB_PORT", "8080"))
+WEB_PORT = int(os.environ.get("WEB_PORT", "23601"))
 
 # ComfyUI 输出目录（只读浏览）
 OUTPUT_DIR_STR = os.environ.get("OUTPUT_DIR_STR", "")
@@ -135,7 +135,7 @@ from pydantic import BaseModel, field_validator
 # SQLite 数据层（替代 JSON 文件读写）
 import sys as _sys2
 _sys2.path.insert(0, str(Path(__file__).parent))
-from db.schema import get_db, init_db, migrate_from_json, config_get, config_set, config_get_section
+from db.schema import get_db, init_db, migrate_from_json, config_get, config_set, config_get_section, db_lock
 from db import operations as db
 
 # PIL 安全限制：防止解压炸弹（默认 ~178M 像素太大，限制为 100M 像素）
@@ -277,8 +277,9 @@ async def _save_user_image(github_id: str, rel_path: str, prompt: str = "") -> N
         return
     try:
         db.save_user_image(github_id, rel_path, prompt)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[ERROR] save_user_image 失败: gid={github_id} path={rel_path} {type(e).__name__}: {e}")
+        raise
 
 # ---------------- 用户 / 会话管理 ----------------
 # 用户数据：{github_id: {login, email, avatar_url, role, banned, banned_reason, created_at}}
@@ -1641,7 +1642,7 @@ async def _run_gc():
         except Exception:
             orphan_ids.append(r["id"])
     if orphan_ids:
-        db.dismiss_reports_for_image_paths(set(orphan_ids))
+        db.dismiss_reports_by_ids(orphan_ids)
     cleaned["resolved_reports"] = removed_reports + len(orphan_ids)
 
     # 2. 清理内存中过期的限流条目
@@ -1810,7 +1811,7 @@ async def _run_gc():
     # 4b. 清理 user_images 中磁盘已不存在的死记录 + 超限最旧记录
     try:
         await _cleanup_stale_user_images()
-        pruned = db.prune_user_images(10000)
+        pruned = db.prune_user_images()
         if pruned:
             print(f"[gc] user_images 清理超限记录: {pruned} 条")
         cleaned["stale_user_images"] = 1
@@ -1903,12 +1904,13 @@ async def _backup_data_files():
                           key=lambda d: d.name, reverse=True)
         for old in existing[5:]:
             _shutil.rmtree(old, ignore_errors=True)
-        # 同时备份 SQLite 数据库
-        db_src = Path(__file__).parent / 'db' / 'natureDrawImage.db'
-        if db_src.is_file():
-            await asyncio.to_thread(db.backup_database, str(backup_subdir / 'natureDrawImage.db'))
+        # MySQL 热备（mysqldump --single-transaction 在线不锁表）
+        try:
+            await asyncio.to_thread(db.backup_database, str(backup_subdir / "natureDrawImage.sql"))
             copied += 1
-            print(f'[backup] SQLite 数据库已备份')
+            print(f'[backup] MySQL 数据库已备份 (mysqldump)')
+        except Exception as bak_e:
+            print(f"[backup] MySQL 备份失败: {type(bak_e).__name__}: {bak_e}")
         if copied:
             print(f"[backup] 已备份 {copied} 个文件到 {backup_subdir.name}")
     except Exception as e:
@@ -2218,8 +2220,10 @@ async def _start_gc():
     data_dir = Path(__file__).parent
     try:
         migrate_from_json(data_dir)
-    except Exception:
-        pass  # 已迁移则跳过
+    except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
+        print(f"[startup] migrate_from_json 失败: {type(e).__name__}: {e}")
 
     global _gc_task
     _safe_task(_cleanup_expired_access_keys(), "cleanup_expired_access_keys")
@@ -2270,8 +2274,9 @@ async def _shutdown():
     _save_queue_state()
     # SQLite WAL 刷盘
     try:
-        get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        get_db().commit()
+        with db_lock():
+            get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            get_db().commit()
     except Exception:
         pass
     if _gc_task:
@@ -5119,8 +5124,9 @@ async def api_admin_force_restart(request: Request):
         pass
     # 等待 SQLite WAL 刷盘 + 异步任务收尾
     try:
-        get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        get_db().commit()
+        with db_lock():
+            get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            get_db().commit()
     except Exception:
         pass
     await asyncio.sleep(1)
@@ -5143,8 +5149,9 @@ async def api_admin_graceful_restart(request: Request):
         waited += 2
     # 安全退出
     try:
-        get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        get_db().commit()
+        with db_lock():
+            get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            get_db().commit()
     except Exception:
         pass
     await asyncio.sleep(1)
@@ -5534,6 +5541,11 @@ def _check_csrf(request: Request) -> bool:
     # 对管理员路径：强制要求 Origin（不允许无头请求）
     if not origin and path.startswith(("/admin", "/api/admin")):
         return False
+    # 本地回环地址直接放行（兼容本地开发与线上域名不一致）
+    if origin and ("127.0.0.1" in origin or "localhost" in origin):
+        return True
+    if referer and ("127.0.0.1" in referer or "localhost" in referer):
+        return True
     # 非浏览器客户端通常不发送 Origin/Referer（如 curl、脚本），放行
     # SameSite=Lax Cookie 已在浏览器层面提供 CSRF 防护
     if not origin and not referer:
@@ -8388,8 +8400,11 @@ async def api_admin_resolutions_set(request: Request, payload: Dict[str, Any]):
     return {"ok": True, **data}
 
 
+THUMBNAIL_SIZE = 512
+
+
 def _verify_and_resize_thumb(dest: Path, dest_dir: Path, safe_name: str, ext: str) -> str:
-    """同步执行 PIL 校验+缩放到 128×128 WebP（跑在线程池）。"""
+    """同步执行 PIL 校验+缩放到 512×512 WebP（跑在线程池）。"""
     from PIL import Image as _PILImage, UnidentifiedImageError
     try:
         img = _PILImage.open(dest)
@@ -8402,11 +8417,11 @@ def _verify_and_resize_thumb(dest: Path, dest_dir: Path, safe_name: str, ext: st
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
         w, h = img.size
-        if w != 128 or h != 128 or ext != ".webp":
-            img = img.resize((128, 128), _PILImage.LANCZOS)
+        if w != THUMBNAIL_SIZE or h != THUMBNAIL_SIZE or ext != ".webp":
+            img = img.resize((THUMBNAIL_SIZE, THUMBNAIL_SIZE), _PILImage.LANCZOS)
             from io import BytesIO as _BytesIO
             buf = _BytesIO()
-            img.save(buf, format="WEBP", quality=80, optimize=True)
+            img.save(buf, format="WEBP", quality=90, optimize=True)
             dest.unlink(missing_ok=True)
             safe_name = safe_name[: safe_name.rfind(".")] + ".webp"
             dest = dest_dir / safe_name

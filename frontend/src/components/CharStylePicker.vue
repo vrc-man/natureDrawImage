@@ -176,7 +176,7 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
                   <div v-show="charCatExpanded[cat] !== false" class="flex flex-wrap gap-1 w-full">
                     <div v-for="c in items" :key="c.tags" :class="['style-card', { selected: selectedChars.includes(c.tags) }]" @click="toggleChar(c)">
                       <img v-if="c.image" :src="'/api/character_thumbnail?name=' + encodeURIComponent(c.image)" class="style-thumb" loading="lazy" />
-                      <div v-else class="style-thumb flex items-center justify-center text-gray-300" style="font-size:20px;width:64px;height:64px">🎭</div>
+                      <div v-else class="style-thumb style-thumb-placeholder flex items-center justify-center text-gray-300">🎭</div>
                       <span class="style-label">{{ c.name || c.tags }}</span>
                     </div>
                   </div>
@@ -198,7 +198,7 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
                   <div v-show="styleCatExpanded[cat] !== false" class="flex flex-wrap gap-1 w-full">
                     <div v-for="s in items" :key="s.tags" :class="['style-card', { selected: selectedStyle === s.tags }]" @click="selectStyle(s)">
                       <img v-if="s.image" :src="'/api/style_thumbnail?name=' + encodeURIComponent(s.image)" class="style-thumb" loading="lazy" />
-                      <div v-else class="style-thumb flex items-center justify-center text-gray-300" style="font-size:20px;width:64px;height:64px">🖌️</div>
+                      <div v-else class="style-thumb style-thumb-placeholder flex items-center justify-center text-gray-300">🖌️</div>
                       <span class="style-label">{{ s.name || s.tags }}</span>
                     </div>
                   </div>

@@ -144,6 +144,21 @@ const customSounds = ref({
   error: { data: localStorage.getItem('customSound_error_data') || '', name: localStorage.getItem('customSound_error_name') || '' },
   queued: { data: localStorage.getItem('customSound_queued_data') || '', name: localStorage.getItem('customSound_queued_name') || '' },
 })
+type HomeBgMode = 'tile' | 'stretch'
+const savedHomeBgMode = localStorage.getItem('homeBgImageMode')
+const homeBgImageData = ref(localStorage.getItem('homeBgImageData') || '')
+const homeBgImageName = ref(localStorage.getItem('homeBgImageName') || '')
+const homeBgImageMode = ref<HomeBgMode>(savedHomeBgMode === 'tile' || savedHomeBgMode === 'stretch' ? savedHomeBgMode : 'stretch')
+const homeBgImageScale = ref(parseInt(localStorage.getItem('homeBgImageScale') || '100'))
+const homeBgError = ref('')
+const homeBackgroundStyle = computed(() => {
+  if (!homeBgImageData.value) return {}
+  const scaleSet = localStorage.getItem('homeBgImageScale') !== null
+  const scale = Math.min(300, Math.max(10, Number.isFinite(homeBgImageScale.value) ? homeBgImageScale.value : 100))
+  return homeBgImageMode.value === 'tile'
+    ? { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'repeat', backgroundSize: scaleSet ? `${scale}% auto` : 'auto', backgroundPosition: 'top left' }
+    : { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'no-repeat', backgroundSize: scaleSet ? `${scale}% auto` : '100% 100%', backgroundPosition: 'center center' }
+})
 
 // Password change
 const cpOld = ref(''), cpNew = ref(''), cpConfirm = ref(''), cpStatus = ref('')
@@ -155,14 +170,31 @@ const accessKeySuccess = ref('')
 const keyExpired = ref(false)
 const uiZoom = ref(parseFloat(localStorage.getItem('uiZoom') || '1'))
 const compactLayout = ref(localStorage.getItem('compactLayout') === 'true')
+const pickerThumbPercent = ref(parseInt(localStorage.getItem('pickerThumbPercent') || '25'))
+const pickerThumbSize = computed(() => Math.round(300 * pickerThumbPercent.value / 100))
 
 function setUiZoom(v: number) {
-  uiZoom.value = v; localStorage.setItem('uiZoom', String(v))
-  document.documentElement.style.zoom = String(v)
+  const next = Math.min(1.3, Math.max(0.5, Number.isFinite(v) ? v : 1))
+  uiZoom.value = next; localStorage.setItem('uiZoom', String(next))
+  document.documentElement.style.zoom = String(next)
 }
 function setCompactLayout(v: boolean) {
   compactLayout.value = v; localStorage.setItem('compactLayout', String(v))
   document.documentElement.classList.toggle('compact', v)
+}
+function setPickerThumbPercent(v: number) {
+  const next = Math.min(100, Math.max(20, Number.isFinite(v) ? v : 25))
+  const thumb = Math.round(300 * next / 100)
+  pickerThumbPercent.value = next
+  localStorage.setItem('pickerThumbPercent', String(next))
+  document.documentElement.style.setProperty('--picker-thumb-percent', String(next))
+  document.documentElement.style.setProperty('--picker-thumb-size', `${thumb}px`)
+  document.documentElement.style.setProperty('--picker-card-height', `${thumb + 8}px`)
+}
+function setHomeBgImageScale(v: number) {
+  const next = Math.min(300, Math.max(10, Number.isFinite(v) ? v : 100))
+  homeBgImageScale.value = next
+  localStorage.setItem('homeBgImageScale', String(next))
 }
 
 // Resolution presets
@@ -233,6 +265,7 @@ onMounted(async () => {
   // 恢复 UI 设置
   if (uiZoom.value !== 1) document.documentElement.style.zoom = String(uiZoom.value)
   if (compactLayout.value) document.documentElement.classList.add('compact')
+  setPickerThumbPercent(pickerThumbPercent.value)
   // 检查密钥过期状态 + 初始化通知圆点
   if (userStore.currentUser?.key_status === 'expired') keyExpired.value = true
   if (userStore.currentUser?.unread_notifications) notifyUnreadCount.value = userStore.currentUser.unread_notifications
@@ -559,6 +592,7 @@ async function actuallyStartRun(g: PendingGen) {
   _watchingMode.value = false
   _finishing.value = false
   _doneNotified = false
+  _hasRunningBefore = false
   _isGenerating.value = true
   progressPct.value = 0
   resultImages.value = []
@@ -784,6 +818,71 @@ function handleSoundUpload(type: string) {
   inp.click()
 }
 function resetCustomSound(type: string) { saveCustomSound(type, '', '') }
+function saveHomeBgMode(mode: HomeBgMode) {
+  homeBgImageMode.value = mode
+  localStorage.setItem('homeBgImageMode', mode)
+}
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('read failed'))
+    reader.readAsDataURL(file)
+  })
+}
+function loadImage(data: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('image decode failed'))
+    img.src = data
+  })
+}
+async function compressHomeBgImage(file: File): Promise<string> {
+  const data = await readFileAsDataUrl(file)
+  const img = await loadImage(data)
+  const maxSide = 2048
+  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height))
+  const width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale))
+  const height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width; canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('canvas unsupported')
+  ctx.drawImage(img, 0, 0, width, height)
+  const webp = canvas.toDataURL('image/webp', 0.85)
+  if (webp.startsWith('data:image/webp')) return webp
+  return canvas.toDataURL('image/jpeg', 0.85)
+}
+function handleHomeBgUpload() {
+  homeBgError.value = ''
+  const inp = document.createElement('input')
+  inp.type = 'file'; inp.accept = 'image/*'
+  inp.onchange = async () => {
+    const f = inp.files?.[0]
+    if (!f) return
+    if (!f.type.startsWith('image/')) { homeBgError.value = '请选择图片文件'; return }
+    try {
+      const data = await compressHomeBgImage(f)
+      localStorage.setItem('homeBgImageData', data)
+      localStorage.setItem('homeBgImageName', f.name)
+      localStorage.setItem('homeBgImageMode', homeBgImageMode.value)
+      homeBgImageData.value = data
+      homeBgImageName.value = f.name
+      homeBgError.value = ''
+    } catch {
+      homeBgError.value = '背景保存失败，请换一张更小的图片重试；原背景已保留'
+    }
+  }
+  inp.click()
+}
+function resetHomeBgImage() {
+  homeBgImageData.value = ''
+  homeBgImageName.value = ''
+  homeBgError.value = ''
+  localStorage.removeItem('homeBgImageData')
+  localStorage.removeItem('homeBgImageName')
+}
 
 async function changePassword() {
   cpStatus.value = ''
@@ -864,8 +963,10 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 </script>
 
 <template>
-  <div class="h-full w-full" :class="{dark:darkMode}">
-    <div class="h-full w-full flex flex-col" style="background:linear-gradient(135deg,#fef2f4,#fdf2f8,#faf5ff,#fff1f2,#fef2f4);background-size:400% 400%;animation:bgShift 30s ease infinite">
+  <div class="home-root h-full w-full" :class="{dark:darkMode}">
+    <div class="home-bg-base"></div>
+    <div v-if="homeBgImageData" class="home-bg-image" :style="homeBackgroundStyle"></div>
+    <div class="home-shell h-full w-full flex flex-col">
       <!-- Header -->
       <div class="flex items-center justify-between px-4 pt-3 pb-1 shrink-0 fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md">
         <div class="flex items-center gap-2">
@@ -1177,7 +1278,55 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                     <span>🔍 界面缩放</span>
                     <span>{{ Math.round(uiZoom * 100) }}%</span>
                   </div>
-                  <input type="range" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @input="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-full accent-pink-500 h-1 cursor-pointer" />
+                  <div class="flex items-center gap-2">
+                    <input type="range" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @input="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                    <input type="number" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @change="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                    <span class="text-xs text-gray-400 shrink-0">%</span>
+                  </div>
+                </div>
+                <!-- 选择缩略图大小 -->
+                <div class="px-3 py-2">
+                  <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                    <span>🖼️ 选择缩略图大小</span>
+                    <span>{{ pickerThumbPercent }}% · {{ pickerThumbSize }}px</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input type="range" min="20" max="100" step="5" :value="pickerThumbPercent" @input="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                    <input type="number" min="20" max="100" step="5" :value="pickerThumbPercent" @change="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                    <span class="text-xs text-gray-400 shrink-0">%</span>
+                  </div>
+                </div>
+                <!-- 最底层背景图片 -->
+                <div class="px-3 py-2 rounded-xl hover:bg-pink-50 transition-all">
+                  <div class="flex items-center justify-between text-xs text-gray-400 mb-2 gap-2">
+                    <span class="shrink-0">🖼️ 最底层背景图片</span>
+                    <span class="truncate text-right">{{ homeBgImageName || '未设置' }}</span>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                    <button @click="handleHomeBgUpload" class="text-pink-500 hover:underline cursor-pointer border-0 bg-transparent p-0">选择图片</button>
+                    <button @click="resetHomeBgImage" class="text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent p-0">清除</button>
+                    <label class="flex items-center gap-1 cursor-pointer select-none">
+                      <input type="radio" name="home-bg-mode" :checked="homeBgImageMode === 'tile'" @change="saveHomeBgMode('tile')" class="accent-pink-500" />
+                      平铺
+                    </label>
+                    <label class="flex items-center gap-1 cursor-pointer select-none">
+                      <input type="radio" name="home-bg-mode" :checked="homeBgImageMode === 'stretch'" @change="saveHomeBgMode('stretch')" class="accent-pink-500" />
+                      拉伸
+                    </label>
+                  </div>
+                  <div v-if="homeBgImageData" class="mt-2">
+                    <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                      <span>背景图缩放</span>
+                      <span>{{ homeBgImageScale }}%</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <input type="range" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                      <input type="number" min="10" max="300" step="5" :value="homeBgImageScale" @change="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                      <span class="text-xs text-gray-400 shrink-0">%</span>
+                    </div>
+                  </div>
+                  <div class="text-[11px] text-gray-400 mt-1">图片仅保存在当前浏览器，不会上传服务器；大图会自动压缩到最大 2K 后保存</div>
+                  <div v-if="homeBgError" class="text-xs text-red-400 mt-1">{{ homeBgError }}</div>
                 </div>
                 <!-- 布局密度 -->
                 <label class="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-pink-50 cursor-pointer transition-all select-none">
