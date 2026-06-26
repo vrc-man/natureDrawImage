@@ -86,7 +86,6 @@ class SyncTool:
         self.warn_frame.grid(row=0, column=0, columnspan=4, padx=5, pady=(5, 0))
         self.warn_label = Label(self.warn_frame, fg="red", font=("", 10, "bold"), wraplength=680)
         self.warn_label.pack()
-        self._update_warnings()
 
         # SQLite 路径选择
         Label(root, text="SQLite 数据库:").grid(row=1, column=0, sticky=E, padx=5, pady=5)
@@ -152,6 +151,9 @@ class SyncTool:
         root.grid_rowconfigure(7, weight=1)
         root.grid_columnconfigure(1, weight=1)
         self.running = False
+
+        # 启动定时检测（所有控件已创建完成）
+        self._update_warnings()
 
     def _update_warnings(self) -> None:
         web = _check_web_running()
