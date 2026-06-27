@@ -120,7 +120,7 @@ onMounted(load)
           <span class="text-xs text-gray-500">{{ batchResult }}</span>
         </div>
         <p class="text-[11px] text-gray-500 mt-1.5">
-          可一次选多张图片。文件名（去扩展名）需与角色<b>别名完全一致且区分大小写</b>。未填别名的角色无法批量匹配，请手动上传。
+          可一次选多张图片。文件名（去扩展名）需与角色<b>别名完全一致且区分大小写</b>。未填别名的角色无法批量匹配，请手动上传。上传后会自动生成 512×512 WebP 缩略图。
         </p>
         <div v-if="batchDetails.length" class="mt-2 max-h-40 overflow-y-auto text-[11px] space-y-0.5">
           <div v-for="(r, i) in batchDetails" :key="i" class="flex items-center gap-1.5">

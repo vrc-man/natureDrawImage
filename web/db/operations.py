@@ -14,7 +14,7 @@ import secrets
 import hashlib as _hashlib
 from typing import Dict, Any, List, Optional, Tuple
 
-from db.schema import get_db, config_get, config_set, config_get_section
+from db.schema import get_db, config_get, config_set, config_get_section, db_lock, transaction
 
 _db = get_db  # 函数别名
 
@@ -23,12 +23,17 @@ def backup_database(dst_path: str) -> None:
     """使用 SQLite 在线备份 API 生成事务一致快照，包含 WAL 中的最新数据。"""
     dst = sqlite3.connect(dst_path)
     try:
-        _db().backup(dst)
+        with db_lock():
+            _db().backup(dst)
     finally:
         dst.close()
 
 # ── 写穿透缓存（内存 dict + TTL 兜底） ──
 _CACHE_TTL = 60
+
+# ── 日志表上限（超出时自动清理最旧记录） ──
+_GEN_LOG_MAX = 500000       # 生图日志最多保留 50 万条
+_DELETION_LOG_MAX = 500000  # 删除日志最多保留 50 万条
 _cache: Dict[str, Any] = {}
 _cache_ts: Dict[str, float] = {}
 
@@ -253,6 +258,19 @@ def cleanup_expired_access_keys(now: float) -> List[str]:
     return stale
 
 
+def cleanup_disabled_access_keys(now: float) -> List[str]:
+    """删除禁用缓冲期已结束的密钥，返回被删除的 key。"""
+    rows = _db().execute(
+        "SELECT key FROM access_keys WHERE disabled_at > 0 AND disabled_at+2 < ?",
+        (now,)).fetchall()
+    stale = [r["key"] for r in rows]
+    if stale:
+        placeholders = ",".join(["?"] * len(stale))
+        _db().execute(f"DELETE FROM access_keys WHERE key IN ({placeholders})", stale)
+        _db().commit()
+    return stale
+
+
 def add_access_key(key: str, used_by: str, created_at: float,
                    disabled_at: int, expires_at: float,
                    max_uses: int, used_count: int) -> None:
@@ -315,7 +333,7 @@ def save_user_image(github_id: str, path: str, prompt: str) -> None:
     _db().execute(
         "INSERT INTO user_images (github_id, path, prompt, time) VALUES (?,?,?,?)",
         (github_id, path, prompt[:100], _time_module.time()))
-    # 每人最多 10000 条，放到 GC 里统一清理
+    # 每人最多 100000 条，放到 GC 里统一清理
     _db().commit()
 
 
@@ -343,16 +361,16 @@ def remove_user_images_by_paths(paths: set) -> int:
     return r.rowcount
 
 
+
 def cleanup_stale_user_images(existing_paths_fn) -> int:
     """删除文件已不存在的 user_images 记录，返回删除数。"""
     rows = _db().execute("SELECT id, path FROM user_images").fetchall()
     removed = 0
-    for r in rows:
-        if not existing_paths_fn(r["path"]):
-            _db().execute("DELETE FROM user_images WHERE id=?", (r["id"],))
-            removed += 1
-    if removed:
-        _db().commit()
+    with transaction() as conn:
+        for r in rows:
+            if not existing_paths_fn(r["path"]):
+                conn.execute("DELETE FROM user_images WHERE id=?", (r["id"],))
+                removed += 1
     return removed
 
 
@@ -368,31 +386,26 @@ def backfill_user_images_from_gen_logs(exists_fn=None) -> int:
     rows = _db().execute(
         "SELECT github_id, prompt, file_paths, created_at FROM gen_logs WHERE file_paths != '[]'"
     ).fetchall()
-    for r in rows:
-        gid = r["github_id"]
-        prompt = (r["prompt"] or "")[:100]
-        ts = r["created_at"] or _time_module.time()
-        try:
-            fps = _json.loads(r["file_paths"])
-        except Exception:
-            continue
-        for fp in (fps if isinstance(fps, list) else []):
-            fp = str(fp).replace("\\", "/")
-            if fp and fp not in existing:
-                if exists_fn and not exists_fn(fp):
-                    continue
-                _db().execute(
-                    "INSERT INTO user_images (github_id, path, prompt, time) VALUES (?,?,?,?)",
-                    (gid, fp, prompt, ts))
-                existing.add(fp)
-                added += 1
-    _db().commit()
+    with transaction() as conn:
+        for r in rows:
+            gid = r["github_id"]
+            prompt = (r["prompt"] or "")[:100]
+            ts = r["created_at"] or _time_module.time()
+            try:
+                fps = _json.loads(r["file_paths"])
+            except Exception:
+                continue
+            for fp in (fps if isinstance(fps, list) else []):
+                fp = str(fp).replace("\\", "/")
+                if fp and fp not in existing:
+                    if exists_fn and not exists_fn(fp):
+                        continue
+                    conn.execute(
+                        "INSERT INTO user_images (github_id, path, prompt, time) VALUES (?,?,?,?)",
+                        (gid, fp, prompt, ts))
+                    existing.add(fp)
+                    added += 1
     return added
-
-
-# ═══════════════════════════════════════════
-# 删除标记
-# ═══════════════════════════════════════════
 
 def load_deleted_images() -> Dict[str, List[str]]:
     rows = _db().execute("SELECT * FROM deleted_images").fetchall()
@@ -416,17 +429,12 @@ def remove_deleted_image(github_id: str, path: str) -> None:
 
 def save_deleted_images(data: Dict[str, List[str]]) -> None:
     """全量写入（仅迁移/启动清理等批量场景使用，有事务保护）。"""
-    _db().execute("BEGIN IMMEDIATE")
-    try:
-        _db().execute("DELETE FROM deleted_images")
+    with transaction(immediate=True) as conn:
+        conn.execute("DELETE FROM deleted_images")
         for gid, paths in data.items():
             for p in paths:
-                _db().execute(
+                conn.execute(
                     "INSERT INTO deleted_images (github_id, path) VALUES (?,?)", (gid, p))
-        _db().commit()
-    except Exception:
-        _db().execute("ROLLBACK")
-        raise
 
 
 def mark_images_deleted(github_id: str, paths: List[str], *, owner_github_id: str = "") -> int:
@@ -441,9 +449,7 @@ def mark_images_deleted(github_id: str, paths: List[str], *, owner_github_id: st
     if not clean_paths:
         return 0
     now = _time_module.time()
-    conn = _db()
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with transaction(immediate=True) as conn:
         for p in clean_paths:
             conn.execute(
                 "INSERT OR IGNORE INTO deleted_images (github_id, path, marked_at) VALUES (?,?,?)",
@@ -460,43 +466,31 @@ def mark_images_deleted(github_id: str, paths: List[str], *, owner_github_id: st
         conn.execute(
             f"UPDATE reports SET status='resolved', resolved_action='dismiss' WHERE status='pending' AND image_path IN ({placeholders})",
             clean_paths)
-        conn.commit()
-        return len(clean_paths)
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
+    return len(clean_paths)
 
 
 # ═══════════════════════════════════════════
 # 用户图片清理（由 GC 统一调用，不在每次写入时触发）
 # ═══════════════════════════════════════════
 
-def prune_user_images(limit_per_user: int = 10000) -> int:
+
+def prune_user_images(limit_per_user: int = 100000) -> int:
     """清理所有用户超出 limit_per_user 的最旧记录。返回删除总数。"""
     total = 0
     rows = _db().execute("SELECT DISTINCT github_id FROM user_images").fetchall()
-    for r in rows:
-        gid = r["github_id"]
-        count = _db().execute("SELECT COUNT(*) as c FROM user_images WHERE github_id=?", (gid,)).fetchone()["c"]
-        if count > limit_per_user:
-            excess = count - limit_per_user
-            oldest = _db().execute(
-                "SELECT id FROM user_images WHERE github_id=? ORDER BY time ASC LIMIT ?",
-                (gid, excess)).fetchall()
-            for o in oldest:
-                _db().execute("DELETE FROM user_images WHERE id=?", (o["id"],))
-                total += 1
-    if total:
-        _db().commit()
+    with transaction() as conn:
+        for r in rows:
+            gid = r["github_id"]
+            count = conn.execute("SELECT COUNT(*) as c FROM user_images WHERE github_id=?", (gid,)).fetchone()["c"]
+            if count > limit_per_user:
+                excess = count - limit_per_user
+                oldest = conn.execute(
+                    "SELECT id FROM user_images WHERE github_id=? ORDER BY time ASC LIMIT ?",
+                    (gid, excess)).fetchall()
+                for o in oldest:
+                    conn.execute("DELETE FROM user_images WHERE id=?", (o["id"],))
+                    total += 1
     return total
-
-
-# ═══════════════════════════════════════════
-# 生图日志
-# ═══════════════════════════════════════════
-
-_GEN_LOG_MAX = 500000  # 50万条上限（仅 save_gen_log 写入时自动清理，默认不动）
-
 
 def load_gen_logs() -> Dict[str, Dict]:
     rows = _db().execute("SELECT * FROM gen_logs ORDER BY created_at DESC").fetchall()
@@ -627,6 +621,103 @@ def get_gen_logs_date_range() -> Tuple[float, float]:
     return (r["min_d"] or 0, r["max_d"] or 0) if r else (0, 0)
 
 
+def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0) -> dict:
+    """生图排行榜：前三名的总数 + 24h分布 + 每日分布，一次查出。"""
+    # 区间总生图数
+    sql_total = "SELECT SUM(count) as c FROM gen_logs WHERE status='success'"
+    params_total: list = []
+    if date_from:
+        sql_total += " AND created_at>=?"
+        params_total.append(date_from)
+    if date_to:
+        sql_total += " AND created_at<?"
+        params_total.append(date_to)
+    r_total = _db().execute(sql_total, params_total).fetchone()
+    total_count = r_total["c"] or 0 if r_total else 0
+
+    # 排行榜前三名
+    sql_top = "SELECT login, github_id, SUM(count) as gen_count FROM gen_logs WHERE status='success'"
+    params_top: list = []
+    if date_from:
+        sql_top += " AND created_at>=?"
+        params_top.append(date_from)
+    if date_to:
+        sql_top += " AND created_at<?"
+        params_top.append(date_to)
+    sql_top += " GROUP BY login, github_id ORDER BY gen_count DESC LIMIT ?"
+    params_top.append(limit)
+    rows = [dict(r) for r in _db().execute(sql_top, params_top).fetchall()]
+
+    if not rows:
+        return {"total": total_count, "items": []}
+
+    logins = [r["login"] for r in rows]
+    placeholders = ",".join("?" * len(logins))
+
+    # 24h 分布
+    sql_hourly = (
+        "SELECT login, CAST(strftime('%H',created_at,'unixepoch') AS INTEGER) as h, "
+        "SUM(count) as c FROM gen_logs "
+        f"WHERE status='success' AND login IN ({placeholders})"
+    )
+    params_hourly = list(logins)
+    if date_from:
+        sql_hourly += " AND created_at>=?"
+        params_hourly.append(date_from)
+    if date_to:
+        sql_hourly += " AND created_at<?"
+        params_hourly.append(date_to)
+    sql_hourly += " GROUP BY login, h"
+    hourly_rows = _db().execute(sql_hourly, params_hourly).fetchall()
+
+    # 每日分布
+    sql_daily = (
+        "SELECT login, date(created_at,'unixepoch') as d, SUM(count) as c FROM gen_logs "
+        f"WHERE status='success' AND login IN ({placeholders})"
+    )
+    params_daily = list(logins)
+    if date_from:
+        sql_daily += " AND created_at>=?"
+        params_daily.append(date_from)
+    if date_to:
+        sql_daily += " AND created_at<?"
+        params_daily.append(date_to)
+    sql_daily += " GROUP BY login, d"
+    daily_rows = _db().execute(sql_daily, params_daily).fetchall()
+
+    # 组装
+    hourly_map: dict = {}
+    for r in hourly_rows:
+        hourly_map.setdefault(r["login"], {})[r["h"]] = r["c"]
+    daily_map: dict = {}
+    for r in daily_rows:
+        daily_map.setdefault(r["login"], {})[r["d"]] = r["c"]
+
+    items = []
+    for i, r in enumerate(rows):
+        login = r["login"]
+        h_data = hourly_map.get(login, {})
+        hourly = [h_data.get(h, 0) for h in range(24)]
+        d_data = daily_map.get(login, {})
+        peak_day = max(d_data, key=d_data.get) if d_data else ""
+        peak_day_count = d_data.get(peak_day, 0) if peak_day else 0
+        peak_hour = max(range(24), key=lambda x: hourly[x]) if sum(hourly) > 0 else -1
+        peak_hour_count = hourly[peak_hour] if peak_hour >= 0 else 0
+        items.append({
+            "rank": i + 1,
+            "login": login,
+            "github_id": r["github_id"],
+            "gen_count": r["gen_count"],
+            "hourly": hourly,
+            "peak_day": peak_day,
+            "peak_day_count": peak_day_count,
+            "peak_hour": peak_hour,
+            "peak_hour_count": peak_hour_count,
+        })
+
+    return {"total": total_count, "items": items}
+
+
 def find_gen_log_by_file_path(file_path: str) -> Optional[Dict]:
     rows = _db().execute("SELECT * FROM gen_logs WHERE file_paths LIKE ?", (f'%{file_path}%',)).fetchall()
     for r in rows:
@@ -639,22 +730,21 @@ def find_gen_log_by_file_path(file_path: str) -> Optional[Dict]:
     return None
 
 
+
 def clean_gen_logs_by_file_paths(deleted_paths: set) -> int:
     """删除所有 file_paths 已全部被删的日志。"""
     all_logs = _db().execute("SELECT log_id, file_paths FROM gen_logs").fetchall()
     removed = 0
-    for r in all_logs:
-        try:
-            fps = set(json.loads(r["file_paths"] or "[]"))
-        except Exception:
-            fps = set()
-        if fps and fps.issubset(deleted_paths):
-            _db().execute("DELETE FROM gen_logs WHERE log_id=?", (r["log_id"],))
-            removed += 1
-    if removed:
-        _db().commit()
+    with transaction() as conn:
+        for r in all_logs:
+            try:
+                fps = set(json.loads(r["file_paths"] or "[]"))
+            except Exception:
+                fps = set()
+            if fps and fps.issubset(deleted_paths):
+                conn.execute("DELETE FROM gen_logs WHERE log_id=?", (r["log_id"],))
+                removed += 1
     return removed
-
 
 def get_all_gen_log_file_paths() -> set:
     """返回所有 gen_logs 中引用的文件路径集合，用于判断缩略图是否可清理。"""
@@ -723,10 +813,12 @@ def delete_gen_logs_by_ids(log_ids: list) -> int:
     return cur.rowcount
 
 
+
 def clear_gen_logs(date_from: float = 0, date_to: float = 0, *, unlink_all: bool = False) -> int:
     if unlink_all:
         removed = _db().execute("SELECT COUNT(*) as c FROM gen_logs").fetchone()["c"]
-        _db().execute("DELETE FROM gen_logs")
+        with transaction() as conn:
+            conn.execute("DELETE FROM gen_logs")
     else:
         conditions = []
         params = []
@@ -738,17 +830,9 @@ def clear_gen_logs(date_from: float = 0, date_to: float = 0, *, unlink_all: bool
             params.append(date_to)
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         removed = _db().execute(f"SELECT COUNT(*) as c FROM gen_logs{where}", params).fetchone()["c"]
-        _db().execute(f"DELETE FROM gen_logs{where}", params)
-    _db().commit()
+        with transaction() as conn:
+            conn.execute(f"DELETE FROM gen_logs{where}", params)
     return removed
-
-
-# ═══════════════════════════════════════════
-# 删除日志（回收站）
-# ═══════════════════════════════════════════
-
-_DELETION_LOG_MAX = 500000  # 50万条上限
-
 
 def load_deletion_log() -> List[Dict]:
     rows = _db().execute("SELECT * FROM deletion_logs ORDER BY deleted_at DESC").fetchall()
@@ -927,14 +1011,37 @@ def dismiss_reports_for_image_paths(image_paths: set) -> int:
 
 
 def cleanup_resolved_and_orphan_reports() -> int:
-    """GC 用：清理已处理的举报 + 图片已不存在的幽灵举报。返回清理总数。"""
-    # 1. 清理已处理举报
+    """GC 用：清理已处理的举报，返回删除数。"""
     removed = _db().execute("DELETE FROM reports WHERE status != 'pending'").rowcount
-    # 2. 查找幽灵举报（图已不存在的 pending 举报）
-    stale_pending = _db().execute("SELECT id FROM reports WHERE status='pending'").fetchall()
-    # 图片存在性由调用方（GC）判断，这里只返回 pending 行数，让调用方筛选
-    # 这里保持原来的逻辑：operations 层不做文件系统操作
-    return removed  # 幽灵删图由调用方读取后传 path 调 dismiss_reports_for_image_paths
+    if removed:
+        _db().commit()
+    return removed
+
+
+def dismiss_reports_by_ids(report_ids: list) -> int:
+    """按举报 id 批量忽略待处理举报。"""
+    if not report_ids:
+        return 0
+    placeholders = ",".join(["?"] * len(report_ids))
+    cur = _db().execute(
+        f"UPDATE reports SET status='resolved', resolved_action='dismiss' WHERE status='pending' AND id IN ({placeholders})",
+        report_ids)
+    _db().commit()
+    return cur.rowcount
+
+
+def save_reports(reports: list) -> None:
+    """兼容旧调用：全量重写 reports 表。"""
+    with transaction(immediate=True) as conn:
+        conn.execute("DELETE FROM reports")
+        for report in reports or []:
+            conn.execute(
+                "INSERT OR REPLACE INTO reports VALUES (?,?,?,?,?,?,?,?,?)",
+                (report.get("id", ""), report.get("image_path", ""),
+                 report.get("reporter_gid", ""), report.get("reporter_login", ""),
+                 report.get("reason", ""), report.get("status", "pending"),
+                 report.get("timestamp", 0), report.get("resolved_action", ""),
+                 report.get("reporter_ip", "")))
 
 
 def cleanup_orphan_pending_reports() -> list[dict]:
@@ -987,41 +1094,33 @@ def load_featured() -> List[str]:
     return [r["path"] for r in rows]
 
 
+
 def save_featured(paths: List[str]) -> None:
-    old = {r["path"] for r in _db().execute("SELECT path FROM featured").fetchall()}
-    new_set = set(paths)
-    for p in old:
-        if p not in new_set:
-            _db().execute("DELETE FROM featured WHERE path=?", (p,))
-    for i, p in enumerate(paths):
-        _db().execute("INSERT OR REPLACE INTO featured (path, sort_order) VALUES (?,?)", (p, i))
-    _db().commit()
-
-
-# ═══════════════════════════════════════════
-# 封禁 IP
-# ═══════════════════════════════════════════
+    with transaction() as conn:
+        old = {r["path"] for r in conn.execute("SELECT path FROM featured").fetchall()}
+        new_set = set(paths)
+        for pth in old:
+            if pth not in new_set:
+                conn.execute("DELETE FROM featured WHERE path=?", (pth,))
+        for i, pth in enumerate(paths):
+            conn.execute("INSERT OR REPLACE INTO featured (path, sort_order) VALUES (?,?)", (pth, i))
 
 def load_banned_ips() -> List[str]:
     rows = _db().execute("SELECT ip FROM banned_ips").fetchall()
     return [r["ip"] for r in rows]
 
 
+
 def save_banned_ips(ips: List[str]) -> None:
-    old = {r["ip"] for r in _db().execute("SELECT ip FROM banned_ips").fetchall()}
-    new_set = set(ips)
-    for ip in old:
-        if ip not in new_set:
-            _db().execute("DELETE FROM banned_ips WHERE ip=?", (ip,))
-    for ip in ips:
-        if ip not in old:
-            _db().execute("INSERT OR IGNORE INTO banned_ips VALUES (?)", (ip,))
-    _db().commit()
-
-
-# ═══════════════════════════════════════════
-# 生图者 IP
-# ═══════════════════════════════════════════
+    with transaction() as conn:
+        old = {r["ip"] for r in conn.execute("SELECT ip FROM banned_ips").fetchall()}
+        new_set = set(ips)
+        for ip in old:
+            if ip not in new_set:
+                conn.execute("DELETE FROM banned_ips WHERE ip=?", (ip,))
+        for ip in ips:
+            if ip not in old:
+                conn.execute("INSERT OR IGNORE INTO banned_ips VALUES (?)", (ip,))
 
 def load_creator_map() -> Dict[str, str]:
     rows = _db().execute("SELECT * FROM creator_ips").fetchall()
@@ -1053,17 +1152,12 @@ def load_styles() -> List[Dict]:
 
 
 def save_styles(styles: List[Dict]) -> None:
-    _db().execute("BEGIN IMMEDIATE")
-    try:
-        _db().execute("DELETE FROM styles")
+    with transaction(immediate=True) as conn:
+        conn.execute("DELETE FROM styles")
         for i, s in enumerate(styles):
-            _db().execute(
+            conn.execute(
                 "INSERT INTO styles (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
                 (s.get("name", ""), s.get("tags", ""), s.get("alias", ""), s.get("thumbnail", ""), i))
-        _db().commit()
-    except Exception:
-        _db().execute("ROLLBACK")
-        raise
 
 
 def load_characters() -> List[Dict]:
@@ -1072,17 +1166,12 @@ def load_characters() -> List[Dict]:
 
 
 def save_characters(characters: List[Dict]) -> None:
-    _db().execute("BEGIN IMMEDIATE")
-    try:
-        _db().execute("DELETE FROM characters")
+    with transaction(immediate=True) as conn:
+        conn.execute("DELETE FROM characters")
         for i, c in enumerate(characters):
-            _db().execute(
+            conn.execute(
                 "INSERT INTO characters (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
                 (c.get("name", ""), c.get("tags", ""), c.get("alias", ""), c.get("thumbnail", ""), i))
-        _db().commit()
-    except Exception:
-        _db().execute("ROLLBACK")
-        raise
 
 
 def load_resolutions() -> Dict[str, Any]:
@@ -1091,17 +1180,12 @@ def load_resolutions() -> Dict[str, Any]:
 
 
 def save_resolutions(presets: List[Dict]) -> None:
-    _db().execute("BEGIN IMMEDIATE")
-    try:
-        _db().execute("DELETE FROM resolutions")
+    with transaction(immediate=True) as conn:
+        conn.execute("DELETE FROM resolutions")
         for i, r in enumerate(presets):
-            _db().execute(
+            conn.execute(
                 "INSERT INTO resolutions (w, h, label, sort_order) VALUES (?,?,?,?)",
                 (r.get("w", 0), r.get("h", 0), r.get("label", ""), i))
-        _db().commit()
-    except Exception:
-        _db().execute("ROLLBACK")
-        raise
 
 
 def load_workflow_meta() -> List[Dict]:
@@ -1110,17 +1194,12 @@ def load_workflow_meta() -> List[Dict]:
 
 
 def save_workflow_meta(meta: List[Dict]) -> None:
-    _db().execute("BEGIN IMMEDIATE")
-    try:
-        _db().execute("DELETE FROM workflow_meta")
+    with transaction(immediate=True) as conn:
+        conn.execute("DELETE FROM workflow_meta")
         for i, m in enumerate(meta):
-            _db().execute(
+            conn.execute(
                 "INSERT INTO workflow_meta (workflow, thumbnail, lora_link, display_name, sort_order) VALUES (?,?,?,?,?)",
                 (m.get("workflow", ""), m.get("thumbnail", ""), m.get("lora_link", ""), m.get("display_name", ""), i))
-        _db().commit()
-    except Exception:
-        _db().execute("ROLLBACK")
-        raise
 
 
 # ═══════════════════════════════════════════

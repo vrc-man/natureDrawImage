@@ -373,8 +373,8 @@ onUnmounted(() => stopAuto())
 
   <!-- Custom Email Modal -->
   <Teleport to="body">
-    <div v-if="emailModalUser" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeEmailModal">
-      <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-4">
+    <div v-if="emailModalUser" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-4" @click.stop>
         <h3 class="text-sm font-bold text-gray-700 mb-3">📧 发送邮件给 {{ emailModalUser.email }}</h3>
         <input v-model="emailModalSubject" placeholder="主题" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs mb-3 outline-none focus:border-pink-400" />
         <textarea v-model="emailModalBody" placeholder="内容" rows="5" class="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs mb-3 outline-none focus:border-pink-400 resize-none"></textarea>

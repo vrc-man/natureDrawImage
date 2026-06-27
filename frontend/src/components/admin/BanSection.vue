@@ -141,8 +141,8 @@ onMounted(loadBans)
 
     <!-- IP Images Panel -->
     <Teleport to="body">
-      <div v-if="ipImagesIp" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4" @click.self="closeIpImages">
-        <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+      <div v-if="ipImagesIp" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col" @click.stop>
           <div class="flex items-center justify-between p-4 border-b border-gray-100">
             <h3 class="text-sm font-bold text-gray-700">IP: {{ ipImagesIp }} ({{ ipImages.length }})</h3>
             <button @click="closeIpImages" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>

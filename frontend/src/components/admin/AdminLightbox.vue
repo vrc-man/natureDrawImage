@@ -5,6 +5,7 @@ import { api, fmt } from './useAdminApi'
 const lbOpen = ref(false)
 const lbItems = ref<any[]>([]), lbIndex = ref(0), lbCur = ref<any>(null), lbGhUser = ref(''), lbBanGid = ref('')
 const forkLoading = ref(false)
+const imgLoading = ref(true)
 
 function closeLb() { lbOpen.value = false; document.body.style.overflow = '' }
 
@@ -33,7 +34,7 @@ function collectLbItems() {
 
 function showLb() {
   const it = lbItems.value[lbIndex.value]
-  if (!it) return; lbCur.value = it
+  if (!it) return; lbCur.value = it; imgLoading.value = true
   // 删除记录已有创建者信息，不调 /api/output/creator
   if (it.path && !it.delThumb) {
     api('GET', '/api/output/creator?path=' + encodeURIComponent(it.path))
@@ -95,12 +96,19 @@ onUnmounted(() => { document.body.style.overflow = ''; document.removeEventListe
 </script>
 
 <template>
-  <div v-if="lbOpen" class="fixed inset-0 z-[60] bg-black flex flex-col" @click.self="closeLb">
-    <button class="absolute top-2 right-3 bg-transparent text-white text-3xl z-10 cursor-pointer border-0" @click="closeLb">&times;</button>
-    <button v-if="lbIndex > 0" class="absolute top-1/2 left-2 -translate-y-1/2 bg-black/40 text-white w-11 h-16 text-3xl cursor-pointer border-0 hover:bg-black/70 z-10" @click="lbPrev">&lsaquo;</button>
-    <button v-if="lbIndex < lbItems.length - 1" class="absolute top-1/2 right-2 -translate-y-1/2 bg-black/40 text-white w-11 h-16 text-3xl cursor-pointer border-0 hover:bg-black/70 z-10" @click="lbNext">&rsaquo;</button>
-    <div class="flex-1 flex items-center justify-center overflow-hidden p-2 min-h-0">
-      <img v-if="lbCur" :src="lbCur.url" class="max-w-full max-h-full w-auto h-auto object-contain select-auto" alt="" />
+  <div v-if="lbOpen" class="fixed inset-0 z-[60] bg-black flex flex-col">
+    <button class="absolute top-3 right-3 bg-black/50 hover:bg-black/80 text-white border-0 w-9 h-9 rounded-full flex items-center justify-center text-lg cursor-pointer z-10 transition-all" @click.stop="closeLb">✕</button>
+    <button v-if="lbIndex > 0" class="absolute top-1/2 left-2 -translate-y-1/2 bg-black/45 hover:bg-black/75 text-white w-12 h-[72px] text-3xl cursor-pointer border-0 z-[5] backdrop-blur-[4px] transition-all" @click.stop="lbPrev">&lsaquo;</button>
+    <button v-if="lbIndex < lbItems.length - 1" class="absolute top-1/2 right-2 -translate-y-1/2 bg-black/45 hover:bg-black/75 text-white w-12 h-[72px] text-3xl cursor-pointer border-0 z-[5] backdrop-blur-[4px] transition-all" @click.stop="lbNext">&rsaquo;</button>
+    <div class="flex-1 flex items-center justify-center overflow-hidden p-2 min-h-0 relative">
+      <div v-if="imgLoading" @click.stop class="absolute inset-0 flex flex-col items-center justify-center gap-2">
+        <svg class="animate-spin h-8 w-8 text-pink-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        <span class="text-white/60 text-xs">加载中请稍后...</span>
+      </div>
+      <img v-if="lbCur" :src="lbCur.url" class="max-w-full max-h-full w-auto h-auto object-contain select-auto transition-opacity duration-300" :class="imgLoading ? 'opacity-0' : 'opacity-100'" alt="" @load="imgLoading = false" @error="imgLoading = false" />
     </div>
     <div class="flex items-center gap-2 flex-wrap p-2 bg-black/50 text-white text-xs">
       <span class="text-gray-300 mr-auto break-all">{{ lbCur?.path?.split('/').pop() || '' }}</span>

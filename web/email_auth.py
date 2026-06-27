@@ -24,7 +24,7 @@ import httpx
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
-from db.schema import get_db, config_get, config_set
+from db.schema import get_db, config_get, config_set, db_lock, transaction
 from db import operations as main_db
 
 # ═══ 速率限制（rate_limits.json + env 覆盖） ═══
@@ -87,32 +87,30 @@ def _load_invite_codes() -> dict:
     return {r["code"]: {"used_count": r["used_count"], "max_uses": r["max_uses"], "created_at": r["created_at"]} for r in rows}
 
 def _save_invite_codes(data: dict):
-    db = get_db()
-    old = {r["code"] for r in db.execute("SELECT code FROM invite_codes").fetchall()}
-    new_set = set(data.keys())
-    for c in old:
-        if c not in new_set:
-            db.execute("DELETE FROM invite_codes WHERE code=?", (c,))
-    for k, v in data.items():
-        db.execute("INSERT OR REPLACE INTO invite_codes VALUES (?,?,?,?)",
-                   (k, v.get("used_count", 0), v.get("max_uses", 1), v.get("created_at", 0)))
-    db.commit()
+    with transaction(immediate=True) as db:
+        old = {r["code"] for r in db.execute("SELECT code FROM invite_codes").fetchall()}
+        new_set = set(data.keys())
+        for c in old:
+            if c not in new_set:
+                db.execute("DELETE FROM invite_codes WHERE code=?", (c,))
+        for k, v in data.items():
+            db.execute("INSERT OR REPLACE INTO invite_codes VALUES (?,?,?,?)",
+                       (k, v.get("used_count", 0), v.get("max_uses", 1), v.get("created_at", 0)))
 
 def _load_email_users() -> dict:
     rows = get_db().execute("SELECT * FROM email_users").fetchall()
     return {r["email"]: dict(r) for r in rows}
 
 def _save_email_users(data: dict):
-    db = get_db()
-    for email, eu in data.items():
-        db.execute("""INSERT OR REPLACE INTO email_users VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                   (email, eu.get("password_hash", ""), eu.get("role", "user"),
-                    eu.get("banned", 0), eu.get("banned_reason", ""), eu.get("created_at", 0),
-                    eu.get("verified", 0), eu.get("verify_token", ""),
-                    eu.get("totp_secret", ""), eu.get("totp_enabled", 0),
-                    eu.get("login_fails", 0), eu.get("login_fail_time", 0),
-                    eu.get("invite_code", "")))
-    db.commit()
+    with transaction() as db:
+        for email, eu in data.items():
+            db.execute("""INSERT OR REPLACE INTO email_users VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                       (email, eu.get("password_hash", ""), eu.get("role", "user"),
+                        eu.get("banned", 0), eu.get("banned_reason", ""), eu.get("created_at", 0),
+                        eu.get("verified", 0), eu.get("verify_token", ""),
+                        eu.get("totp_secret", ""), eu.get("totp_enabled", 0),
+                        eu.get("login_fails", 0), eu.get("login_fail_time", 0),
+                        eu.get("invite_code", "")))
 
 def _hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
@@ -195,12 +193,11 @@ async def _send_email(to: str, subject: str, body: str) -> bool:
 
 def _log_email(to: str, subject: str, status: str, error: str):
     try:
-        db = get_db()
-        db.execute("INSERT INTO email_logs (recipient, subject, status, error, created_at) VALUES (?,?,?,?,?)",
-                   (to, subject, status, error, time.time()))
-        db.commit()
-    except Exception:
-        pass
+        with transaction() as db:
+            db.execute("INSERT INTO email_logs (recipient, subject, status, error, created_at) VALUES (?,?,?,?,?)",
+                       (to, subject, status, error, time.time()))
+    except Exception as e:
+        print(f"[WARN] email log write failed: {type(e).__name__}: {e}")
 
 def get_email_user(session_uid: str) -> Optional[dict]:
     """从 session 的 github_id 还原邮箱用户"""
@@ -224,11 +221,11 @@ def get_email_user(session_uid: str) -> Optional[dict]:
 
 def _sync_main_email_user_ban(github_id: str, banned: bool, reason: str = "") -> None:
     """同步邮箱用户封禁状态到主 users 表，避免主会话读取绕过 email_users。"""
-    get_db().execute(
-        "UPDATE users SET banned=?, banned_reason=? WHERE github_id=?",
-        (1 if banned else 0, reason if banned else "", github_id),
-    )
-    get_db().commit()
+    with transaction() as db:
+        db.execute(
+            "UPDATE users SET banned=?, banned_reason=? WHERE github_id=?",
+            (1 if banned else 0, reason if banned else "", github_id),
+        )
     main_db.invalidate_users_cache()
 
 # ═══ 限流 & Turnstile ═══
@@ -324,8 +321,8 @@ async def _retry_verify_loop():
                     else:
                         intervals = [120, 300, 600]
                         info["next_retry_at"] = now + intervals[min(info["retry_count"], 2)]
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WARN] verify retry loop failed: {type(e).__name__}: {e}")
 
 
 def _email_html(title: str, body: str) -> str:
@@ -405,9 +402,7 @@ def init_email_auth():
             user_role = "user"
             async with _invite_lock:
                 async with _email_users_lock:
-                    db2 = get_db()
-                    db2.execute("BEGIN IMMEDIATE")
-                    try:
+                    with transaction(immediate=True) as db2:
                         email_users = _load_email_users()
                         if email in email_users:
                             raise HTTPException(400, "邮箱已注册")
@@ -439,11 +434,7 @@ def init_email_auth():
                         db2.execute("""INSERT OR IGNORE INTO users (github_id, login, email, avatar_url, role, banned, banned_reason, created_at)
                             VALUES (?,?,?,?,?,?,?,?)""",
                             (uid, email.split("@")[0], email, "", user_role, 0, "", created_at))
-                        db2.commit()
                         main_db.invalidate_users_cache()
-                    except Exception:
-                        db2.execute("ROLLBACK")
-                        raise
             _record_rate_limit(client_ip, email)
             if has_invite:
                 return {"ok": True, "message": "注册成功！请返回登录。"}
@@ -522,10 +513,9 @@ def init_email_auth():
             return {"ok": True, "message": "如果邮箱已注册，重置链接将发送到您的邮箱"}
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        db = get_db()
-        db.execute("INSERT OR REPLACE INTO password_resets VALUES (?,?,?)",
-                   (email, token_hash, time.time() + RESET_EXPIRE_SEC))
-        db.commit()
+        with transaction() as db:
+            db.execute("INSERT OR REPLACE INTO password_resets VALUES (?,?,?)",
+                       (email, token_hash, time.time() + RESET_EXPIRE_SEC))
         _email_rate_addr.setdefault(fg_key, []).append(now)
         _email_rate_addr.setdefault(daily_key, []).append(now)
         link = f"{SITE_URL}/api/auth/reset-password?token={token}&email={email}"
@@ -622,20 +612,17 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         _email_rate_addr.setdefault(re_key, []).append(now_rl)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
         async with _email_users_lock:
-            db = get_db()
-            row = db.execute("SELECT * FROM password_resets WHERE email=? AND token=?", (email, token_hash)).fetchone()
-            if not row or row["expires_at"] < time.time():
-                raise HTTPException(400, "链接已过期或无效")
-            email_users = _load_email_users()
-            eu = email_users.get(email)
-            if not eu:
-                raise HTTPException(404, "用户不存在")
-            eu["password_hash"] = _hash_password(password)
-            eu["login_fails"] = 0
-            eu["login_fail_time"] = 0
-            _save_email_users(email_users)
-            db.execute("DELETE FROM password_resets WHERE email=?", (email,))
-            db.commit()
+            with transaction(immediate=True) as db:
+                row = db.execute("SELECT * FROM password_resets WHERE email=? AND token=?", (email, token_hash)).fetchone()
+                if not row or row["expires_at"] < time.time():
+                    raise HTTPException(400, "链接已过期或无效")
+                eu = db.execute("SELECT * FROM email_users WHERE email=?", (email,)).fetchone()
+                if not eu:
+                    raise HTTPException(404, "用户不存在")
+                db.execute(
+                    "UPDATE email_users SET password_hash=?, login_fails=0, login_fail_time=0 WHERE email=?",
+                    (_hash_password(password), email))
+                db.execute("DELETE FROM password_resets WHERE email=?", (email,))
         return {"ok": True, "message": "密码重置成功！即将跳转到登录页"}
 
 
@@ -687,16 +674,15 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             uid = "email:" + email
             from web.app import _is_initial_admin_user_id, _release_user_access_bindings
             if _is_initial_admin_user_id(uid) and eu.get("role") != "admin":
-                db2 = get_db()
-                db2.execute("UPDATE email_users SET role='admin' WHERE email=?", (email,))
-                db2.execute("UPDATE users SET role='admin' WHERE github_id=?", (uid,))
-                db2.commit()
+                with transaction() as db2:
+                    db2.execute("UPDATE email_users SET role='admin' WHERE email=?", (email,))
+                    db2.execute("UPDATE users SET role='admin' WHERE github_id=?", (uid,))
                 main_db.invalidate_users_cache()
                 eu["role"] = "admin"
                 await _release_user_access_bindings(uid, as_admin=True)
         token = secrets.token_urlsafe(32)
         now = time.time()
-        from web.app import _load_sessions, _save_sessions, _sessions_lock
+        from web.app import _load_sessions, _sessions_lock
         async with _sessions_lock:
             sessions = _load_sessions()
             # 清理过期和同用户旧会话
@@ -704,13 +690,7 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             sessions = {k: v for k, v in sessions.items() if str(v.get("github_id", "")) != uid}
             token_hash = hashlib.sha256(token.encode()).hexdigest()
             is_admin = eu.get("role") == "admin"
-            sessions[token_hash] = {
-                "github_id": uid,
-                "expires_at": now + SESSION_MAX_AGE_SEC,
-                "access_granted": is_admin,
-                "claimed_key": "",
-            }
-            await _save_sessions(sessions)
+            main_db.save_session(token_hash, uid, now + SESSION_MAX_AGE_SEC, int(is_admin), "")
         resp = JSONResponse({"ok": True, "login": email.split("@")[0], "is_admin": eu.get("role") == "admin"})
         resp.set_cookie("session", token, httponly=True, max_age=SESSION_MAX_AGE_SEC,
                          samesite="lax", secure=SITE_URL.startswith("https"))
@@ -817,7 +797,7 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
     # ── 已登录用户修改密码 ──
     @app.post("/api/auth/change-password")
     async def api_change_password(request: Request, payload: Dict[str, Any] = {}):
-        from web.app import _get_user_from_session, _load_sessions, _save_sessions, _sessions_lock
+        from web.app import _get_user_from_session
         user = _get_user_from_session(request)
         if not user:
             raise HTTPException(401)
@@ -840,12 +820,12 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             _save_email_users(email_users)
         # 销毁该用户的所有旧 session
         uid = "email:" + email
-        async with _sessions_lock:
-            sessions = _load_sessions()
-            sessions = {k: v for k, v in sessions.items() if v.get("github_id") != uid}
-            await _save_sessions(sessions)
+        main_db.clear_sessions_for_user(uid)
         print(f'[auth] password changed: {email}')
-        return {"ok": True, "message": "密码修改成功"}
+        _secure = SITE_URL.startswith("https")
+        resp = JSONResponse({"ok": True, "message": "密码修改成功"})
+        resp.delete_cookie("session", path="/", httponly=True, samesite="lax", secure=_secure)
+        return resp
 
     # ── 管理员：限流配置 ──
 
@@ -895,14 +875,13 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
     async def api_admin_email_logs_clear(request: Request, payload: Dict[str, Any] = {}):
         if not getattr(request.state, "is_admin", False):
             raise HTTPException(403)
-        db = get_db()
         ids = payload.get("ids")
-        if ids and isinstance(ids, list) and len(ids) > 0:
-            placeholders = ",".join(["?"] * len(ids))
-            db.execute(f"DELETE FROM email_logs WHERE id IN ({placeholders})", ids)
-        else:
-            db.execute("DELETE FROM email_logs")
-        db.commit()
+        with transaction() as db:
+            if ids and isinstance(ids, list) and len(ids) > 0:
+                placeholders = ",".join(["?"] * len(ids))
+                db.execute(f"DELETE FROM email_logs WHERE id IN ({placeholders})", ids)
+            else:
+                db.execute("DELETE FROM email_logs")
         return {"ok": True}
 
 
@@ -1090,10 +1069,9 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             raise HTTPException(400, "该用户邮箱未验证，无法重置密码，请先发送验证邮件")
         token = secrets.token_urlsafe(32)
         token_hash = hashlib.sha256(token.encode()).hexdigest()
-        db = get_db()
-        db.execute("INSERT OR REPLACE INTO password_resets VALUES (?,?,?)",
-                   (email, token_hash, time.time() + RESET_EXPIRE_SEC))
-        db.commit()
+        with transaction() as db:
+            db.execute("INSERT OR REPLACE INTO password_resets VALUES (?,?,?)",
+                       (email, token_hash, time.time() + RESET_EXPIRE_SEC))
         link = f"{SITE_URL}/api/auth/reset-password?token={token}&email={email}"
         mail_ok = await _send_email(email, f"[{SITE_NAME}] 管理员重置密码",
             _email_html("密码重置", "<p style='font-size:14px;line-height:1.8'>管理员为您生成了密码重置链接。</p><div style='text-align:center;margin:20px 0'><a href='" + link + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>重置密码</a></div><p style='font-size:12px;color:#9ca3af'>30分钟内有效，非本人操作请忽略。</p>"))

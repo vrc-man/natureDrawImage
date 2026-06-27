@@ -144,6 +144,21 @@ const customSounds = ref({
   error: { data: localStorage.getItem('customSound_error_data') || '', name: localStorage.getItem('customSound_error_name') || '' },
   queued: { data: localStorage.getItem('customSound_queued_data') || '', name: localStorage.getItem('customSound_queued_name') || '' },
 })
+type HomeBgMode = 'tile' | 'stretch'
+const savedHomeBgMode = localStorage.getItem('homeBgImageMode')
+const homeBgImageData = ref(localStorage.getItem('homeBgImageData') || '')
+const homeBgImageName = ref(localStorage.getItem('homeBgImageName') || '')
+const homeBgImageMode = ref<HomeBgMode>(savedHomeBgMode === 'tile' || savedHomeBgMode === 'stretch' ? savedHomeBgMode : 'stretch')
+const homeBgImageScale = ref(parseInt(localStorage.getItem('homeBgImageScale') || '100'))
+const homeBgError = ref('')
+const homeBackgroundStyle = computed(() => {
+  if (!homeBgImageData.value) return {}
+  const scaleSet = localStorage.getItem('homeBgImageScale') !== null
+  const scale = Math.min(300, Math.max(10, Number.isFinite(homeBgImageScale.value) ? homeBgImageScale.value : 100))
+  return homeBgImageMode.value === 'tile'
+    ? { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'repeat', backgroundSize: scaleSet ? `${scale}% auto` : 'auto', backgroundPosition: 'top left' }
+    : { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'no-repeat', backgroundSize: scaleSet ? `${scale}% auto` : '100% 100%', backgroundPosition: 'center center' }
+})
 
 // Password change
 const cpOld = ref(''), cpNew = ref(''), cpConfirm = ref(''), cpStatus = ref('')
@@ -155,14 +170,31 @@ const accessKeySuccess = ref('')
 const keyExpired = ref(false)
 const uiZoom = ref(parseFloat(localStorage.getItem('uiZoom') || '1'))
 const compactLayout = ref(localStorage.getItem('compactLayout') === 'true')
+const pickerThumbPercent = ref(parseInt(localStorage.getItem('pickerThumbPercent') || '25'))
+const pickerThumbSize = computed(() => Math.round(300 * pickerThumbPercent.value / 100))
 
 function setUiZoom(v: number) {
-  uiZoom.value = v; localStorage.setItem('uiZoom', String(v))
-  document.documentElement.style.zoom = String(v)
+  const next = Math.min(1.3, Math.max(0.5, Number.isFinite(v) ? v : 1))
+  uiZoom.value = next; localStorage.setItem('uiZoom', String(next))
+  document.documentElement.style.zoom = String(next)
 }
 function setCompactLayout(v: boolean) {
   compactLayout.value = v; localStorage.setItem('compactLayout', String(v))
   document.documentElement.classList.toggle('compact', v)
+}
+function setPickerThumbPercent(v: number) {
+  const next = Math.min(100, Math.max(20, Number.isFinite(v) ? v : 25))
+  const thumb = Math.round(300 * next / 100)
+  pickerThumbPercent.value = next
+  localStorage.setItem('pickerThumbPercent', String(next))
+  document.documentElement.style.setProperty('--picker-thumb-percent', String(next))
+  document.documentElement.style.setProperty('--picker-thumb-size', `${thumb}px`)
+  document.documentElement.style.setProperty('--picker-card-height', `${thumb + 8}px`)
+}
+function setHomeBgImageScale(v: number) {
+  const next = Math.min(300, Math.max(10, Number.isFinite(v) ? v : 100))
+  homeBgImageScale.value = next
+  localStorage.setItem('homeBgImageScale', String(next))
 }
 
 // Resolution presets
@@ -233,6 +265,7 @@ onMounted(async () => {
   // 恢复 UI 设置
   if (uiZoom.value !== 1) document.documentElement.style.zoom = String(uiZoom.value)
   if (compactLayout.value) document.documentElement.classList.add('compact')
+  setPickerThumbPercent(pickerThumbPercent.value)
   // 检查密钥过期状态 + 初始化通知圆点
   if (userStore.currentUser?.key_status === 'expired') keyExpired.value = true
   if (userStore.currentUser?.unread_notifications) notifyUnreadCount.value = userStore.currentUser.unread_notifications
@@ -351,6 +384,16 @@ async function ensureWorkflowForMode(m: 'txt2img'|'img2img') {
   }
 }
 
+// 切换工作流时确保分辨率落在预设里
+function _ensureResolutionInPresets() {
+  if (!resolutions.value.length) return
+  const has = resolutions.value.some(r => r.w === width.value && r.h === height.value)
+  if (!has) {
+    width.value = resolutions.value[0].w
+    height.value = resolutions.value[0].h
+  }
+}
+
 async function onWorkflowSelect(path: string, name?: string) {
   currentWorkflowPath.value = path
   localStorage.setItem('currentWorkflow', path)
@@ -365,9 +408,11 @@ async function onWorkflowSelect(path: string, name?: string) {
       hasLoadImage.value = !!(d.summary && d.summary.has_loadimage)
     }
   } catch {}
+  _ensureResolutionInPresets()
 }
 
-// ===== Char/Style selection (handled by CharStylePicker via localStorage; read at submit time) =====
+const presetDirectRef = ref<InstanceType<typeof PresetManager> | null>(null)
+const presetNegRef = ref<InstanceType<typeof PresetManager> | null>(null)
 
 // ===== Fetch resolutions =====
 async function loadResolutions() {
@@ -528,6 +573,18 @@ function prepareGen() {
   let char = ''
   try { char = JSON.parse(localStorage.getItem('currentCharacters') || '[]').join(', '); } catch {}
   if (!direct && !nl) { showErrorToast('请输入提示词'); return null }
+  // 检查分辨率是否在预设中，不在就自动用第一个
+  if (!resolutions.value.some(r => r.w === width.value && r.h === height.value) && resolutions.value.length) {
+    width.value = resolutions.value[0].w
+    height.value = resolutions.value[0].h
+  }
+  // 图生图必须传图
+  if (mode.value === 'img2img' && uploadRef.value) {
+    if (!uploadRef.value.getImageNames().length && !uploadRef.value.hasPendingUploads()) {
+      showErrorToast('请先上传参考图')
+      return null
+    }
+  }
   return { direct, nl, neg, w: width.value, h: height.value, style, char, styleName: selectedStyleName, charNames: selectedCharNames.join(', ') }
 }
 
@@ -559,6 +616,7 @@ async function actuallyStartRun(g: PendingGen) {
   _watchingMode.value = false
   _finishing.value = false
   _doneNotified = false
+  _hasRunningBefore = false
   _isGenerating.value = true
   progressPct.value = 0
   resultImages.value = []
@@ -784,6 +842,71 @@ function handleSoundUpload(type: string) {
   inp.click()
 }
 function resetCustomSound(type: string) { saveCustomSound(type, '', '') }
+function saveHomeBgMode(mode: HomeBgMode) {
+  homeBgImageMode.value = mode
+  localStorage.setItem('homeBgImageMode', mode)
+}
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(new Error('read failed'))
+    reader.readAsDataURL(file)
+  })
+}
+function loadImage(data: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('image decode failed'))
+    img.src = data
+  })
+}
+async function compressHomeBgImage(file: File): Promise<string> {
+  const data = await readFileAsDataUrl(file)
+  const img = await loadImage(data)
+  const maxSide = 2048
+  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height))
+  const width = Math.max(1, Math.round((img.naturalWidth || img.width) * scale))
+  const height = Math.max(1, Math.round((img.naturalHeight || img.height) * scale))
+  const canvas = document.createElement('canvas')
+  canvas.width = width; canvas.height = height
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('canvas unsupported')
+  ctx.drawImage(img, 0, 0, width, height)
+  const webp = canvas.toDataURL('image/webp', 0.85)
+  if (webp.startsWith('data:image/webp')) return webp
+  return canvas.toDataURL('image/jpeg', 0.85)
+}
+function handleHomeBgUpload() {
+  homeBgError.value = ''
+  const inp = document.createElement('input')
+  inp.type = 'file'; inp.accept = 'image/*'
+  inp.onchange = async () => {
+    const f = inp.files?.[0]
+    if (!f) return
+    if (!f.type.startsWith('image/')) { homeBgError.value = '请选择图片文件'; return }
+    try {
+      const data = await compressHomeBgImage(f)
+      localStorage.setItem('homeBgImageData', data)
+      localStorage.setItem('homeBgImageName', f.name)
+      localStorage.setItem('homeBgImageMode', homeBgImageMode.value)
+      homeBgImageData.value = data
+      homeBgImageName.value = f.name
+      homeBgError.value = ''
+    } catch {
+      homeBgError.value = '背景保存失败，请换一张更小的图片重试；原背景已保留'
+    }
+  }
+  inp.click()
+}
+function resetHomeBgImage() {
+  homeBgImageData.value = ''
+  homeBgImageName.value = ''
+  homeBgError.value = ''
+  localStorage.removeItem('homeBgImageData')
+  localStorage.removeItem('homeBgImageName')
+}
 
 async function changePassword() {
   cpStatus.value = ''
@@ -813,43 +936,18 @@ async function loadAnnouncement() {
   } catch {}
 }
 
-// ===== Textarea height sync (与原版一致) =====
-let _thTimer: ReturnType<typeof setTimeout> | null = null
-let _lastThSync = 0
+// ===== Textarea height sync =====
 function initTextareaHeightSync() {
   if (!window.ResizeObserver) return
-  ;['direct', 'negative_prompt', 'nl'].forEach(id => {
+  ;['direct', 'negative_prompt'].forEach(id => {
     const el = document.getElementById(id) as HTMLTextAreaElement | null
     if (!el) return
     new ResizeObserver(() => {
-      if (_thTimer) clearTimeout(_thTimer)
-      _thTimer = setTimeout(() => {
-        const h = el.style.height
-        const saved: Record<string, string> = {}
-        try { Object.assign(saved, JSON.parse(localStorage.getItem('taHeights') || '{}')) } catch {}
-        saved[id] = h
-        if (id === 'direct' || id === 'negative_prompt') {
-          const peer = document.getElementById(id === 'direct' ? 'negative_prompt' : 'direct') as HTMLTextAreaElement | null
-          const now = Date.now()
-          if (peer && h && h !== peer.style.height && now - _lastThSync > 300) {
-            _lastThSync = now
-            peer.style.height = h
-          }
-          saved.direct = h
-          saved.negative_prompt = h
-        }
-        localStorage.setItem('taHeights', JSON.stringify(saved))
-      }, 400)
+      const h = el.style.height
+      const peer = document.getElementById(id === 'direct' ? 'negative_prompt' : 'direct') as HTMLTextAreaElement | null
+      if (peer && h && h !== peer.style.height) peer.style.height = h
     }).observe(el)
   })
-  // 恢复保存的高度
-  try {
-    const saved: Record<string, string> = JSON.parse(localStorage.getItem('taHeights') || '{}')
-    Object.entries(saved).forEach(([id, h]) => {
-      const el = document.getElementById(id) as HTMLTextAreaElement | null
-      if (el && h) el.style.height = h
-    })
-  } catch {}
 }
 
 function clearFork() {
@@ -864,8 +962,10 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 </script>
 
 <template>
-  <div class="h-full w-full" :class="{dark:darkMode}">
-    <div class="h-full w-full flex flex-col" style="background:linear-gradient(135deg,#fef2f4,#fdf2f8,#faf5ff,#fff1f2,#fef2f4);background-size:400% 400%;animation:bgShift 30s ease infinite">
+  <div class="home-root h-full w-full" :class="{dark:darkMode}">
+    <div class="home-bg-base"></div>
+    <div v-if="homeBgImageData" class="home-bg-image" :style="homeBackgroundStyle"></div>
+    <div class="home-shell h-full w-full flex flex-col">
       <!-- Header -->
       <div class="flex items-center justify-between px-4 pt-3 pb-1 shrink-0 fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md">
         <div class="flex items-center gap-2">
@@ -930,36 +1030,36 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 <!-- Prompt grid -->
                 <div class="prompt-grid">
                   <div>
-                    <label class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
-                      <button type="button" title="提示词预设" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit text-base" @click.stop>📝</button>
+                    <div class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
+                      <button type="button" title="提示词预设" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit text-base" @click="presetDirectRef?.openList()">📝</button>
                       <span>正面提示词</span>
                       <span class="ml-auto flex items-center gap-1">
-                        <PresetManager target="direct" :on-fill="(t:string) => fillPreset(t, 'direct')" />
+                        <PresetManager ref="presetDirectRef" target="direct" :on-fill="(t:string) => fillPreset(t, 'direct')" />
                         <button @click="directPrompt=''" class="text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all cursor-pointer border-0">清空</button>
                       </span>
-                    </label>
+                    </div>
                     <textarea id="direct" v-model="directPrompt" placeholder="正面提示词（英文标签或自然语言）" rows="1" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border"></textarea>
                   </div>
                   <div>
-                    <label class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
-                      <button type="button" title="提示词预设" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit text-base" @click.stop>📝</button>
+                    <div class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
+                      <button type="button" title="提示词预设" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit text-base" @click="presetNegRef?.openList()">📝</button>
                       <span>负面提示词</span>
                       <span class="ml-auto flex items-center gap-1">
-                        <PresetManager target="negative_prompt" :on-fill="(t:string) => fillPreset(t, 'negative_prompt')" />
+                        <PresetManager ref="presetNegRef" target="negative_prompt" :on-fill="(t:string) => fillPreset(t, 'negative_prompt')" />
                         <button @click="negativePrompt=''" class="text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all cursor-pointer border-0">清空</button>
                       </span>
-                    </label>
+                    </div>
                     <textarea id="negative_prompt" v-model="negativePrompt" placeholder="负面提示词（可留空）" rows="1" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border"></textarea>
                   </div>
                 </div>
 
                 <!-- NL prompt -->
                 <div>
-                  <label class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
+                  <div class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
                     <span>自然语言描述</span>
                     <span class="text-gray-400 font-normal text-[7px] sm:text-sm">(中文/英文，LLM 翻译生成提示词)</span>
                     <button @click="nlPrompt=''" class="ml-auto text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all cursor-pointer border-0">清空</button>
-                  </label>
+                  </div>
                   <textarea id="nl" v-model="nlPrompt" placeholder="描述你想要的画面，LLM 会自动翻译为 tags" rows="2" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border"></textarea>
                 </div>
 
@@ -1133,19 +1233,22 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
       <!-- ============ SETTINGS MODAL ============ -->
       <Teleport to="body">
-        <div v-if="settingsOpen" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8" @click.self="closeSettings">
+        <div v-if="settingsOpen" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8">
           <div class="mx-4 w-full sm:max-w-2xl bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 max-h-[85vh] overflow-y-auto p-5" @click.stop>
             <!-- === MAIN SETTINGS === -->
             <template v-if="settingsView === 'main'">
-              <div class="flex items-center gap-3 pb-3 border-b border-pink-100">
-                <div class="shrink-0">
-                  <img v-if="userStore.currentUser?.avatar_url" :src="userStore.currentUser.avatar_url" class="w-10 h-10 rounded-full" />
-                  <span v-else class="w-10 h-10 rounded-full bg-pink-100 flex items-center justify-center text-lg">{{ (userStore.currentUser?.login || '?')[0] }}</span>
+              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+                <div class="flex items-center gap-3 min-w-0">
+                  <div class="shrink-0">
+                    <img v-if="userStore.currentUser?.avatar_url" :src="userStore.currentUser.avatar_url" class="w-10 h-10 rounded-full" />
+                    <span v-else class="w-10 h-10 rounded-full bg-pink-100 flex items-center justify-center text-lg">{{ (userStore.currentUser?.login || '?')[0] }}</span>
+                  </div>
+                  <div class="min-w-0">
+                    <div class="font-bold text-gray-700">{{ userStore.currentUser?.login }}</div>
+                    <div class="text-xs text-gray-400 truncate">{{ userStore.currentUser?.email || '' }}</div>
+                  </div>
                 </div>
-                <div class="min-w-0">
-                  <div class="font-bold text-gray-700">{{ userStore.currentUser?.login }}</div>
-                  <div class="text-xs text-gray-400 truncate">{{ userStore.currentUser?.email || '' }}</div>
-                </div>
+                <button @click="closeSettings" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent shrink-0">&times;</button>
               </div>
               <div v-if="keyInfoHtml" id="settings-key-info" class="text-sm bg-gray-50 rounded-xl px-4 py-3 text-gray-600 mt-2" v-html="keyInfoHtml"></div>
               <div class="pt-1 space-y-1">
@@ -1177,7 +1280,55 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                     <span>🔍 界面缩放</span>
                     <span>{{ Math.round(uiZoom * 100) }}%</span>
                   </div>
-                  <input type="range" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @input="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-full accent-pink-500 h-1 cursor-pointer" />
+                  <div class="flex items-center gap-2">
+                    <input type="range" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @input="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                    <input type="number" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @change="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                    <span class="text-xs text-gray-400 shrink-0">%</span>
+                  </div>
+                </div>
+                <!-- 选择缩略图大小 -->
+                <div class="px-3 py-2">
+                  <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                    <span>🖼️ 选择缩略图大小</span>
+                    <span>{{ pickerThumbPercent }}% · {{ pickerThumbSize }}px</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input type="range" min="20" max="100" step="5" :value="pickerThumbPercent" @input="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                    <input type="number" min="20" max="100" step="5" :value="pickerThumbPercent" @change="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                    <span class="text-xs text-gray-400 shrink-0">%</span>
+                  </div>
+                </div>
+                <!-- 最底层背景图片 -->
+                <div class="px-3 py-2 rounded-xl hover:bg-pink-50 transition-all">
+                  <div class="flex items-center justify-between text-xs text-gray-400 mb-2 gap-2">
+                    <span class="shrink-0">🖼️ 最底层背景图片</span>
+                    <span class="truncate text-right">{{ homeBgImageName || '未设置' }}</span>
+                  </div>
+                  <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                    <button @click="handleHomeBgUpload" class="text-pink-500 hover:underline cursor-pointer border-0 bg-transparent p-0">选择图片</button>
+                    <button @click="resetHomeBgImage" class="text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent p-0">清除</button>
+                    <label class="flex items-center gap-1 cursor-pointer select-none">
+                      <input type="radio" name="home-bg-mode" :checked="homeBgImageMode === 'tile'" @change="saveHomeBgMode('tile')" class="accent-pink-500" />
+                      平铺
+                    </label>
+                    <label class="flex items-center gap-1 cursor-pointer select-none">
+                      <input type="radio" name="home-bg-mode" :checked="homeBgImageMode === 'stretch'" @change="saveHomeBgMode('stretch')" class="accent-pink-500" />
+                      拉伸
+                    </label>
+                  </div>
+                  <div v-if="homeBgImageData" class="mt-2">
+                    <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                      <span>背景图缩放</span>
+                      <span>{{ homeBgImageScale }}%</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <input type="range" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                      <input type="number" min="10" max="300" step="5" :value="homeBgImageScale" @change="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                      <span class="text-xs text-gray-400 shrink-0">%</span>
+                    </div>
+                  </div>
+                  <div class="text-[11px] text-gray-400 mt-1">图片仅保存在当前浏览器，不会上传服务器；大图会自动压缩到最大 2K 后保存</div>
+                  <div v-if="homeBgError" class="text-xs text-red-400 mt-1">{{ homeBgError }}</div>
                 </div>
                 <!-- 布局密度 -->
                 <label class="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-pink-50 cursor-pointer transition-all select-none">
@@ -1192,14 +1343,21 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
             <!-- === TOTP SETTINGS === -->
             <template v-if="settingsView === 'totp'">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+                <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
+                <button @click="closeSettings" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
+              </div>
               <TotpSettings @back="settingsView='main'" />
             </template>
 
             <!-- === PASSWORD CHANGE === -->
             <template v-if="settingsView === 'password'">
-              <div class="flex items-center gap-2 pb-3 border-b border-pink-100">
-                <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
-                <h3 class="text-base font-bold text-gray-700">🔑 更改密码</h3>
+              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+                <div class="flex items-center gap-2">
+                  <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
+                  <h3 class="text-base font-bold text-gray-700">🔑 更改密码</h3>
+                </div>
+                <button @click="closeSettings" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
               </div>
               <div class="space-y-3 pt-2">
                 <input v-model="cpOld" type="password" placeholder="当前密码" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all box-border" />

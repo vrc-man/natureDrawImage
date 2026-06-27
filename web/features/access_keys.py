@@ -116,14 +116,14 @@ async def api_admin_access_keys_delete(request: Request, payload: Dict[str, Any]
     设置 disabled_at 后 2 秒正式失效，给用户短暂的缓冲时间。"""
     _require_admin(request)
     db = _deps.ctx("db")
-    get_db = _deps.ctx("get_db")
     raw = str((payload or {}).get("key") or (payload or {}).get("key_preview") or "").strip()
     if not raw:
         raise HTTPException(400, "key required")
     now = _time.time()
-    # 清理 disabled_at 超过 2 秒的密钥
-    get_db().execute("DELETE FROM access_keys WHERE disabled_at > 0 AND disabled_at+2 < ?", (now,))
-    get_db().commit()
+    # 清理 disabled_at 超过 2 秒的密钥，并同步清理 session 引用
+    stale = db.cleanup_disabled_access_keys(now)
+    if stale:
+        db.clear_session_claimed_keys_for_keys(stale)
     # 查找目标 key
     target_key = raw if db.get_access_key(raw) else None
     if not target_key and "..." in raw:

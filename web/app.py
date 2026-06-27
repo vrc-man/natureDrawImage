@@ -135,7 +135,7 @@ from pydantic import BaseModel, field_validator
 # SQLite 数据层（替代 JSON 文件读写）
 import sys as _sys2
 _sys2.path.insert(0, str(Path(__file__).parent))
-from db.schema import get_db, init_db, migrate_from_json, config_get, config_set, config_get_section
+from db.schema import get_db, init_db, migrate_from_json, config_get, config_set, config_get_section, db_lock
 from db import operations as db
 
 # PIL 安全限制：防止解压炸弹（默认 ~178M 像素太大，限制为 100M 像素）
@@ -277,8 +277,9 @@ async def _save_user_image(github_id: str, rel_path: str, prompt: str = "") -> N
         return
     try:
         db.save_user_image(github_id, rel_path, prompt)
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[ERROR] save_user_image 失败: gid={github_id} path={rel_path} {type(e).__name__}: {e}")
+        raise
 
 # ---------------- 用户 / 会话管理 ----------------
 # 用户数据：{github_id: {login, email, avatar_url, role, banned, banned_reason, created_at}}
@@ -1641,7 +1642,7 @@ async def _run_gc():
         except Exception:
             orphan_ids.append(r["id"])
     if orphan_ids:
-        db.dismiss_reports_for_image_paths(set(orphan_ids))
+        db.dismiss_reports_by_ids(orphan_ids)
     cleaned["resolved_reports"] = removed_reports + len(orphan_ids)
 
     # 2. 清理内存中过期的限流条目
@@ -1810,7 +1811,7 @@ async def _run_gc():
     # 4b. 清理 user_images 中磁盘已不存在的死记录 + 超限最旧记录
     try:
         await _cleanup_stale_user_images()
-        pruned = db.prune_user_images(10000)
+        pruned = db.prune_user_images()
         if pruned:
             print(f"[gc] user_images 清理超限记录: {pruned} 条")
         cleaned["stale_user_images"] = 1
@@ -2218,8 +2219,10 @@ async def _start_gc():
     data_dir = Path(__file__).parent
     try:
         migrate_from_json(data_dir)
-    except Exception:
-        pass  # 已迁移则跳过
+    except Exception as e:
+        import traceback as _tb
+        _tb.print_exc()
+        print(f"[startup] migrate_from_json 失败: {type(e).__name__}: {e}")
 
     global _gc_task
     _safe_task(_cleanup_expired_access_keys(), "cleanup_expired_access_keys")
@@ -2270,8 +2273,9 @@ async def _shutdown():
     _save_queue_state()
     # SQLite WAL 刷盘
     try:
-        get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        get_db().commit()
+        with db_lock():
+            get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            get_db().commit()
     except Exception:
         pass
     if _gc_task:
@@ -5119,8 +5123,9 @@ async def api_admin_force_restart(request: Request):
         pass
     # 等待 SQLite WAL 刷盘 + 异步任务收尾
     try:
-        get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        get_db().commit()
+        with db_lock():
+            get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            get_db().commit()
     except Exception:
         pass
     await asyncio.sleep(1)
@@ -5143,8 +5148,9 @@ async def api_admin_graceful_restart(request: Request):
         waited += 2
     # 安全退出
     try:
-        get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        get_db().commit()
+        with db_lock():
+            get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            get_db().commit()
     except Exception:
         pass
     await asyncio.sleep(1)
@@ -8169,8 +8175,8 @@ async def api_admin_gc_stats(request: Request):
 
 
 @app.get("/api/admin/stats/generation")
-async def api_admin_stats_generation(request: Request, date_from: float = 0, date_to: float = 0, login: str = ""):
-    """系统统计：今日生图总数、每小时分布、每日分布。支持 date_from/date_to (epoch秒)/login 筛选。"""
+async def api_admin_stats_generation(request: Request, date_from: float = 0, date_to: float = 0, login: str = "", tz_offset: float = 0):
+    """系统统计：今日生图总数、每小时分布、每日分布。支持 date_from/date_to (epoch秒)/login/tz_offset 筛选。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
     login = login.strip()
@@ -8179,6 +8185,18 @@ async def api_admin_stats_generation(request: Request, date_from: float = 0, dat
             "today_total": db.count_gen_logs_range(date_from, date_to, login),
             "hourly": db.get_gen_logs_hourly_range(date_from, date_to, login),
             "daily": db.get_gen_logs_daily_range(date_from, date_to, login),
+        }
+    if tz_offset:
+        # 本地时区计算：当天0点、近7天
+        import math as _math
+        now = _time_module.time()
+        _day_start = _math.floor(now / 86400) * 86400 - tz_offset * 3600
+        _day_end = _day_start + 86400
+        _7d_ago = _day_start - 6 * 86400
+        return {
+            "today_total": db.count_gen_logs_range(_day_start, _day_end, login),
+            "hourly": db.get_gen_logs_hourly_range(_day_start, _day_end, login),
+            "daily": db.get_gen_logs_daily_range(_7d_ago, _day_end, login),
         }
     return {
         "today_total": db.count_gen_logs_today(login),
@@ -8388,8 +8406,11 @@ async def api_admin_resolutions_set(request: Request, payload: Dict[str, Any]):
     return {"ok": True, **data}
 
 
+THUMBNAIL_SIZE = 512
+
+
 def _verify_and_resize_thumb(dest: Path, dest_dir: Path, safe_name: str, ext: str) -> str:
-    """同步执行 PIL 校验+缩放到 128×128 WebP（跑在线程池）。"""
+    """同步执行 PIL 校验+缩放到 512×512 WebP（跑在线程池）。"""
     from PIL import Image as _PILImage, UnidentifiedImageError
     try:
         img = _PILImage.open(dest)
@@ -8402,11 +8423,11 @@ def _verify_and_resize_thumb(dest: Path, dest_dir: Path, safe_name: str, ext: st
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
         w, h = img.size
-        if w != 128 or h != 128 or ext != ".webp":
-            img = img.resize((128, 128), _PILImage.LANCZOS)
+        if w != THUMBNAIL_SIZE or h != THUMBNAIL_SIZE or ext != ".webp":
+            img = img.resize((THUMBNAIL_SIZE, THUMBNAIL_SIZE), _PILImage.LANCZOS)
             from io import BytesIO as _BytesIO
             buf = _BytesIO()
-            img.save(buf, format="WEBP", quality=80, optimize=True)
+            img.save(buf, format="WEBP", quality=90, optimize=True)
             dest.unlink(missing_ok=True)
             safe_name = safe_name[: safe_name.rfind(".")] + ".webp"
             dest = dest_dir / safe_name

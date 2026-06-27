@@ -15,28 +15,90 @@ import sqlite3
 import json
 import os
 import time
+import threading
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Iterator
 
 DB_DIR = Path(__file__).parent
 DB_PATH = DB_DIR / "natureDrawImage.db"
 
-# ── 连接池（单连接，SQLite 串行模式足够） ──
-_conn: Optional[sqlite3.Connection] = None
+# ── 连接池（单连接 + 全局可重入锁，避免同一 connection 跨线程/协程交叉事务） ──
+_conn: Optional["LockedConnection"] = None
+_db_lock = threading.RLock()
 
 
-def get_db() -> sqlite3.Connection:
+class LockedConnection:
+    """给共享 sqlite3.Connection 加一层方法级锁，保留原连接接口。"""
+
+    def __init__(self, conn: sqlite3.Connection):
+        self._conn = conn
+
+    def execute(self, *args, **kwargs):
+        with _db_lock:
+            return self._conn.execute(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        with _db_lock:
+            return self._conn.executemany(*args, **kwargs)
+
+    def executescript(self, *args, **kwargs):
+        with _db_lock:
+            return self._conn.executescript(*args, **kwargs)
+
+    def commit(self):
+        with _db_lock:
+            return self._conn.commit()
+
+    def rollback(self):
+        with _db_lock:
+            return self._conn.rollback()
+
+    def backup(self, *args, **kwargs):
+        with _db_lock:
+            return self._conn.backup(*args, **kwargs)
+
+    def close(self):
+        with _db_lock:
+            return self._conn.close()
+
+    def __getattr__(self, name: str):
+        return getattr(self._conn, name)
+
+
+def db_lock() -> threading.RLock:
+    """返回数据库全局写锁。所有写入/事务/checkpoint 必须持有该锁。"""
+    return _db_lock
+
+
+@contextmanager
+def transaction(immediate: bool = False) -> Iterator[sqlite3.Connection]:
+    """串行化 SQLite 写事务，避免共享连接上的 commit/rollback 串扰。"""
+    with _db_lock:
+        db = get_db()
+        db.execute("BEGIN IMMEDIATE" if immediate else "BEGIN")
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+
+
+def get_db() -> LockedConnection:
     """获取数据库连接（自动创建）。"""
     global _conn
-    if _conn is None:
-        _conn = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=30)
-        _conn.row_factory = sqlite3.Row
-        _conn.execute("PRAGMA journal_mode=WAL")
-        _conn.execute("PRAGMA foreign_keys=ON")
-        _conn.execute("PRAGMA busy_timeout=30000")
-        _conn.execute("PRAGMA synchronous=NORMAL")
-        _conn.execute("PRAGMA journal_size_limit=65536")
-    return _conn
+    with _db_lock:
+        if _conn is None:
+            raw = sqlite3.connect(str(DB_PATH), check_same_thread=False, timeout=30, isolation_level=None)
+            raw.row_factory = sqlite3.Row
+            raw.execute("PRAGMA journal_mode=WAL")
+            raw.execute("PRAGMA foreign_keys=ON")
+            raw.execute("PRAGMA busy_timeout=30000")
+            raw.execute("PRAGMA synchronous=NORMAL")
+            raw.execute("PRAGMA journal_size_limit=65536")
+            _conn = LockedConnection(raw)
+        return _conn
 
 
 # ═══════════════════════════════════════════
@@ -359,31 +421,32 @@ SCHEMA = [
 
 def init_db():
     """创建/升级表结构。"""
-    db = get_db()
-    for sql in SCHEMA:
+    with db_lock():
+        db = get_db()
+        for sql in SCHEMA:
+            try:
+                db.execute(sql)
+            except sqlite3.OperationalError as e:
+                print(f"[schema] 跳过: {e}")
+        db.commit()
+        # 确保 PRAGMA 生效（即使 get_db() 已缓存的连接也刷新）
         try:
-            db.execute(sql)
-        except sqlite3.OperationalError as e:
-            print(f"[schema] 跳过: {e}")
-    db.commit()
-    # 确保 PRAGMA 生效（即使 get_db() 已缓存的连接也刷新）
-    try:
-        db.execute("PRAGMA synchronous=NORMAL")
-        db.execute("PRAGMA journal_size_limit=65536")
-        db.execute("PRAGMA busy_timeout=30000")
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA journal_mode=WAL")
-    except Exception:
-        pass
-    # 完整性检查
-    try:
-        result = db.execute("PRAGMA integrity_check").fetchone()
-        if result and result[0] == "ok":
-            print(f"[schema] 数据库就绪 (完整性检查通过): {DB_PATH}")
-        else:
-            print(f"[schema] 警告: 数据库可能损坏 - {result[0] if result else 'unknown'}")
-    except Exception:
-        print(f"[schema] 数据库就绪: {DB_PATH}")
+            db.execute("PRAGMA synchronous=NORMAL")
+            db.execute("PRAGMA journal_size_limit=65536")
+            db.execute("PRAGMA busy_timeout=30000")
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA journal_mode=WAL")
+        except Exception as e:
+            print(f"[schema] PRAGMA 刷新失败: {type(e).__name__}: {e}")
+        # 完整性检查
+        try:
+            result = db.execute("PRAGMA integrity_check").fetchone()
+            if result and result[0] == "ok":
+                print(f"[schema] 数据库就绪 (完整性检查通过): {DB_PATH}")
+            else:
+                print(f"[schema] 警告: 数据库可能损坏 - {result[0] if result else 'unknown'}")
+        except Exception as e:
+            print(f"[schema] 完整性检查失败: {type(e).__name__}: {e}; DB={DB_PATH}")
 
 
 def migrate_from_json(data_dir: Path):
@@ -394,151 +457,139 @@ def migrate_from_json(data_dir: Path):
     Args:
         data_dir: web/ 目录路径（包含所有 JSON 文件）
     """
-    db = get_db()
-    # 检查是否已迁移
-    if db.execute("SELECT COUNT(*) FROM users").fetchone()[0] > 0:
-        print("[migrate] 已有数据，跳过迁移")
-        return
+    with db_lock():
+        db = get_db()
+        # 检查是否已迁移
+        if db.execute("SELECT COUNT(*) FROM users").fetchone()[0] > 0:
+            print("[migrate] 已有数据，跳过迁移")
+            return
 
     print("[migrate] 开始从 JSON 迁移...")
 
-    # ── 用户 ──
-    _import_json(db, data_dir / "users.json", "users",
-                 keys=["github_id", "login", "email", "avatar_url", "role", "banned", "banned_reason", "created_at"],
-                 defaults={"role": "user", "banned": 0, "banned_reason": "", "created_at": 0})
+    with transaction(immediate=True) as db:
+        # ── 用户 ──
+        _import_json(db, data_dir / "users.json", "users",
+                     keys=["github_id", "login", "email", "avatar_url", "role", "banned", "banned_reason", "created_at"],
+                     defaults={"role": "user", "banned": 0, "banned_reason": "", "created_at": 0})
 
-    # ── 会话 ──
-    _import_json(db, data_dir / "sessions.json", "sessions",
-                 keys=["token", "github_id", "expires_at", "access_granted", "claimed_key"],
-                 defaults={"access_granted": 0, "claimed_key": ""})
+        # ── 会话 ──
+        _import_json(db, data_dir / "sessions.json", "sessions",
+                     keys=["token", "github_id", "expires_at", "access_granted", "claimed_key"],
+                     defaults={"access_granted": 0, "claimed_key": ""})
 
-    # ── 访问密钥 ──
-    ak = _load_json(data_dir / "access_keys.json").get("keys", {})
-    for k, v in ak.items():
-        db.execute(
-            "INSERT INTO access_keys VALUES (?,?,?,?,?,?,?)",
-            (k, v.get("used_by", ""), v.get("created_at", 0),
-             v.get("disabled_at", 0), v.get("expires_at", 0),
-             v.get("max_uses", 0), v.get("used_count", 0))
-        )
-
-    # ── 用户图片 ──
-    ui = _load_json(data_dir / "user_images.json")
-    for gid, entries in ui.items():
-        for e in entries:
+        # ── 访问密钥 ──
+        ak = _load_json(data_dir / "access_keys.json").get("keys", {})
+        for k, v in ak.items():
             db.execute(
-                "INSERT INTO user_images (github_id, path, prompt, time) VALUES (?,?,?,?)",
-                (gid, e.get("path", ""), e.get("prompt", ""), e.get("time", 0))
+                "INSERT INTO access_keys VALUES (?,?,?,?,?,?,?)",
+                (k, v.get("used_by", ""), v.get("created_at", 0),
+                 v.get("disabled_at", 0), v.get("expires_at", 0),
+                 v.get("max_uses", 0), v.get("used_count", 0))
             )
 
-    # ── 删除标记 ──
-    di = _load_json(data_dir / "deleted_images.json")
-    for gid, paths in di.items():
-        for p in paths:
+        # ── 用户图片 ──
+        ui = _load_json(data_dir / "user_images.json")
+        for gid, entries in ui.items():
+            for e in entries:
+                db.execute(
+                    "INSERT INTO user_images (github_id, path, prompt, time) VALUES (?,?,?,?)",
+                    (gid, e.get("path", ""), e.get("prompt", ""), e.get("time", 0))
+                )
+
+        # ── 删除标记 ──
+        di = _load_json(data_dir / "deleted_images.json")
+        for gid, paths in di.items():
+            for path in paths:
+                db.execute(
+                    "INSERT INTO deleted_images (github_id, path) VALUES (?,?)",
+                    (gid, path)
+                )
+
+        # ── 生图日志 ──
+        gl = _load_json(data_dir / "gen_log.json")
+        for lid, e in gl.items():
+            fps = json.dumps(e.get("file_paths", []))
             db.execute(
-                "INSERT INTO deleted_images (github_id, path) VALUES (?,?)",
-                (gid, p)
+                "INSERT INTO gen_logs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (lid, e.get("github_id", ""), e.get("login", ""),
+                 e.get("prompt", ""), e.get("negative_prompt", ""),
+                 e.get("workflow", ""), e.get("count", 0),
+                 e.get("status", "success"), e.get("client_ip", ""),
+                 e.get("created_at", 0), fps)
             )
 
-    # ── 生图日志 ──
-    gl = _load_json(data_dir / "gen_log.json")
-    for lid, e in gl.items():
-        fps = json.dumps(e.get("file_paths", []))
-        db.execute(
-            "INSERT INTO gen_logs VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-            (lid, e.get("github_id", ""), e.get("login", ""),
-             e.get("prompt", ""), e.get("negative_prompt", ""),
-             e.get("workflow", ""), e.get("count", 0),
-             e.get("status", "success"), e.get("client_ip", ""),
-             e.get("created_at", 0), fps)
-        )
+        # ── 删除日志 ──
+        dl = _load_json_list(data_dir / "deletion_log.json")
+        for e in dl:
+            db.execute(
+                "INSERT INTO deletion_logs (path,thumb_file,deleted_by_gid,deleted_by_login,deleted_at,creator_ip,creator_gid,creator_login) VALUES (?,?,?,?,?,?,?,?)",
+                (e.get("path", ""), e.get("thumb_file", ""),
+                 e.get("deleted_by_github_id", e.get("github_id", "")),
+                 e.get("deleted_by_login", e.get("login", "")),
+                 e.get("deleted_at", e.get("time", 0)),
+                 e.get("creator_ip", ""), e.get("creator_github_id", ""), e.get("creator_login", ""))
+            )
 
-    # ── 删除日志 ──
-    dl = _load_json_list(data_dir / "deletion_log.json")
-    for e in dl:
-        db.execute(
-            "INSERT INTO deletion_logs (path,thumb_file,deleted_by_gid,deleted_by_login,deleted_at,creator_ip,creator_gid,creator_login) VALUES (?,?,?,?,?,?,?,?)",
-            (e.get("path", ""), e.get("thumb_file", ""),
-             e.get("deleted_by_github_id", e.get("github_id", "")),
-             e.get("deleted_by_login", e.get("login", "")),
-             e.get("deleted_at", e.get("time", 0)),
-             e.get("creator_ip", ""), e.get("creator_github_id", ""), e.get("creator_login", ""))
-        )
+        # ── 配置 ──
+        for fname, section in [
+            ("limits.json", "limits"),
+            ("llm_config.json", "llm"),
+            ("announcement.json", "announcement"),
+            ("maintenance.json", "maintenance"),
+            ("custom_head.json", "custom_head"),
+        ]:
+            data = _load_json(data_dir / fname)
+            for k, v in data.items():
+                db.execute("INSERT OR REPLACE INTO config VALUES (?,?,?)",
+                           (section, k, json.dumps(v) if not isinstance(v, str) else v))
 
-    # ── 配置 ──
-    for fname, section in [
-        ("limits.json", "limits"),
-        ("llm_config.json", "llm"),
-        ("announcement.json", "announcement"),
-        ("maintenance.json", "maintenance"),
-        ("custom_head.json", "custom_head"),
-    ]:
-        data = _load_json(data_dir / fname)
-        for k, v in data.items():
-            db.execute("INSERT OR REPLACE INTO config VALUES (?,?,?)",
-                       (section, k, json.dumps(v) if not isinstance(v, str) else v))
+        # ── 画风 ──
+        styles = _load_json_list(data_dir / "styles.json")
+        for i, style in enumerate(styles):
+            db.execute(
+                "INSERT INTO styles (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
+                (style.get("name", ""), style.get("tags", ""), style.get("alias", ""), style.get("thumbnail", ""), i)
+            )
 
-    # ── 画风 ──
-    styles = _load_json_list(data_dir / "styles.json")
-    for i, s in enumerate(styles):
-        db.execute(
-            "INSERT INTO styles (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
-            (s.get("name", ""), s.get("tags", ""), s.get("alias", ""), s.get("thumbnail", ""), i)
-        )
+        # ── 角色 ──
+        characters = _load_json_list(data_dir / "characters.json")
+        for i, c in enumerate(characters):
+            db.execute(
+                "INSERT INTO characters (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
+                (c.get("name", ""), c.get("tags", ""), c.get("alias", ""), c.get("thumbnail", ""), i)
+            )
 
-    # ── 角色 ──
-    characters = _load_json_list(data_dir / "characters.json")
-    for i, c in enumerate(characters):
-        db.execute(
-            "INSERT INTO characters (name, tags, alias, thumbnail, sort_order) VALUES (?,?,?,?,?)",
-            (c.get("name", ""), c.get("tags", ""), c.get("alias", ""), c.get("thumbnail", ""), i)
-        )
+        # ── 分辨率 ──
+        res = _load_json(data_dir / "resolutions.json").get("presets", [])
+        for i, r in enumerate(res):
+            db.execute(
+                "INSERT INTO resolutions (w, h, label, sort_order) VALUES (?,?,?,?)",
+                (r.get("w", 0), r.get("h", 0), r.get("label", ""), i)
+            )
 
-    # ── 分辨率 ──
-    res = _load_json(data_dir / "resolutions.json").get("presets", [])
-    for i, r in enumerate(res):
-        db.execute(
-            "INSERT INTO resolutions (w, h, label, sort_order) VALUES (?,?,?,?)",
-            (r.get("w", 0), r.get("h", 0), r.get("label", ""), i)
-        )
+        # ── 工作流元数据 ──
+        wm = _load_json_list(data_dir / "workflow_meta.json")
+        for i, m in enumerate(wm):
+            db.execute(
+                "INSERT INTO workflow_meta (workflow, thumbnail, lora_link, display_name, sort_order) VALUES (?,?,?,?,?)",
+                (m.get("workflow", ""), m.get("thumbnail", ""), m.get("lora_link", ""), m.get("display_name", ""), i)
+            )
 
-    # ── 工作流元数据 ──
-    wm = _load_json_list(data_dir / "workflow_meta.json")
-    for i, m in enumerate(wm):
-        db.execute(
-            "INSERT INTO workflow_meta (workflow, thumbnail, lora_link, display_name, sort_order) VALUES (?,?,?,?,?)",
-            (m.get("workflow", ""), m.get("thumbnail", ""), m.get("lora_link", ""), m.get("display_name", ""), i)
-        )
+        # ── 精选 ──
+        ft = _load_txt_lines(data_dir / "featured.txt")
+        for i, path in enumerate(ft):
+            db.execute("INSERT INTO featured (path, sort_order) VALUES (?,?)", (path, i))
 
-    # ── 用户通知 ──
-    """
-    CREATE TABLE IF NOT EXISTS notifications (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        github_id   TEXT NOT NULL,
-        message     TEXT NOT NULL DEFAULT '',
-        created_at  REAL NOT NULL DEFAULT 0,
-        read        INTEGER NOT NULL DEFAULT 0,
-        FOREIGN KEY (github_id) REFERENCES users(github_id) ON DELETE CASCADE
-    )
-    """,
-    "CREATE INDEX IF NOT EXISTS idx_notifications_github ON notifications(github_id, read)",
+        # ── 封禁 IP ──
+        for ip in _load_txt_lines(data_dir / "banned_ips.txt"):
+            db.execute("INSERT OR IGNORE INTO banned_ips VALUES (?)", (ip,))
 
-    # ── 精选 ──
-    ft = _load_txt_lines(data_dir / "featured.txt")
-    for i, p in enumerate(ft):
-        db.execute("INSERT INTO featured (path, sort_order) VALUES (?,?)", (p, i))
+        # ── 生图者 IP ──
+        for line in _load_txt_lines(data_dir / "creator_ips.txt"):
+            if "\t" in line:
+                path, ip = line.split("\t", 1)
+                db.execute("INSERT OR REPLACE INTO creator_ips VALUES (?,?)", (path.strip(), ip.strip()))
 
-    # ── 封禁 IP ──
-    for ip in _load_txt_lines(data_dir / "banned_ips.txt"):
-        db.execute("INSERT OR IGNORE INTO banned_ips VALUES (?)", (ip,))
-
-    # ── 生图者 IP ──
-    for line in _load_txt_lines(data_dir / "creator_ips.txt"):
-        if "\t" in line:
-            path, ip = line.split("\t", 1)
-            db.execute("INSERT OR REPLACE INTO creator_ips VALUES (?,?)", (path.strip(), ip.strip()))
-
-    db.commit()
     print("[migrate] 迁移完成")
 
 
@@ -550,8 +601,8 @@ def _load_json(path: Path) -> dict:
     try:
         if path.is_file():
             return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[migrate] 读取 JSON 失败 {path}: {type(e).__name__}: {e}")
     return {}
 
 
@@ -560,8 +611,8 @@ def _load_json_list(path: Path) -> list:
         if path.is_file():
             data = json.loads(path.read_text(encoding="utf-8"))
             return data if isinstance(data, list) else []
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[migrate] 读取 JSON 列表失败 {path}: {type(e).__name__}: {e}")
     return []
 
 
@@ -569,8 +620,8 @@ def _load_txt_lines(path: Path) -> List[str]:
     try:
         if path.is_file():
             return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[migrate] 读取文本失败 {path}: {type(e).__name__}: {e}")
     return []
 
 
@@ -621,10 +672,9 @@ def config_get(section: str, key: str, default: Any = None) -> Any:
 
 def config_set(section: str, key: str, value: Any):
     """写入配置项。"""
-    db = get_db()
     val = json.dumps(value) if not isinstance(value, str) else value
-    db.execute("INSERT OR REPLACE INTO config VALUES (?,?,?)", (section, key, val))
-    db.commit()
+    with transaction() as db:
+        db.execute("INSERT OR REPLACE INTO config VALUES (?,?,?)", (section, key, val))
 
 
 def config_get_section(section: str) -> Dict[str, Any]:

@@ -265,7 +265,7 @@ onMounted(loadProfiles)
 
     <!-- Edit/Create Modal -->
     <Teleport to="body">
-      <div v-if="showModal" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4" @click.self="showModal=false">
+      <div v-if="showModal" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-5 max-h-[90vh] overflow-y-auto" @click.stop>
           <h3 class="text-lg font-semibold mb-4">{{ isNewProfile ? '新建 LLM 配置' : '编辑 LLM 配置' }}</h3>
 

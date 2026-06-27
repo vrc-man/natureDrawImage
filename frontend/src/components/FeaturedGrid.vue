@@ -57,9 +57,22 @@ function openLightbox(index: number) {
     <div v-if="errorMsg" class="text-center text-xs text-red-500 py-4">{{ errorMsg }}</div>
 
     <div v-if="items.length" id="featured-gallery" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-      <div v-for="(img, i) in items" :key="img.path || i" class="gal-img cursor-pointer overflow-hidden" @click="openLightbox(i)">
-        <img :src="img.thumb || '/api/output/file?path=' + encodeURIComponent(img.path || '')" loading="lazy" class="w-full aspect-square object-cover" />
+      <div v-for="(img, i) in items" :key="img.path || i" class="gal-img cursor-pointer overflow-hidden relative bg-gray-100 rounded-lg" @click="openLightbox(i)">
+        <div class="aspect-square flex items-center justify-center bg-gray-100 rounded-lg">
+          <svg v-if="!img._loaded" class="animate-spin h-5 w-5 text-pink-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+        </div>
+        <img :src="img.thumb || '/api/output/file?path=' + encodeURIComponent(img.path || '')" loading="lazy" class="w-full aspect-square object-cover absolute inset-0 transition-opacity duration-300" :class="img._loaded ? 'opacity-100' : 'opacity-0'" @load="img._loaded = true" @error="img._loaded = true" />
       </div>
+    </div>
+    <div v-else-if="loading" class="flex flex-col items-center justify-center py-12 gap-2">
+      <svg class="animate-spin h-6 w-6 text-pink-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+      </svg>
+      <span class="text-xs text-gray-400">加载中请稍后...</span>
     </div>
     <div v-else-if="!loading && !errorMsg" class="text-center text-xs text-gray-400 py-8">暂无精选图片</div>
   </div>

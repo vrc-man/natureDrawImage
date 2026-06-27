@@ -153,7 +153,7 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
 
     <!-- Picker modal -->
     <Teleport to="body">
-      <div v-if="open" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8" @click.self="open = false">
+      <div v-if="open" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8">
         <div class="mx-4 w-full max-w-[calc(100vw_-_10px)] bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]">
           <div class="flex items-center justify-between p-5 pb-3 border-b border-pink-100 shrink-0">
             <h3 class="text-lg font-bold text-gray-700">🎭 选择角色 & 画风</h3>
@@ -176,7 +176,7 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
                   <div v-show="charCatExpanded[cat] !== false" class="flex flex-wrap gap-1 w-full">
                     <div v-for="c in items" :key="c.tags" :class="['style-card', { selected: selectedChars.includes(c.tags) }]" @click="toggleChar(c)">
                       <img v-if="c.image" :src="'/api/character_thumbnail?name=' + encodeURIComponent(c.image)" class="style-thumb" loading="lazy" />
-                      <div v-else class="style-thumb flex items-center justify-center text-gray-300" style="font-size:20px;width:64px;height:64px">🎭</div>
+                      <div v-else class="style-thumb style-thumb-placeholder flex items-center justify-center text-gray-300">🎭</div>
                       <span class="style-label">{{ c.name || c.tags }}</span>
                     </div>
                   </div>
@@ -198,7 +198,7 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
                   <div v-show="styleCatExpanded[cat] !== false" class="flex flex-wrap gap-1 w-full">
                     <div v-for="s in items" :key="s.tags" :class="['style-card', { selected: selectedStyle === s.tags }]" @click="selectStyle(s)">
                       <img v-if="s.image" :src="'/api/style_thumbnail?name=' + encodeURIComponent(s.image)" class="style-thumb" loading="lazy" />
-                      <div v-else class="style-thumb flex items-center justify-center text-gray-300" style="font-size:20px;width:64px;height:64px">🖌️</div>
+                      <div v-else class="style-thumb style-thumb-placeholder flex items-center justify-center text-gray-300">🖌️</div>
                       <span class="style-label">{{ s.name || s.tags }}</span>
                     </div>
                   </div>
