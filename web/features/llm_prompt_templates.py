@@ -1,8 +1,8 @@
 """
-外挂功能：LLM 系统提示词模板库（JSON 存储，不进主 SQLite，不碰生图日志）。
+外挂功能：LLM 系统提示词模板库（插件自有 JSON 存储，不进 MySQL，不碰生图日志）。
 
 设计：
-  - 模板数据存 web/llm_prompt_templates.json（数组），带线程锁 + 原子写。
+  - 模板数据存 web/features/config/llm_prompt_templates.json（数组），带线程锁 + 原子写。
   - JSON 损坏时**抛错**，绝不自动清空（避免后台一保存把模板全清掉）。
   - 复用原 tags 模式机制：模板只提供 system prompt 规则；NSFW 绕过 + 输出格式
     POSITIVE/NEGATIVE 由主流程（app.translate_prompt）统一包头尾，本模块不管解析。
@@ -29,9 +29,9 @@ from fastapi import APIRouter, Request, HTTPException
 
 from features._deps import require_admin
 
-# 数据文件：与 styles.json / characters.json 同级（web/ 目录）
-_WEB_DIR = Path(__file__).resolve().parent.parent          # .../web
-JSON_PATH = _WEB_DIR / "llm_prompt_templates.json"
+# 插件私有运行时配置：不提交 Git（见 .gitignore）
+CONFIG_DIR = Path(__file__).resolve().parent / "config"
+JSON_PATH = CONFIG_DIR / "llm_prompt_templates.json"
 
 _lock = threading.Lock()
 
@@ -62,6 +62,7 @@ def _load() -> List[Dict[str, Any]]:
 
 def _save_atomic(items: List[Dict[str, Any]]) -> None:
     """原子写入（tmp + os.replace），UTF-8、不转义中文。"""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     tmp = JSON_PATH.with_suffix(".json.tmp")
     with tmp.open("w", encoding="utf-8") as f:
         json.dump(items, f, ensure_ascii=False, indent=2)

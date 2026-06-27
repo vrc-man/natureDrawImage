@@ -92,9 +92,9 @@ def thumb_exists(output_rel: str) -> bool:
 
 
 # ── 中间人注入容器（app.py 启动时回填，features 绝不 import app）──
-# 设计：features 模块需要 app.py 的"数据函数 / 锁 / session 函数"时，
+# 设计：features 模块需要 app.py 的 session 函数 / 上下文函数时，
 #   不直接 import app（避免循环依赖），而是通过这里取 app 注入的引用。
-#   数据库读写永远走 app.py 注入的同一批函数 → 单一入口、共享锁、不争抢。
+#   数据库读写不要直接拿底层 get_db，统一封装到 db.operations 门面。
 _app_ctx: dict = {}
 
 

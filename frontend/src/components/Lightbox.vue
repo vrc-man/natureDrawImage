@@ -9,6 +9,7 @@ const reportReason = ref('')
 const reportStatus = ref('')
 const lbCreator = ref('')
 const forkLoading = ref(false)
+const imgLoading = ref(true)
 
 function fetchCreator() {
   const c = current()
@@ -22,8 +23,11 @@ function fetchCreator() {
     lbCreator.value = ''
   }
 }
-watch(() => lbState.index, fetchCreator)
-watch(lbOpen, (v) => { if (v) setTimeout(fetchCreator, 50) })
+watch(() => lbState.index, () => {
+  fetchCreator()
+  imgLoading.value = true
+})
+watch(lbOpen, (v) => { if (v) { setTimeout(fetchCreator, 50); imgLoading.value = true } })
 
 function onKeyDown(e: KeyboardEvent) {
   if (!lbOpen.value) return
@@ -72,12 +76,19 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
 
 <template>
   <Teleport to="body">
-    <div v-if="lbOpen" id="lb-root" class="open" @click.self="close">
-      <button id="lb-close" @click="close" class="absolute top-2 right-3 bg-transparent text-white border-0 text-2xl cursor-pointer z-10">×</button>
-      <button v-if="lbState.items.length > 1" id="lb-prev" @click="prev" class="lb-nav left-2">‹</button>
-      <button v-if="lbState.items.length > 1" id="lb-next" @click="next" class="lb-nav right-2">›</button>
-      <div id="lb-img-wrap" class="flex-1 flex items-center justify-center overflow-hidden p-2 min-h-0" @click.self="close">
-        <img v-if="current()" :src="current()!.url" id="lb-img" class="max-w-full max-h-full w-auto h-auto object-contain select-auto" alt="" />
+    <div v-if="lbOpen" id="lb-root" class="open">
+      <button id="lb-close" @click.stop="close" class="absolute top-3 right-3 bg-black/50 hover:bg-black/80 text-white border-0 w-9 h-9 rounded-full flex items-center justify-center text-xl cursor-pointer z-10 transition-all">✕</button>
+      <button v-if="lbState.items.length > 1" id="lb-prev" @click.stop="prev" class="lb-nav left-2">‹</button>
+      <button v-if="lbState.items.length > 1" id="lb-next" @click.stop="next" class="lb-nav right-2">›</button>
+      <div id="lb-img-wrap" class="flex-1 flex items-center justify-center overflow-hidden p-2 min-h-0 relative">
+        <div v-if="imgLoading" @click.stop class="absolute inset-0 flex flex-col items-center justify-center gap-2">
+          <svg class="animate-spin h-8 w-8 text-pink-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          <span class="text-white/60 text-xs">加载中请稍后...</span>
+        </div>
+        <img v-if="current()" :src="current()!.url" id="lb-img" class="max-w-full max-h-full w-auto h-auto object-contain select-auto transition-opacity duration-300" :class="imgLoading ? 'opacity-0' : 'opacity-100'" alt="" @load="imgLoading = false" @error="imgLoading = false" />
       </div>
       <div id="lb-bar" class="text-white px-4 py-3 flex items-center gap-3 flex-wrap text-sm" style="background:rgba(15,23,42,.85);backdrop-filter:blur(12px)">
         <span id="lb-title" class="text-sm mr-auto break-all">{{ current()?.title || '' }}</span>
@@ -91,8 +102,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeyDown))
     </div>
 
     <!-- Report Modal -->
-    <div v-if="showReport" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4" @click.self="showReport=false">
-      <div class="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5">
+    <div v-if="showReport" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5" @click.stop>
         <h3 class="text-base font-bold text-gray-700 mb-3">📮 举报图片</h3>
         <textarea v-model="reportReason" placeholder="请描述举报原因..." rows="3" class="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 resize-y box-border"></textarea>
         <div class="flex gap-2 mt-3">

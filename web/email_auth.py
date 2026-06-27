@@ -24,7 +24,7 @@ import httpx
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
-from db.schema import get_db, config_get, config_set, db_lock, transaction
+from db.schema import get_db, config_get, config_set, transaction
 from db import operations as main_db
 from db import operations as _db_ops
 

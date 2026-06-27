@@ -2,9 +2,8 @@
 外挂功能：访问密钥管理（从 app.py 迁出，行为 100% 保持原样）。
 
 设计（中间人模式）：
-  - 本模块**不** import app、**不** import db，所有数据库读写都走 app.py
-    通过 features._deps.set_app_ctx() 注入的同一批函数（db / 锁 / session）。
-  - 单一数据入口、共享锁，不会出现多模块争抢数据库读写。
+  - 本模块**不** import app，数据库读写通过 app.py 注入的 db.operations 门面完成。
+  - 不直接拿 db.schema.get_db；如需新增数据库能力，先封装到 db/operations.py。
   - API 路径、请求体、返回结构与原 app.py 完全一致，前端无需改动。
 
 迁出的接口：

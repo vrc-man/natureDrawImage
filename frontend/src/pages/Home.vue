@@ -384,6 +384,16 @@ async function ensureWorkflowForMode(m: 'txt2img'|'img2img') {
   }
 }
 
+// 切换工作流时确保分辨率落在预设里
+function _ensureResolutionInPresets() {
+  if (!resolutions.value.length) return
+  const has = resolutions.value.some(r => r.w === width.value && r.h === height.value)
+  if (!has) {
+    width.value = resolutions.value[0].w
+    height.value = resolutions.value[0].h
+  }
+}
+
 async function onWorkflowSelect(path: string, name?: string) {
   currentWorkflowPath.value = path
   localStorage.setItem('currentWorkflow', path)
@@ -398,9 +408,11 @@ async function onWorkflowSelect(path: string, name?: string) {
       hasLoadImage.value = !!(d.summary && d.summary.has_loadimage)
     }
   } catch {}
+  _ensureResolutionInPresets()
 }
 
-// ===== Char/Style selection (handled by CharStylePicker via localStorage; read at submit time) =====
+const presetDirectRef = ref<InstanceType<typeof PresetManager> | null>(null)
+const presetNegRef = ref<InstanceType<typeof PresetManager> | null>(null)
 
 // ===== Fetch resolutions =====
 async function loadResolutions() {
@@ -561,6 +573,18 @@ function prepareGen() {
   let char = ''
   try { char = JSON.parse(localStorage.getItem('currentCharacters') || '[]').join(', '); } catch {}
   if (!direct && !nl) { showErrorToast('请输入提示词'); return null }
+  // 检查分辨率是否在预设中，不在就自动用第一个
+  if (!resolutions.value.some(r => r.w === width.value && r.h === height.value) && resolutions.value.length) {
+    width.value = resolutions.value[0].w
+    height.value = resolutions.value[0].h
+  }
+  // 图生图必须传图
+  if (mode.value === 'img2img' && uploadRef.value) {
+    if (!uploadRef.value.getImageNames().length && !uploadRef.value.hasPendingUploads()) {
+      showErrorToast('请先上传参考图')
+      return null
+    }
+  }
   return { direct, nl, neg, w: width.value, h: height.value, style, char, styleName: selectedStyleName, charNames: selectedCharNames.join(', ') }
 }
 
@@ -912,43 +936,18 @@ async function loadAnnouncement() {
   } catch {}
 }
 
-// ===== Textarea height sync (与原版一致) =====
-let _thTimer: ReturnType<typeof setTimeout> | null = null
-let _lastThSync = 0
+// ===== Textarea height sync =====
 function initTextareaHeightSync() {
   if (!window.ResizeObserver) return
-  ;['direct', 'negative_prompt', 'nl'].forEach(id => {
+  ;['direct', 'negative_prompt'].forEach(id => {
     const el = document.getElementById(id) as HTMLTextAreaElement | null
     if (!el) return
     new ResizeObserver(() => {
-      if (_thTimer) clearTimeout(_thTimer)
-      _thTimer = setTimeout(() => {
-        const h = el.style.height
-        const saved: Record<string, string> = {}
-        try { Object.assign(saved, JSON.parse(localStorage.getItem('taHeights') || '{}')) } catch {}
-        saved[id] = h
-        if (id === 'direct' || id === 'negative_prompt') {
-          const peer = document.getElementById(id === 'direct' ? 'negative_prompt' : 'direct') as HTMLTextAreaElement | null
-          const now = Date.now()
-          if (peer && h && h !== peer.style.height && now - _lastThSync > 300) {
-            _lastThSync = now
-            peer.style.height = h
-          }
-          saved.direct = h
-          saved.negative_prompt = h
-        }
-        localStorage.setItem('taHeights', JSON.stringify(saved))
-      }, 400)
+      const h = el.style.height
+      const peer = document.getElementById(id === 'direct' ? 'negative_prompt' : 'direct') as HTMLTextAreaElement | null
+      if (peer && h && h !== peer.style.height) peer.style.height = h
     }).observe(el)
   })
-  // 恢复保存的高度
-  try {
-    const saved: Record<string, string> = JSON.parse(localStorage.getItem('taHeights') || '{}')
-    Object.entries(saved).forEach(([id, h]) => {
-      const el = document.getElementById(id) as HTMLTextAreaElement | null
-      if (el && h) el.style.height = h
-    })
-  } catch {}
 }
 
 function clearFork() {
@@ -1031,36 +1030,36 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 <!-- Prompt grid -->
                 <div class="prompt-grid">
                   <div>
-                    <label class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
-                      <button type="button" title="提示词预设" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit text-base" @click.stop>📝</button>
+                    <div class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
+                      <button type="button" title="提示词预设" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit text-base" @click="presetDirectRef?.openList()">📝</button>
                       <span>正面提示词</span>
                       <span class="ml-auto flex items-center gap-1">
-                        <PresetManager target="direct" :on-fill="(t:string) => fillPreset(t, 'direct')" />
+                        <PresetManager ref="presetDirectRef" target="direct" :on-fill="(t:string) => fillPreset(t, 'direct')" />
                         <button @click="directPrompt=''" class="text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all cursor-pointer border-0">清空</button>
                       </span>
-                    </label>
+                    </div>
                     <textarea id="direct" v-model="directPrompt" placeholder="正面提示词（英文标签或自然语言）" rows="1" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border"></textarea>
                   </div>
                   <div>
-                    <label class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
-                      <button type="button" title="提示词预设" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit text-base" @click.stop>📝</button>
+                    <div class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
+                      <button type="button" title="提示词预设" class="cursor-pointer hover:scale-110 transition-transform bg-transparent border-0 p-0 text-inherit text-base" @click="presetNegRef?.openList()">📝</button>
                       <span>负面提示词</span>
                       <span class="ml-auto flex items-center gap-1">
-                        <PresetManager target="negative_prompt" :on-fill="(t:string) => fillPreset(t, 'negative_prompt')" />
+                        <PresetManager ref="presetNegRef" target="negative_prompt" :on-fill="(t:string) => fillPreset(t, 'negative_prompt')" />
                         <button @click="negativePrompt=''" class="text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all cursor-pointer border-0">清空</button>
                       </span>
-                    </label>
+                    </div>
                     <textarea id="negative_prompt" v-model="negativePrompt" placeholder="负面提示词（可留空）" rows="1" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm font-mono bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border"></textarea>
                   </div>
                 </div>
 
                 <!-- NL prompt -->
                 <div>
-                  <label class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
+                  <div class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
                     <span>自然语言描述</span>
                     <span class="text-gray-400 font-normal text-[7px] sm:text-sm">(中文/英文，LLM 翻译生成提示词)</span>
                     <button @click="nlPrompt=''" class="ml-auto text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all cursor-pointer border-0">清空</button>
-                  </label>
+                  </div>
                   <textarea id="nl" v-model="nlPrompt" placeholder="描述你想要的画面，LLM 会自动翻译为 tags" rows="2" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border"></textarea>
                 </div>
 
@@ -1234,19 +1233,22 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
       <!-- ============ SETTINGS MODAL ============ -->
       <Teleport to="body">
-        <div v-if="settingsOpen" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8" @click.self="closeSettings">
+        <div v-if="settingsOpen" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8">
           <div class="mx-4 w-full sm:max-w-2xl bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 max-h-[85vh] overflow-y-auto p-5" @click.stop>
             <!-- === MAIN SETTINGS === -->
             <template v-if="settingsView === 'main'">
-              <div class="flex items-center gap-3 pb-3 border-b border-pink-100">
-                <div class="shrink-0">
-                  <img v-if="userStore.currentUser?.avatar_url" :src="userStore.currentUser.avatar_url" class="w-10 h-10 rounded-full" />
-                  <span v-else class="w-10 h-10 rounded-full bg-pink-100 flex items-center justify-center text-lg">{{ (userStore.currentUser?.login || '?')[0] }}</span>
+              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+                <div class="flex items-center gap-3 min-w-0">
+                  <div class="shrink-0">
+                    <img v-if="userStore.currentUser?.avatar_url" :src="userStore.currentUser.avatar_url" class="w-10 h-10 rounded-full" />
+                    <span v-else class="w-10 h-10 rounded-full bg-pink-100 flex items-center justify-center text-lg">{{ (userStore.currentUser?.login || '?')[0] }}</span>
+                  </div>
+                  <div class="min-w-0">
+                    <div class="font-bold text-gray-700">{{ userStore.currentUser?.login }}</div>
+                    <div class="text-xs text-gray-400 truncate">{{ userStore.currentUser?.email || '' }}</div>
+                  </div>
                 </div>
-                <div class="min-w-0">
-                  <div class="font-bold text-gray-700">{{ userStore.currentUser?.login }}</div>
-                  <div class="text-xs text-gray-400 truncate">{{ userStore.currentUser?.email || '' }}</div>
-                </div>
+                <button @click="closeSettings" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent shrink-0">&times;</button>
               </div>
               <div v-if="keyInfoHtml" id="settings-key-info" class="text-sm bg-gray-50 rounded-xl px-4 py-3 text-gray-600 mt-2" v-html="keyInfoHtml"></div>
               <div class="pt-1 space-y-1">
@@ -1341,14 +1343,21 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
             <!-- === TOTP SETTINGS === -->
             <template v-if="settingsView === 'totp'">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+                <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
+                <button @click="closeSettings" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
+              </div>
               <TotpSettings @back="settingsView='main'" />
             </template>
 
             <!-- === PASSWORD CHANGE === -->
             <template v-if="settingsView === 'password'">
-              <div class="flex items-center gap-2 pb-3 border-b border-pink-100">
-                <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
-                <h3 class="text-base font-bold text-gray-700">🔑 更改密码</h3>
+              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+                <div class="flex items-center gap-2">
+                  <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
+                  <h3 class="text-base font-bold text-gray-700">🔑 更改密码</h3>
+                </div>
+                <button @click="closeSettings" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
               </div>
               <div class="space-y-3 pt-2">
                 <input v-model="cpOld" type="password" placeholder="当前密码" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all box-border" />

@@ -12,12 +12,11 @@ import pymysql
 import pymysql.cursors
 import json
 import os
-import time
 import subprocess
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Iterator
+from typing import Dict, Any, Iterator
 
 # ── MySQL 连接配置（从环境变量读取，灵活适配各种部署环境） ──
 _DB_HOST = os.environ.get("MYSQL_HOST", "127.0.0.1")
@@ -29,9 +28,10 @@ _DB_CHARSET = "utf8mb4"
 
 DB_DIR = Path(__file__).parent
 
-# ── 连接（单连接 + 全局可重入锁，与旧版 sqlite3 模式兼容） ──
-_conn: Optional["LockedConnection"] = None
-_db_lock = threading.RLock()
+# ── 连接（每线程连接 + 事务复用，避免单进程内全局串行化） ──
+_thread_state = threading.local()
+_conn_init_lock = threading.Lock()
+_db_lock = threading.RLock()  # 兼容旧调用方；仅用于少量进程内临界区，不再包住所有 SQL
 _mysqldump_path = None  # 启动时自动探测
 
 
@@ -52,8 +52,36 @@ def _find_mysqldump() -> str:
     return "mysqldump"  # 最后尝试系统 PATH
 
 
+def _connect() -> pymysql.Connection:
+    """创建一个新的 MySQL 连接。"""
+    return pymysql.connect(
+        host=_DB_HOST,
+        port=_DB_PORT,
+        user=_DB_USER,
+        password=_DB_PASS,
+        database=_DB_NAME,
+        charset=_DB_CHARSET,
+        cursorclass=pymysql.cursors.DictCursor,
+        autocommit=True,
+        connect_timeout=10,
+    )
+
+
+def _ensure_mysqldump_path() -> None:
+    """懒加载 mysqldump 路径，避免多线程重复探测。"""
+    global _mysqldump_path
+    if _mysqldump_path is None:
+        with _conn_init_lock:
+            if _mysqldump_path is None:
+                _mysqldump_path = _find_mysqldump()
+
+
+def _tx_depth() -> int:
+    return int(getattr(_thread_state, "tx_depth", 0) or 0)
+
+
 class LockedConnection:
-    """pymysql.Connection 的加锁包装，保留旧版 db.execute().fetchone() 接口。"""
+    """pymysql.Connection 兼容包装，保留旧版 db.execute().fetchone() 接口。"""
 
     def __init__(self, conn: pymysql.Connection):
         self._conn = conn
@@ -61,34 +89,39 @@ class LockedConnection:
     def _cursor(self):
         return self._conn.cursor()
 
+    def _ping(self):
+        self._conn.ping(reconnect=True)
+
+    def _ensure_ready(self):
+        if _tx_depth() == 0:
+            self._ping()
+
     def execute(self, sql: str, params=None):
-        with _db_lock:
-            c = self._cursor()
-            c.execute(sql, params)
-            return c
+        self._ensure_ready()
+        c = self._cursor()
+        c.execute(sql, params)
+        return c
 
     def executemany(self, sql: str, seq):
-        with _db_lock:
-            c = self._cursor()
-            c.executemany(sql, seq)
-            return c
+        self._ensure_ready()
+        c = self._cursor()
+        c.executemany(sql, seq)
+        return c
 
     def executescript(self, sql: str):
-        with _db_lock:
-            c = self._cursor()
-            for stmt in sql.split(";"):
-                s = stmt.strip()
-                if s:
-                    c.execute(s)
-            return c
+        self._ensure_ready()
+        c = self._cursor()
+        for stmt in sql.split(";"):
+            s = stmt.strip()
+            if s:
+                c.execute(s)
+        return c
 
     def commit(self):
-        with _db_lock:
-            return self._conn.commit()
+        return self._conn.commit()
 
     def rollback(self):
-        with _db_lock:
-            return self._conn.rollback()
+        return self._conn.rollback()
 
     def backup(self, dst_path: str):
         """mysqldump 在线热备——不锁表、不阻塞读写。"""
@@ -102,62 +135,66 @@ class LockedConnection:
 
 
 def db_lock() -> threading.RLock:
-    """返回数据库全局写锁。"""
+    """返回兼容旧代码的进程内锁；MySQL SQL 执行本身不再默认全局加锁。"""
     return _db_lock
 
 
 @contextmanager
 def transaction(immediate: bool = False) -> Iterator[LockedConnection]:
     """MySQL 写事务。immediate 参数向下兼容（MySQL 不需要 BEGIN IMMEDIATE）。"""
-    with _db_lock:
-        db = get_db()
-        db.execute("START TRANSACTION")
+    db = get_db()
+    depth = _tx_depth()
+    if depth > 0:
+        _thread_state.tx_depth = depth + 1
         try:
             yield db
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+        finally:
+            _thread_state.tx_depth = depth
+        return
+
+    _thread_state.tx_depth = 1
+    db.execute("START TRANSACTION")
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        _thread_state.tx_depth = 0
 
 
 def get_db() -> LockedConnection:
-    """获取数据库连接（自动创建 + 连接存活检测）。"""
-    global _conn, _mysqldump_path
-    with _db_lock:
-        if _conn is None:
-            if _mysqldump_path is None:
-                _mysqldump_path = _find_mysqldump()
-            raw = pymysql.connect(
-                host=_DB_HOST,
-                port=_DB_PORT,
-                user=_DB_USER,
-                password=_DB_PASS,
-                database=_DB_NAME,
-                charset=_DB_CHARSET,
-                cursorclass=pymysql.cursors.DictCursor,
-                autocommit=False,
-                connect_timeout=10,
-            )
-            _conn = LockedConnection(raw)
-        else:
+    """获取当前线程的数据库连接（自动创建 + 连接存活检测）。"""
+    _ensure_mysqldump_path()
+    db = getattr(_thread_state, "db", None)
+    if db is None:
+        db = LockedConnection(_connect())
+        _thread_state.db = db
+    elif _tx_depth() == 0:
+        try:
+            db._ping()
+        except Exception:
             try:
-                _conn._conn.ping(reconnect=True)
+                db.close()
             except Exception:
-                raw = pymysql.connect(
-                    host=_DB_HOST, port=_DB_PORT, user=_DB_USER,
-                    password=_DB_PASS, database=_DB_NAME,
-                    charset=_DB_CHARSET, cursorclass=pymysql.cursors.DictCursor,
-                    autocommit=False, connect_timeout=10,
-                )
-                _conn._conn = raw
-        return _conn
+                pass
+            db = LockedConnection(_connect())
+            _thread_state.db = db
+    return db
+
+
+def close_db():
+    """关闭当前线程持有的数据库连接。"""
+    db = getattr(_thread_state, "db", None)
+    if db is not None:
+        db.close()
+        _thread_state.db = None
 
 
 def backup_database(dst_path: str):
     """mysqldump 在线热备，不阻塞读写。"""
-    global _mysqldump_path
-    if _mysqldump_path is None:
-        _mysqldump_path = _find_mysqldump()
+    _ensure_mysqldump_path()
     cmd = [
         _mysqldump_path,
         "--single-transaction",
@@ -496,8 +533,7 @@ SCHEMA = [
 
 def init_db():
     """创建/升级表结构。"""
-    with db_lock():
-        db = get_db()
+    with transaction() as db:
         errors = 0
         for sql in SCHEMA:
             try:
@@ -514,200 +550,6 @@ def init_db():
             print(f"[schema] 数据库就绪: {_DB_NAME} @ {_DB_HOST}:{_DB_PORT} ({total}/{total})")
         else:
             print(f"[schema] 初始化完成: {ok}/{total}（{errors} 条跳过）")
-
-
-# ═══════════════════════════════════════════
-# 数据迁移（从 JSON 导入）
-# ═══════════════════════════════════════════
-
-def migrate_from_json(data_dir: Path):
-    """
-    从 JSON/TXT 文件迁移数据到 MySQL。
-    调用时机：首次运行时，如果数据表为空则执行。
-
-    Args:
-        data_dir: web/ 目录路径（包含所有 JSON 文件）
-    """
-    with db_lock():
-        db = get_db()
-        try:
-            if db.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"] > 0:
-                print("[migrate] 已有数据，跳过迁移")
-                return
-        except Exception:
-            pass
-
-    print("[migrate] 开始从 JSON 迁移...")
-
-    with transaction() as db:
-        _import_json(db, data_dir / "users.json", "users",
-                     keys=["github_id", "login", "email", "avatar_url", "role", "banned", "banned_reason", "created_at"],
-                     defaults={"role": "user", "banned": 0, "banned_reason": "", "created_at": 0})
-
-        _import_json(db, data_dir / "sessions.json", "sessions",
-                     keys=["token", "github_id", "expires_at", "access_granted", "claimed_key"],
-                     defaults={"access_granted": 0, "claimed_key": ""})
-
-        ak = _load_json(data_dir / "access_keys.json").get("keys", {})
-        for k, v in ak.items():
-            db.execute(
-                "REPLACE INTO access_keys VALUES (%s,%s,%s,%s,%s,%s,%s)",
-                (k, v.get("used_by", ""), v.get("created_at", 0),
-                 v.get("disabled_at", 0), v.get("expires_at", 0),
-                 v.get("max_uses", 0), v.get("used_count", 0))
-            )
-
-        ui = _load_json(data_dir / "user_images.json")
-        for gid, entries in ui.items():
-            for e in entries:
-                db.execute(
-                    "INSERT INTO user_images (github_id, path, prompt, time) VALUES (%s,%s,%s,%s)",
-                    (gid, e.get("path", ""), e.get("prompt", ""), e.get("time", 0))
-                )
-
-        di = _load_json(data_dir / "deleted_images.json")
-        for gid, paths in di.items():
-            for path in paths:
-                db.execute(
-                    "REPLACE INTO deleted_images (github_id, path) VALUES (%s,%s)",
-                    (gid, path)
-                )
-
-        gl = _load_json(data_dir / "gen_log.json")
-        for lid, e in gl.items():
-            fps = json.dumps(e.get("file_paths", []))
-            db.execute(
-                "REPLACE INTO gen_logs VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (lid, e.get("github_id", ""), e.get("login", ""),
-                 e.get("prompt", ""), e.get("negative_prompt", ""),
-                 e.get("workflow", ""), e.get("count", 0),
-                 e.get("status", "success"), e.get("client_ip", ""),
-                 e.get("created_at", 0), fps, e.get("error_reason", ""))
-            )
-
-        dl = _load_json_list(data_dir / "deletion_log.json")
-        for e in dl:
-            db.execute(
-                "INSERT INTO deletion_logs (path,thumb_file,deleted_by_gid,deleted_by_login,deleted_at,creator_ip,creator_gid,creator_login) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                (e.get("path", ""), e.get("thumb_file", ""),
-                 e.get("deleted_by_github_id", e.get("github_id", "")),
-                 e.get("deleted_by_login", e.get("login", "")),
-                 e.get("deleted_at", e.get("time", 0)),
-                 e.get("creator_ip", ""), e.get("creator_github_id", ""), e.get("creator_login", ""))
-            )
-
-        for fname, section in [
-            ("limits.json", "limits"),
-            ("llm_config.json", "llm"),
-            ("announcement.json", "announcement"),
-            ("maintenance.json", "maintenance"),
-            ("custom_head.json", "custom_head"),
-        ]:
-            data = _load_json(data_dir / fname)
-            for k, v in data.items():
-                db.execute("REPLACE INTO config VALUES (%s,%s,%s)",
-                           (section, k, json.dumps(v) if not isinstance(v, str) else v))
-
-        styles = _load_json_list(data_dir / "styles.json")
-        for i, style in enumerate(styles):
-            db.execute(
-                "INSERT INTO styles (name, tags, alias, thumbnail, sort_order) VALUES (%s,%s,%s,%s,%s)",
-                (style.get("name", ""), style.get("tags", ""), style.get("alias", ""), style.get("thumbnail", ""), i)
-            )
-
-        characters = _load_json_list(data_dir / "characters.json")
-        for i, c in enumerate(characters):
-            db.execute(
-                "INSERT INTO characters (name, tags, alias, thumbnail, sort_order) VALUES (%s,%s,%s,%s,%s)",
-                (c.get("name", ""), c.get("tags", ""), c.get("alias", ""), c.get("thumbnail", ""), i)
-            )
-
-        res = _load_json(data_dir / "resolutions.json").get("presets", [])
-        for i, r in enumerate(res):
-            db.execute(
-                "INSERT INTO resolutions (w, h, label, sort_order) VALUES (%s,%s,%s,%s)",
-                (r.get("w", 0), r.get("h", 0), r.get("label", ""), i)
-            )
-
-        wm = _load_json_list(data_dir / "workflow_meta.json")
-        for i, m in enumerate(wm):
-            db.execute(
-                "INSERT INTO workflow_meta (workflow, thumbnail, lora_link, display_name, sort_order) VALUES (%s,%s,%s,%s,%s)",
-                (m.get("workflow", ""), m.get("thumbnail", ""), m.get("lora_link", ""), m.get("display_name", ""), i)
-            )
-
-        ft = _load_txt_lines(data_dir / "featured.txt")
-        for i, path in enumerate(ft):
-            db.execute("INSERT INTO featured (path, sort_order) VALUES (%s,%s)", (path, i))
-
-        for ip in _load_txt_lines(data_dir / "banned_ips.txt"):
-            db.execute("INSERT IGNORE INTO banned_ips VALUES (%s)", (ip,))
-
-        for line in _load_txt_lines(data_dir / "creator_ips.txt"):
-            if "\t" in line:
-                path, ip = line.split("\t", 1)
-                db.execute("REPLACE INTO creator_ips VALUES (%s,%s)", (path.strip(), ip.strip()))
-
-    print("[migrate] 迁移完成")
-
-
-# ═══════════════════════════════════════════
-# 工具函数
-# ═══════════════════════════════════════════
-
-def _load_json(path: Path) -> dict:
-    try:
-        if path.is_file():
-            return json.loads(path.read_text(encoding="utf-8"))
-    except Exception as e:
-        print(f"[migrate] 读取 JSON 失败 {path}: {type(e).__name__}: {e}")
-    return {}
-
-
-def _load_json_list(path: Path) -> list:
-    try:
-        if path.is_file():
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return data if isinstance(data, list) else []
-    except Exception as e:
-        print(f"[migrate] 读取 JSON 列表失败 {path}: {type(e).__name__}: {e}")
-    return []
-
-
-def _load_txt_lines(path: Path) -> List[str]:
-    try:
-        if path.is_file():
-            return [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    except Exception as e:
-        print(f"[migrate] 读取文本失败 {path}: {type(e).__name__}: {e}")
-    return []
-
-
-def _import_json(db, path: Path, table: str, keys: List[str], defaults: dict):
-    try:
-        if not path.is_file():
-            return
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            rows = []
-            for pk, vals in data.items():
-                if isinstance(vals, dict):
-                    row = {}
-                    for k in keys:
-                        val = vals.get(k, defaults.get(k, ""))
-                        if k == "token":
-                            val = pk
-                        row[k] = val
-                    if keys[0] not in row or not row[keys[0]]:
-                        row[keys[0]] = pk
-                    rows.append(row)
-            if rows:
-                cols = ", ".join(keys)
-                placeholders = ", ".join(["%s"] * len(keys))
-                db.executemany(f"INSERT IGNORE INTO {table} ({cols}) VALUES ({placeholders})",
-                               [tuple(r.get(k, defaults.get(k, "")) for k in keys) for r in rows])
-    except Exception as e:
-        print(f"[migrate] 导入 {table} 失败: {e}")
 
 
 # ═══════════════════════════════════════════

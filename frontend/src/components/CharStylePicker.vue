@@ -153,7 +153,7 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
 
     <!-- Picker modal -->
     <Teleport to="body">
-      <div v-if="open" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8" @click.self="open = false">
+      <div v-if="open" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8">
         <div class="mx-4 w-full max-w-[calc(100vw_-_10px)] bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]">
           <div class="flex items-center justify-between p-5 pb-3 border-b border-pink-100 shrink-0">
             <h3 class="text-lg font-bold text-gray-700">🎭 选择角色 & 画风</h3>

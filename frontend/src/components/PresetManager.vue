@@ -44,6 +44,10 @@ function saveForm() {
   view.value = 'list'
 }
 function deleteSelected() {
+  const count = checkedCount.value
+  if (!count) return
+  const i = prompt(`即将删除选中的 ${count} 条预设，请输入"确认删除预设"以继续：`)
+  if (i !== '确认删除预设') { alert('输入不匹配，已取消'); return }
   presets.value = presets.value.filter((_: any, i: number) => !checked.value[i])
   checked.value = {}
   savePresets(presets.value)
@@ -81,13 +85,13 @@ function importPresets() {
   }
   inp.click()
 }
+defineExpose({ openList })
 </script>
 
 <template>
-  <button class="text-[10px] text-pink-400 hover:text-pink-500 cursor-pointer border-0 bg-transparent" @click="openList">📋 预设</button>
 
   <Teleport to="body">
-    <div v-if="open" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8" @click.self="open = false">
+    <div v-if="open" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8">
       <div class="mx-4 w-full max-w-[calc(100vw_-_10px)] bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 flex flex-col max-h-[calc(100vh-4rem)]" @click.stop>
         <!-- List view -->
         <template v-if="view === 'list'">

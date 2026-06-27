@@ -132,10 +132,10 @@ from fastapi.middleware.gzip import GZipMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send, Message
 from pydantic import BaseModel, field_validator
 
-# SQLite 数据层（替代 JSON 文件读写）
+# MySQL 数据层（替代 JSON 文件读写）
 import sys as _sys2
 _sys2.path.insert(0, str(Path(__file__).parent))
-from db.schema import get_db, init_db, migrate_from_json, config_get, config_set, config_get_section, db_lock
+from db.schema import init_db
 from db import operations as db
 
 # PIL 安全限制：防止解压炸弹（默认 ~178M 像素太大，限制为 100M 像素）
@@ -179,15 +179,15 @@ GEN_LOG_FILE = Path(__file__).parent / "gen_log.json"
 _gen_log_lock = asyncio.Lock()
 
 # GitHub 用户 → 图片映射（用于"我的作品"）
-# user_images → SQLite
+# user_images → MySQL
 # 用户标记删除的图片 {github_id: [path, ...]}
-# deleted_images → SQLite
+# deleted_images → MySQL
 # 访问密钥 {key: {used_by: str, created_at: float}}
-# access_keys → SQLite
+# access_keys → MySQL
 # 跟踪已预扣密钥次数的 WS 连接，用于断开/失败时回滚。key: id(ws)
 _key_usage_reserved_ws: Dict[int, str] = {}
 # 生图日志 {log_id: {github_id, login, prompt, workflow, count, status, client_ip, created_at}}
-# gen_log → SQLite  # 最多保留 500000 条日志（50 万，db/operations.py _GEN_LOG_MAX）
+# gen_log → MySQL  # 最多保留 500000 条日志（50 万，db/operations.py _GEN_LOG_MAX）
 
 def _load_gen_logs() -> Dict[str, Any]:
     return db.load_gen_logs()
@@ -196,7 +196,7 @@ async def _save_gen_log(github_id: str, _login: str, prompt: str, workflow: str,
                        count: int, status: str, client_ip: str,
                        negative_prompt: str = "", file_paths: list = None,
                        error_reason: str = ""):
-    """追加一条生图日志（SQLite 自动管理上限）。"""
+    """追加一条生图日志（MySQL 自动管理上限）。"""
     login = _login
     if not login and github_id:
         u = _load_users().get(github_id, {})
@@ -269,7 +269,7 @@ def _load_deleted_images() -> Dict[str, List[str]]:
     return db.load_deleted_images()
 
 def _load_user_images() -> Dict[str, List[Dict[str, Any]]]:
-    return db.load_user_images()  # SQLite
+    return db.load_user_images()  # MySQL
 
 async def _save_user_image(github_id: str, rel_path: str, prompt: str = "") -> None:
     """记录用户生图映射（单条安全写入，无全删全插）。"""
@@ -303,13 +303,13 @@ def _load_json(path: Path) -> dict:
 
 
 def _load_users() -> dict:
-    return db.load_users()  # SQLite
+    return db.load_users()  # MySQL
 
 def _session_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 def _load_sessions() -> dict:
-    return db.load_sessions()  # SQLite
+    return db.load_sessions()  # MySQL
 
 
 def _is_initial_admin_user_id(user_id: str) -> bool:
@@ -1069,7 +1069,7 @@ async def _save_llm_config(state: Dict[str, Any]) -> bool:
 
 
 def _load_reports() -> List[Dict[str, Any]]:
-    return db.load_reports()  # SQLite
+    return db.load_reports()  # MySQL
 
 
 async def _save_reports(reports: list) -> bool:
@@ -1148,7 +1148,7 @@ def _read_banned_ips_set() -> set:
 
 
 async def _write_banned_ips(ips: list) -> bool:
-    """保存封禁 IP 列表到 SQLite。"""
+    """保存封禁 IP 列表到 MySQL。"""
     try:
         db.save_banned_ips(ips)
         return True
@@ -1168,7 +1168,7 @@ def _read_featured() -> List[str]:
 
 
 async def _write_featured(items: List[str]) -> bool:
-    """保存精选列表到 SQLite。"""
+    """保存精选列表到 MySQL。"""
     try:
         db.save_featured(items)
         return True
@@ -1186,12 +1186,12 @@ def _creator_key(p: Path) -> str:
 
 
 def _creator_map_get(rel: str) -> str:
-    """从 SQLite 查询生图者 IP。"""
+    """从 MySQL 查询生图者 IP。"""
     return db.lookup_creator_ip(rel) or ""
 
 
 async def _creator_map_set(rel: str, ip: str) -> bool:
-    """写入生图者 IP 映射到 SQLite。"""
+    """写入生图者 IP 映射到 MySQL。"""
     if not rel or not ip:
         return False
     if "\t" in ip or "\n" in ip or "\r" in ip:
@@ -2215,15 +2215,8 @@ async def _run_clean_empty_dirs() -> int:
 
 @app.on_event("startup")
 async def _start_gc():
-    # 初始化 SQLite 数据库 + 首次运行时从 JSON 迁移
+    # 初始化 MySQL 数据库表结构；历史 JSON 数据请使用 scripts/sync_gui.py 手动迁移
     init_db()
-    data_dir = Path(__file__).parent
-    try:
-        migrate_from_json(data_dir)
-    except Exception as e:
-        import traceback as _tb
-        _tb.print_exc()
-        print(f"[startup] migrate_from_json 失败: {type(e).__name__}: {e}")
 
     global _gc_task
     _safe_task(_cleanup_expired_access_keys(), "cleanup_expired_access_keys")
@@ -2242,7 +2235,7 @@ async def _start_gc():
         cnt = db.state_get("restart_count", 0)
         db.state_set("restart_count", cnt + 1)
         print(f"[startup] 重启次数: {cnt + 1}")
-    # 同步环境变量 IP 白名单到 SQLite
+    # 同步环境变量 IP 白名单到 MySQL
     async with _kv_state_lock:
         env_ips = {ip.strip() for ip in os.environ.get("IP_WHITELIST", "").split(",") if ip.strip()}
         if env_ips:
@@ -2272,11 +2265,9 @@ async def _shutdown():
             except Exception:
                 pass
     _save_queue_state()
-    # SQLite WAL 刷盘
+    # MySQL 事务提交即持久化，无需额外 checkpoint
     try:
-        with db_lock():
-            get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            get_db().commit()
+        db.commit_current_connection()
     except Exception:
         pass
     if _gc_task:
@@ -2294,12 +2285,11 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # ---------------- 外挂功能模块（features/，新功能在此挂载，本文件不再膨胀） ----------------
 try:
-    # 中间人注入：把数据函数 / session 函数 / get_db 递给 features，
-    # features 绝不 import app/db，所有数据库读写仍走 app.py 这同一批函数（共享锁、单入口）。
+    # 中间人注入：把 db.operations 门面和少量 app 上下文函数递给 features。
+    # features 绝不 import app，也不要直接拿底层 get_db；数据库读写统一封装到 db.operations。
     from features._deps import set_app_ctx as _set_app_ctx
     _set_app_ctx({
         "db": db,
-        "get_db": get_db,
         "load_users": _load_users,
         "get_user": _get_user_from_session,
         "client_ip": _client_ip_from_request,
@@ -5114,7 +5104,7 @@ async def api_admin_auth_elevate_status(request: Request):
 
 @app.post("/api/admin/force-restart")
 async def api_admin_force_restart(request: Request):
-    """安全重启：中断当前任务 → 等待 SQLite 刷盘 → 退出进程。"""
+    """安全重启：中断当前任务 → 提交 MySQL 连接 → 退出进程。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
     import os as _os
@@ -5122,11 +5112,9 @@ async def api_admin_force_restart(request: Request):
         await interrupt_prompt()
     except Exception:
         pass
-    # 等待 SQLite WAL 刷盘 + 异步任务收尾
+    # 提交当前线程 MySQL 连接 + 异步任务收尾
     try:
-        with db_lock():
-            get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            get_db().commit()
+        db.commit_current_connection()
     except Exception:
         pass
     await asyncio.sleep(1)
@@ -5147,11 +5135,9 @@ async def api_admin_graceful_restart(request: Request):
     while _run_lock.locked() and waited < 600:
         await asyncio.sleep(2)
         waited += 2
-    # 安全退出
+    # 安全退出前提交当前线程 MySQL 连接
     try:
-        with db_lock():
-            get_db().execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            get_db().commit()
+        db.commit_current_connection()
     except Exception:
         pass
     await asyncio.sleep(1)
@@ -5328,7 +5314,7 @@ _queue_id_counter = 0
 _task_generation_seq = 0  # 递增计数器，配合 _cancel_flag TOCTOU 防护
 _current_run_task = None  # asyncio.Task | None — 正在执行的 _process_queue 任务引用，供 force-unlock 取消
 _MAX_QUEUE_SIZE = 500  # 任务队列上限，防止恶意提交耗尽内存
-# queue_state → SQLite
+# queue_state → MySQL
 # 广播：所有打开 /ws/status 的客户端
 _status_subscribers: "set[WebSocket]" = set()
 _ws_user_map: "dict[int, str]" = {}  # id(ws) → github_id，封禁时用于断开 WS
@@ -7531,7 +7517,7 @@ async def api_admin_ip_whitelist_remove(request: Request, payload: Dict[str, Any
 
 @app.get("/api/admin/recent")
 async def api_admin_recent(request: Request, limit: int = 200, offset: int = 0, name: str = ""):
-    """列出 OUTPUT_DIR 下所有图片，按 mtime 倒序分页；IP 来自 SQLite creator_ips（无则空串）。
+    """列出 OUTPUT_DIR 下所有图片，按 mtime 倒序分页；IP 来自 MySQL creator_ips（无则空串）。
     name：可选图片名/路径关键字过滤（不区分大小写）。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403)
@@ -7729,7 +7715,7 @@ async def api_admin_images(request: Request, limit: int = 50, offset: int = 0, n
         items = [(mt, rel, sz) for (mt, rel, sz) in items if rel not in deleted_paths]
     total = len(items)
     sliced = items[offset:offset + max(0, min(limit, 2000))]
-    # 查 creator_ip 和 github_user 映射（均从 SQLite 读取）
+    # 查 creator_ip 和 github_user 映射（均从 MySQL 读取）
     ip_map: Dict[str, str] = db.load_creator_map()
     user_map: Dict[str, str] = {}  # path → github_id
     user_login_map: Dict[str, str] = {}  # path → login

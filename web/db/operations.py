@@ -13,7 +13,7 @@ import secrets
 import hashlib as _hashlib
 from typing import Dict, Any, List, Optional, Tuple
 
-from db.schema import get_db, config_get, config_set, config_get_section, db_lock, transaction
+from db.schema import get_db, config_get, config_set, config_get_section, transaction
 
 _db = get_db  # 函数别名
 
@@ -22,6 +22,11 @@ def backup_database(dst_path: str) -> None:
     """mysqldump 在线热备——不锁表、不阻塞读写。"""
     from db.schema import backup_database as _mysql_bak
     _mysql_bak(dst_path)
+
+
+def commit_current_connection() -> None:
+    """提交当前线程持有的 MySQL 连接；用于 shutdown/restart 收尾。"""
+    _db().commit()
 
 # ── 写穿透缓存（内存 dict + TTL 兜底） ──
 _CACHE_TTL = 60
@@ -697,6 +702,25 @@ def query_gen_logs(login: str = "", date_from: float = 0, date_to: float = 0,
         f"SELECT * FROM gen_logs{where} ORDER BY created_at DESC LIMIT %s OFFSET %s",
         params + [max(1, min(limit, 200)), max(0, offset)]).fetchall()
     return [dict(r) for r in rows], total
+
+
+def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0, tz_offset: float = 0) -> dict:
+    """生图排行榜：按 login 分组 SUM(count)，只统计 status='success'。"""
+    conditions = ["status='success'"]
+    params = []
+    if date_from > 0:
+        conditions.append("created_at >= %s")
+        params.append(date_from)
+    if date_to > 0:
+        conditions.append("created_at <= %s")
+        params.append(date_to)
+    where = " WHERE " + " AND ".join(conditions)
+    rows = _db().execute(
+        f"SELECT login, SUM(`count`) as total FROM gen_logs{where} GROUP BY login ORDER BY total DESC LIMIT %s",
+        params + [max(1, min(limit, 50))]
+    ).fetchall()
+    entries = [{"login": r["login"] or "anonymous", "count": int(r["total"])} for r in rows]
+    return {"entries": entries, "limit": limit}
 
 
 def delete_gen_logs_by_ids(log_ids: list) -> int:

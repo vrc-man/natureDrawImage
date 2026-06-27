@@ -33,6 +33,12 @@ def register_all(app) -> None:
     except Exception as e:
         print(f"[features] access_keys 加载失败: {type(e).__name__}: {e}")
 
+    try:
+        from .gen_leaderboard import router as leaderboard_router
+        routers.append(("gen-leaderboard", leaderboard_router))
+    except Exception as e:
+        print(f"[features] gen_leaderboard 加载失败: {type(e).__name__}: {e}")
+
     for name, r in routers:
         try:
             app.include_router(r)

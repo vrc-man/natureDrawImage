@@ -25,6 +25,7 @@ import RecentSection from '@/components/admin/RecentSection.vue'
 import ImageSection from '@/components/admin/ImageSection.vue'
 import GcSection from '@/components/admin/GcSection.vue'
 import StatsSection from '@/components/admin/StatsSection.vue'
+import LeaderBoardSection from '@/components/admin/LeaderBoardSection.vue'
 
 const isAdmin = ref(false), loading = ref(true)
 const expanded = ref<Record<string, boolean>>({})
@@ -38,6 +39,7 @@ const groups: GroupDef[] = [
     sections: [
       { key: 'stats', title: '📊 系统统计', comp: StatsSection },
       { key: 'queue', title: '🏃 队列管理', comp: QueueSection },
+      { key: 'leaderboard', title: '🏆 生图排行榜', comp: LeaderBoardSection },
     ],
   },
   {
@@ -142,7 +144,7 @@ function scrollToGroup(id: string) {
               </h3>
             </div>
             <div v-show="expanded[s.key]">
-              <component :is="s.comp" :visible="true" />
+              <component :is="s.comp" :visible="expanded[s.key]" />
             </div>
           </div>
         </section>

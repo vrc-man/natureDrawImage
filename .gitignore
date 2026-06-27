@@ -1,3 +1,13 @@
+# ── 默认不提交 JSON（运行时数据/配置优先保护） ──
+*.json
+
+# ── 允许提交的前端项目配置 JSON ──
+!frontend/package.json
+!frontend/package-lock.json
+!frontend/tsconfig.json
+!frontend/tsconfig.app.json
+!frontend/tsconfig.node.json
+
 # ── 项目本地规则（不提交） ──
 CLAUDE.md
 
@@ -9,6 +19,7 @@ claude.bat
 start-bianxie.bat
 .venv
 natureDrawImage-env
+.claude/
 .claude/settings.local.json
 .vscode/settings.json
 __pycache__
@@ -77,6 +88,36 @@ gcbackups
 *.db-wal
 node_modules/
 web/rate_limits.json
+
+# ── features 插件运行时配置（不提交） ──
+web/features/config/*.json
+web/features/config/*.txt
+web/features/config/*.yaml
+web/features/config/*.yml
+web/features/config/*.toml
+web/features/config/*.ini
+web/features/config/*.conf
+web/features/config/*.env
+web/features/config/*.xml
+web/features/config/*.properties
+web/features/config/*.pkl
+web/llm_prompt_templates.json
+
+# ── 项目本地配置（不提交；避免误伤 package.json / pyproject.toml 等正式项目文件） ──
+*.local.json
+*.local.yaml
+*.local.yml
+*.local.toml
+*.local.ini
+*.local.conf
+*.local.xml
+*.local.properties
+*.secret.json
+*.secret.yaml
+*.secret.yml
+*.private.json
+*.private.yaml
+*.private.yml
 
 # ── 个人工具 ──
 tools/
