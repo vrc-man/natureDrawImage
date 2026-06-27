@@ -8183,8 +8183,8 @@ async def api_admin_stats_generation(request: Request, date_from: float = 0, dat
     if date_from and date_to:
         return {
             "today_total": db.count_gen_logs_range(date_from, date_to, login),
-            "hourly": db.get_gen_logs_hourly_range(date_from, date_to, login),
-            "daily": db.get_gen_logs_daily_range(date_from, date_to, login),
+            "hourly": db.get_gen_logs_hourly_range(date_from, date_to, login, tz_offset),
+            "daily": db.get_gen_logs_daily_range(date_from, date_to, login, tz_offset),
         }
     if tz_offset:
         # 本地时区计算：当天0点、近7天
@@ -8195,8 +8195,8 @@ async def api_admin_stats_generation(request: Request, date_from: float = 0, dat
         _7d_ago = _day_start - 6 * 86400
         return {
             "today_total": db.count_gen_logs_range(_day_start, _day_end, login),
-            "hourly": db.get_gen_logs_hourly_range(_day_start, _day_end, login),
-            "daily": db.get_gen_logs_daily_range(_7d_ago, _day_end, login),
+            "hourly": db.get_gen_logs_hourly_range(_day_start, _day_end, login, tz_offset),
+            "daily": db.get_gen_logs_daily_range(_7d_ago, _day_end, login, tz_offset),
         }
     return {
         "today_total": db.count_gen_logs_today(login),

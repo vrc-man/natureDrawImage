@@ -569,9 +569,12 @@ def count_gen_logs_range(date_from: float, date_to: float, login: str = "") -> i
     return r["c"] if r else 0
 
 
-def get_gen_logs_hourly_range(date_from: float, date_to: float, login: str = "") -> List[Dict]:
-    """指定时间范围每小时的生图数量。可选 login 筛选。"""
-    sql = "SELECT strftime('%H',created_at,'unixepoch') as hour,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+def get_gen_logs_hourly_range(date_from: float, date_to: float, login: str = "", tz_offset: float = 0) -> List[Dict]:
+    """指定时间范围每小时的生图数量。可选 login/tz_offset 筛选。tz_offset 非0时按本地时区聚合。"""
+    if tz_offset:
+        sql = f"SELECT CAST(strftime('%H',created_at,'unixepoch','{int(tz_offset):+d} hours') AS INTEGER) as hour,SUM(count) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+    else:
+        sql = "SELECT CAST(strftime('%H',created_at,'unixepoch') AS INTEGER) as hour,SUM(count) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
     params: list = [date_from, date_to]
     if login:
         sql += " AND (login LIKE ? OR github_id LIKE ?)"
@@ -581,9 +584,12 @@ def get_gen_logs_hourly_range(date_from: float, date_to: float, login: str = "")
     return [dict(r) for r in rows]
 
 
-def get_gen_logs_daily_range(date_from: float, date_to: float, login: str = "") -> List[Dict]:
-    """指定时间范围每日生图数量。可选 login 筛选。"""
-    sql = "SELECT date(created_at,'unixepoch') as day,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+def get_gen_logs_daily_range(date_from: float, date_to: float, login: str = "", tz_offset: float = 0) -> List[Dict]:
+    """指定时间范围每日生图数量。可选 login/tz_offset 筛选。tz_offset 非0时按本地时区聚合。"""
+    if tz_offset:
+        sql = f"SELECT date(created_at,'unixepoch','{int(tz_offset):+d} hours') as day,SUM(count) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+    else:
+        sql = "SELECT date(created_at,'unixepoch') as day,SUM(count) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
     params: list = [date_from, date_to]
     if login:
         sql += " AND (login LIKE ? OR github_id LIKE ?)"
@@ -621,7 +627,7 @@ def get_gen_logs_date_range() -> Tuple[float, float]:
     return (r["min_d"] or 0, r["max_d"] or 0) if r else (0, 0)
 
 
-def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0) -> dict:
+def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0, tz_offset: float = 0) -> dict:
     """生图排行榜：前三名的总数 + 24h分布 + 每日分布，一次查出。"""
     # 区间总生图数
     sql_total = "SELECT SUM(count) as c FROM gen_logs WHERE status='success'"
@@ -654,12 +660,19 @@ def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0
     logins = [r["login"] for r in rows]
     placeholders = ",".join("?" * len(logins))
 
-    # 24h 分布
-    sql_hourly = (
-        "SELECT login, CAST(strftime('%H',created_at,'unixepoch') AS INTEGER) as h, "
-        "SUM(count) as c FROM gen_logs "
-        f"WHERE status='success' AND login IN ({placeholders})"
-    )
+    # 24h 分布（本地时区）
+    if tz_offset:
+        sql_hourly = (
+            f"SELECT login, CAST(strftime('%H',created_at,'unixepoch','{int(tz_offset):+d} hours') AS INTEGER) as h, "
+            "SUM(count) as c FROM gen_logs "
+            f"WHERE status='success' AND login IN ({placeholders})"
+        )
+    else:
+        sql_hourly = (
+            "SELECT login, CAST(strftime('%H',created_at,'unixepoch') AS INTEGER) as h, "
+            "SUM(count) as c FROM gen_logs "
+            f"WHERE status='success' AND login IN ({placeholders})"
+        )
     params_hourly = list(logins)
     if date_from:
         sql_hourly += " AND created_at>=?"
@@ -670,11 +683,17 @@ def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0
     sql_hourly += " GROUP BY login, h"
     hourly_rows = _db().execute(sql_hourly, params_hourly).fetchall()
 
-    # 每日分布
-    sql_daily = (
-        "SELECT login, date(created_at,'unixepoch') as d, SUM(count) as c FROM gen_logs "
-        f"WHERE status='success' AND login IN ({placeholders})"
-    )
+    # 每日分布（本地时区）
+    if tz_offset:
+        sql_daily = (
+            f"SELECT login, date(created_at,'unixepoch','{int(tz_offset):+d} hours') as d, SUM(count) as c FROM gen_logs "
+            f"WHERE status='success' AND login IN ({placeholders})"
+        )
+    else:
+        sql_daily = (
+            "SELECT login, date(created_at,'unixepoch') as d, SUM(count) as c FROM gen_logs "
+            f"WHERE status='success' AND login IN ({placeholders})"
+        )
     params_daily = list(logins)
     if date_from:
         sql_daily += " AND created_at>=?"

@@ -27,12 +27,12 @@ _cache: Dict[str, dict] = {}
 _CACHE_TTL = 60
 
 
-def _get_cached(key: str, date_from: float, date_to: float) -> dict:
+def _get_cached(key: str, date_from: float, date_to: float, tz_offset: float = 0) -> dict:
     now = time.time()
     entry = _cache.get(key)
     if entry and now - entry["cached_at"] < _CACHE_TTL:
         return entry["data"]
-    data = db.get_gen_leaderboard(limit=3, date_from=date_from, date_to=date_to)
+    data = db.get_gen_leaderboard(limit=3, date_from=date_from, date_to=date_to, tz_offset=tz_offset)
     _cache[key] = {"data": data, "cached_at": now}
     return data
 
@@ -48,6 +48,8 @@ async def gen_leaderboard(request: Request, range: str = "today"):
     now = time.time()
     date_from = 0.0
     date_to = 0.0
+    # 前端传的 tz_offset（默认东八区）
+    tz_offset = 8
 
     if range == "today":
         # 当天 0 点（本地时区）
@@ -63,5 +65,5 @@ async def gen_leaderboard(request: Request, range: str = "today"):
     # all: date_from=0, date_to=0 表示全部
 
     key = f"{range}:{int(date_from)}:{int(date_to)}"
-    data = _get_cached(key, date_from, date_to)
+    data = _get_cached(key, date_from, date_to, tz_offset)
     return {"range": range, **data}
