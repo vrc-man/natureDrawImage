@@ -124,7 +124,7 @@ let cooldownTimer: ReturnType<typeof setInterval> | null = null
 // WS
 let activeWS: WebSocket | null = null
 let statusWS: WebSocket | null = null
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 let gpuTimer: ReturnType<typeof setInterval> | null = null
 let notifyTimer: ReturnType<typeof setInterval> | null = null
 let authedServicesStarted = false
@@ -282,6 +282,7 @@ onMounted(async () => {
   if (userStore.currentUser?.key_status === 'expired') keyExpired.value = true
   if (userStore.currentUser?.unread_notifications) notifyUnreadCount.value = userStore.currentUser.unread_notifications
   if (userStore.currentUser?.my_queue_count) notifyQueueCount.value = userStore.currentUser.my_queue_count
+  document.addEventListener('visibilitychange', onQueueVisibilityChange)
   // Load forked workflow
   try {
     const fw = localStorage.getItem('forkedWorkflow')
@@ -310,6 +311,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onQueueVisibilityChange)
   stopPolling()
   if (statusWS) try { statusWS.close() } catch {}
   if (gpuTimer) clearInterval(gpuTimer)
@@ -451,8 +453,24 @@ async function loadLlmTemplates() {
 let _notifiedTaskIds = new Set<number>()
 let _hasRunningBefore = false
 let _doneNotified = false  // WS done/error 已通知过，防止 pollMyQueue 重复
-function startPolling() { pollTimer = setInterval(pollMyQueue, 1000) }
-function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+let _lastHasMyQueueTask = false
+function _queuePollDelay() {
+  if (document.hidden) return _lastHasMyQueueTask ? 5000 : 15000
+  return _lastHasMyQueueTask ? 1000 : 3000
+}
+function _scheduleNextQueuePoll(delay = _queuePollDelay()) {
+  stopPolling()
+  pollTimer = setTimeout(async () => {
+    await pollMyQueue()
+    _scheduleNextQueuePoll()
+  }, delay)
+}
+function startPolling() { _scheduleNextQueuePoll(0) }
+function stopPolling() { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null } }
+function onQueueVisibilityChange() {
+  if (!authedServicesStarted) return
+  _scheduleNextQueuePoll()
+}
 
 async function pollMyQueue() {
   try {
@@ -462,6 +480,7 @@ async function pollMyQueue() {
     const waiting = items.filter((i: any) => i.status === 'waiting')
     const running = items.filter((i: any) => i.status === 'running')
     const hasMyTask = waiting.length || running.length
+    _lastHasMyQueueTask = !!hasMyTask
 
     const noActiveWS = !(activeWS && activeWS.readyState === WebSocket.OPEN)
     if (running.length) { _hasRunningBefore = true; _isGenerating.value = true }
