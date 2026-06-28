@@ -4,6 +4,7 @@
   --picker-thumb-percent: 25;
   --picker-thumb-size: 75px;
   --picker-card-height: 83px;
+  --home-card-bg-opacity: 0.75;
 }
 
 html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; width: 100%; }
@@ -49,6 +50,16 @@ body {
 .tab-page { position: fixed; top: 52px; bottom: 60px; left: 0; right: 0; overflow-y: auto; display: none; -webkit-overflow-scrolling: touch; }
 .tab-page.active { display: block; animation: fadeIn 0.3s ease; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+.home-shell .tab-page .bg-white\/75,
+.home-shell .tab-page .bg-white\/70 {
+  background-color: rgba(255,255,255,var(--home-card-bg-opacity, 0.75)) !important;
+}
+
+.dark .home-shell .tab-page .bg-white\/75,
+.dark .home-shell .tab-page .bg-white\/70 {
+  background-color: rgba(20,20,40,var(--home-card-bg-opacity, 0.75)) !important;
+}
 
 /* Tab Bar */
 #tab-bar {
