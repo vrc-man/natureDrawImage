@@ -61,6 +61,11 @@ body {
   background-color: rgba(20,20,40,var(--home-card-bg-opacity, 0.75)) !important;
 }
 
+.dark .fixed.inset-0 .bg-white\/60,
+.dark .fixed.inset-0 .bg-white\/95 {
+  background: rgba(20,20,40,0.92) !important;
+}
+
 /* Tab Bar */
 #tab-bar {
   position: fixed; bottom: 0; left: 50%; transform: translateX(-50%);
@@ -204,12 +209,13 @@ body {
 
 /* 深色模式 */
 .dark body, .dark { background: linear-gradient(135deg, #0f0f1a 0%, #1a1025 25%, #0f1525 50%, #1a0f14 75%, #0f0f1a 100%) !important; }
-.dark .bg-white\/75, .dark .bg-white\/70, .dark .bg-white\/95 { background: rgba(20,20,40,0.85) !important; }
+.dark .bg-white\/60, .dark .bg-white\/75, .dark .bg-white\/70, .dark .bg-white\/95 { background: rgba(20,20,40,0.85) !important; }
 .dark .bg-white { background: #1a1a2e !important; }
 .dark .text-gray-800, .dark .text-gray-700, .dark .text-gray-600 { color: #d1d5db !important; }
-.dark .text-gray-500, .dark .text-gray-400 { color: #9ca3af !important; }
+.dark .text-gray-500 { color: #d1d5db !important; }
+.dark .text-gray-400 { color: #9ca3af !important; }
 .dark .border-pink-100 { border-color: rgba(244,114,182,0.15) !important; }
-.dark .bg-pink-50 { background: rgba(244,114,182,0.08) !important; }
+.dark .bg-pink-50, .dark .hover\:bg-pink-50:hover { background: rgba(244,114,182,0.08) !important; }
 .dark .bg-rose-50 { background: rgba(251,113,133,0.08) !important; }
 .dark .shadow-pink-100\/30, .dark .shadow-pink-100\/40 { box-shadow: 0 4px 30px rgba(0,0,0,0.3) !important; }
 .dark #tab-bar { background: rgba(20,20,40,0.9) !important; }

@@ -1372,9 +1372,9 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 <button @click="settingsView='appearance'" class="w-full text-left flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-gray-600 transition-all cursor-pointer border-0 bg-transparent">
                   <span class="min-w-0">
                     <span class="block">🎛️ 显示与外观</span>
-                    <span class="block text-xs text-gray-400 mt-0.5">页面缩放、背景图片、缩略图、布局密度</span>
+                    <span class="block text-xs text-gray-500 mt-0.5">页面缩放、背景图片、缩略图、布局密度</span>
                   </span>
-                  <span class="text-xs text-gray-400 shrink-0">缩放 {{ Math.round(uiZoom * 100) }}% · 卡片 {{ cardBgOpacity }}% ›</span>
+                  <span class="text-xs text-gray-500 shrink-0">缩放 {{ Math.round(uiZoom * 100) }}% · 卡片 {{ cardBgOpacity }}% ›</span>
                 </button>
                 <button v-if="userStore.currentUser?.is_email_user" @click="settingsView='totp'" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all cursor-pointer border-0 bg-transparent">🔐 两步验证</button>
                 <button v-if="userStore.currentUser?.is_email_user" @click="settingsView='password'" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all cursor-pointer border-0 bg-transparent">🔑 更改密码</button>
@@ -1392,68 +1392,68 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 <button @click="closeSettings" aria-label="关闭设置" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent shrink-0">&times;</button>
               </div>
               <div class="pt-3 space-y-4">
-                <p class="text-xs text-gray-400 px-1">这些设置仅影响当前浏览器的显示偏好，不会上传服务器。</p>
+                <p class="text-xs text-gray-500 px-1">这些设置仅影响当前浏览器的显示偏好，不会上传服务器。</p>
 
                 <section class="space-y-2">
-                  <div class="text-xs font-semibold text-gray-400 px-1">页面显示</div>
+                  <div class="text-xs font-semibold text-gray-500 px-1">页面显示</div>
                   <div class="px-3 py-3 rounded-2xl border border-pink-100 bg-white/60">
-                    <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                    <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
                       <span>🔍 页面缩放</span>
                       <span>{{ Math.round(uiZoom * 100) }}%</span>
                     </div>
                     <div class="flex items-center gap-2">
                       <input aria-label="页面缩放" type="range" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @input="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
                       <input aria-label="页面缩放数值" type="number" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @change="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
-                      <span class="text-xs text-gray-400 shrink-0">%</span>
+                      <span class="text-xs text-gray-500 shrink-0">%</span>
                     </div>
                   </div>
                   <label class="flex items-center justify-between px-3 py-3 rounded-2xl border border-pink-100 bg-white/60 hover:bg-pink-50 cursor-pointer transition-all select-none">
                     <span>
                       <span class="block text-sm text-gray-600">📏 紧凑布局</span>
-                      <span class="block text-xs text-gray-400 mt-0.5">减少卡片间距和输入区域留白</span>
+                      <span class="block text-xs text-gray-500 mt-0.5">减少卡片间距和输入区域留白</span>
                     </span>
                     <input type="checkbox" :checked="compactLayout" @change="setCompactLayout(($event.target as HTMLInputElement).checked)" class="w-4 h-4 accent-pink-500 shrink-0" />
                   </label>
                 </section>
 
                 <section class="space-y-2">
-                  <div class="text-xs font-semibold text-gray-400 px-1">内容选择器</div>
+                  <div class="text-xs font-semibold text-gray-500 px-1">内容选择器</div>
                   <div class="px-3 py-3 rounded-2xl border border-pink-100 bg-white/60">
-                    <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                    <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
                       <span>🖼️ 工作流缩略图大小</span>
                       <span>{{ pickerThumbPercent }}% · {{ pickerThumbSize }}px</span>
                     </div>
                     <div class="flex items-center gap-2">
                       <input aria-label="工作流缩略图大小" type="range" min="20" max="100" step="5" :value="pickerThumbPercent" @input="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
                       <input aria-label="工作流缩略图大小数值" type="number" min="20" max="100" step="5" :value="pickerThumbPercent" @change="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
-                      <span class="text-xs text-gray-400 shrink-0">%</span>
+                      <span class="text-xs text-gray-500 shrink-0">%</span>
                     </div>
                   </div>
                 </section>
 
                 <section class="space-y-2">
-                  <div class="text-xs font-semibold text-gray-400 px-1">卡片与背景</div>
+                  <div class="text-xs font-semibold text-gray-500 px-1">卡片与背景</div>
                   <div class="px-3 py-3 rounded-2xl border border-pink-100 bg-white/60">
-                    <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                    <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
                       <span>🪟 卡片背景不透明度</span>
                       <span>{{ cardBgOpacity }}%</span>
                     </div>
                     <div class="flex items-center gap-2">
                       <input aria-label="卡片背景不透明度" type="range" min="40" max="95" step="5" :value="cardBgOpacity" @input="setCardBgOpacity(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
                       <input aria-label="卡片背景不透明度数值" type="number" min="40" max="95" step="5" :value="cardBgOpacity" @change="setCardBgOpacity(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
-                      <span class="text-xs text-gray-400 shrink-0">%</span>
+                      <span class="text-xs text-gray-500 shrink-0">%</span>
                     </div>
-                    <div class="text-[11px] text-gray-400 mt-1">低不透明度更突出背景图；高不透明度提升文字可读性。</div>
+                    <div class="text-[11px] text-gray-500 mt-1">低不透明度更突出背景图；高不透明度提升文字可读性。</div>
                   </div>
 
                   <div class="px-3 py-3 rounded-2xl border border-pink-100 bg-white/60">
-                    <div class="flex items-center justify-between text-xs text-gray-400 mb-2 gap-2">
+                    <div class="flex items-center justify-between text-xs text-gray-500 mb-2 gap-2">
                       <span class="shrink-0">🖼️ 页面背景图片</span>
                       <span class="truncate text-right">{{ homeBgImageName || '未设置' }}</span>
                     </div>
                     <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500">
                       <button @click="handleHomeBgUpload" class="text-pink-500 hover:underline cursor-pointer border-0 bg-transparent p-0">选择图片</button>
-                      <button @click="resetHomeBgImage" class="text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent p-0">清除</button>
+                      <button @click="resetHomeBgImage" class="text-gray-500 hover:text-gray-600 cursor-pointer border-0 bg-transparent p-0">清除</button>
                       <label class="flex items-center gap-1 cursor-pointer select-none">
                         <input type="radio" name="home-bg-mode-appearance" :checked="homeBgImageMode === 'tile'" @change="saveHomeBgMode('tile')" class="accent-pink-500" />
                         平铺
@@ -1464,35 +1464,35 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                       </label>
                     </div>
                     <div v-if="homeBgImageData" class="mt-2 space-y-2">
-                      <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                      <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
                         <span>背景图缩放</span>
                         <span>{{ homeBgImageScale }}%</span>
                       </div>
                       <div class="flex items-center gap-2">
                         <input aria-label="背景图缩放" type="range" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
                         <input aria-label="背景图缩放数值" type="number" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
-                        <span class="text-xs text-gray-400 shrink-0">%</span>
+                        <span class="text-xs text-gray-500 shrink-0">%</span>
                       </div>
-                      <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                      <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
                         <span>水平位置</span>
                         <span>{{ homeBgImagePosX }}%</span>
                       </div>
                       <div class="flex items-center gap-2">
                         <input aria-label="背景水平位置" type="range" min="0" max="100" step="5" :value="homeBgImagePosX" @input="setHomeBgPosX(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
                         <input aria-label="背景水平位置数值" type="number" min="0" max="100" step="5" :value="homeBgImagePosX" @input="setHomeBgPosX(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
-                        <span class="text-xs text-gray-400 shrink-0">%</span>
+                        <span class="text-xs text-gray-500 shrink-0">%</span>
                       </div>
-                      <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                      <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
                         <span>垂直位置</span>
                         <span>{{ homeBgImagePosY }}%</span>
                       </div>
                       <div class="flex items-center gap-2">
                         <input aria-label="背景垂直位置" type="range" min="0" max="100" step="5" :value="homeBgImagePosY" @input="setHomeBgPosY(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
                         <input aria-label="背景垂直位置数值" type="number" min="0" max="100" step="5" :value="homeBgImagePosY" @input="setHomeBgPosY(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
-                        <span class="text-xs text-gray-400 shrink-0">%</span>
+                        <span class="text-xs text-gray-500 shrink-0">%</span>
                       </div>
                     </div>
-                    <div class="text-[11px] text-gray-400 mt-1">图片仅保存在当前浏览器，不会上传服务器；大图会自动压缩到最大 2K 后保存。</div>
+                    <div class="text-[11px] text-gray-500 mt-1">图片仅保存在当前浏览器，不会上传服务器；大图会自动压缩到最大 2K 后保存。</div>
                     <div v-if="homeBgError" class="text-xs text-red-400 mt-1">{{ homeBgError }}</div>
                   </div>
                 </section>
