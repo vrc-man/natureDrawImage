@@ -146,3 +146,7 @@ web/static/dist/
 frontend/dist/
 frontend/src/**/*.tsbuildinfo
 frontend/*.tsbuildinfo
+
+# ── 不提交纯文本笔记（本地文档和 AI 笔记） ──
+*.txt
+!requirements.txt
