@@ -491,7 +491,13 @@ function stopPolling() {
 }
 function onQueueVisibilityChange() {
   if (!authedServicesStarted) return
-  _scheduleNextQueuePoll()
+  if (!document.hidden) {
+    // 从后台切回：重置轮询链，立即请求一次
+    stopPolling()
+    startPolling()
+  } else {
+    _scheduleNextQueuePoll()
+  }
 }
 
 async function pollMyQueue() {
@@ -667,16 +673,14 @@ function _startSubmitGuard() {
 
 async function actuallyStartRun(g: PendingGen) {
   const hasExistingTask = _isGenerating.value || _watchingMode.value || _lastHasMyQueueTask || !!(activeWS && activeWS.readyState <= WebSocket.OPEN)
-  if (!hasExistingTask) {
-    _watchingMode.value = false
-    _finishing.value = false
-    _doneNotified = false
-    _hasRunningBefore = false
-    _isGenerating.value = true
-    progressPct.value = 0
-    resultImages.value = []
-    logLines.value = []
-  }
+  _watchingMode.value = false
+  _finishing.value = false
+  _doneNotified = false
+  _hasRunningBefore = false
+  _isGenerating.value = true
+  progressPct.value = 0
+  resultImages.value = []
+  logLines.value = []
   _startSubmitGuard()
 
   let image1_name = '', image2_name = '', image3_name = ''
