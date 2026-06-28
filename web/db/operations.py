@@ -350,7 +350,7 @@ def remove_user_images_by_paths(paths: set) -> int:
     """批量删除 user_images 记录，返回删除数。"""
     if not paths:
         return 0
-    placeholders = ",".join("%s" * len(paths))
+    placeholders = ",".join(["%s"] * len(paths))
     r = _db().execute(
         f"DELETE FROM user_images WHERE path IN ({placeholders})",
         list(paths))
@@ -451,7 +451,7 @@ def mark_images_deleted(github_id: str, paths: List[str], *, owner_github_id: st
             conn.execute(
                 "INSERT IGNORE INTO deleted_images (github_id, path, marked_at) VALUES (%s,%s,%s)",
                 (github_id, p, now))
-        placeholders = ",".join("%s" * len(clean_paths))
+        placeholders = ",".join(["%s"] * len(clean_paths))
         if owner_github_id:
             conn.execute(
                 f"DELETE FROM user_images WHERE github_id=%s AND path IN ({placeholders})",
@@ -506,12 +506,12 @@ def save_gen_log(github_id: str, login: str, prompt: str, workflow: str,
          prompt[:25000], negative_prompt[:25000] if negative_prompt else "",
          workflow or "", count, status, client_ip, _time_module.time(), fps,
          error_reason[:500] if error_reason else ""))
-    # 超出上限删最旧
+    # 超出上限删最旧（MySQL 不允许 DELETE 子查询同表，用 JOIN 派生表绕过）
     total = _db().execute("SELECT COUNT(*) as c FROM gen_logs").fetchone()["c"]
     if total > _GEN_LOG_MAX:
         excess = total - _GEN_LOG_MAX
         _db().execute(
-            "DELETE FROM gen_logs WHERE log_id IN (SELECT log_id FROM gen_logs ORDER BY created_at ASC LIMIT %s)",
+            "DELETE gen_logs FROM gen_logs JOIN (SELECT log_id FROM gen_logs ORDER BY created_at ASC LIMIT %s) AS tmp ON gen_logs.log_id = tmp.log_id",
             (excess,))
     _db().commit()
 
@@ -823,12 +823,12 @@ def add_deletion_log_entry(entry: Dict) -> None:
          entry.get("deleted_by_github_id", ""), entry.get("deleted_by_login", ""),
          entry.get("deleted_at", _time_module.time()),
          entry.get("creator_ip", ""), entry.get("creator_github_id", ""), entry.get("creator_login", "")))
-    # 超上限
+    # 超上限（MySQL 不允许 DELETE 子查询同表，用 JOIN 派生表绕过）
     total = _db().execute("SELECT COUNT(*) as c FROM deletion_logs").fetchone()["c"]
     if total > _DELETION_LOG_MAX:
         excess = total - _DELETION_LOG_MAX
         _db().execute(
-            "DELETE FROM deletion_logs WHERE id IN (SELECT id FROM deletion_logs ORDER BY deleted_at ASC LIMIT %s)",
+            "DELETE deletion_logs FROM deletion_logs JOIN (SELECT id FROM deletion_logs ORDER BY deleted_at ASC LIMIT %s) AS tmp ON deletion_logs.id = tmp.id",
             (excess,))
     _db().commit()
 
@@ -979,7 +979,7 @@ def dismiss_reports_for_image_paths(image_paths: set) -> int:
     """批量忽略多张图的所有待处理举报（事务保护）。"""
     if not image_paths:
         return 0
-    placeholders = ",".join("%s" * len(image_paths))
+    placeholders = ",".join(["%s"] * len(image_paths))
     cur = _db().execute(
         f"UPDATE reports SET status='resolved', resolved_action='dismiss' WHERE status='pending' AND image_path IN ({placeholders})",
         list(image_paths))
