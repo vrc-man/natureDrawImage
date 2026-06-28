@@ -6470,18 +6470,12 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
                     mode=req.prompt_mode, template_id=req.llm_template_id,
                 )
                 sd_prompt = llm_positive
-            elif positive_prefix:
-                llm_positive, llm_negative = await translate_prompt(
-                    req.nl_prompt, original_prompt=positive_prefix, negative_prompt=req.negative_prompt, on_chunk=_on_chunk,
-                    mode=req.prompt_mode, template_id=req.llm_template_id,
-                )
-                sd_prompt = _join_positive_parts(positive_prefix, direct_base, llm_positive)
             else:
                 llm_positive, llm_negative = await translate_prompt(
                     req.nl_prompt, negative_prompt=req.negative_prompt, on_chunk=_on_chunk,
                     mode=req.prompt_mode, template_id=req.llm_template_id,
                 )
-                sd_prompt = _join_positive_parts(direct_base, llm_positive)
+                sd_prompt = _join_positive_parts(positive_prefix, direct_base, llm_positive)
             await emit(ws, {"type": "llm_done", "text": llm_positive, "negative": llm_negative})
         except Exception as e:
             real_err = f"LLM {type(e).__name__}: {e}"
