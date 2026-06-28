@@ -18,8 +18,8 @@ function collectLbItems() {
     const delThumb = h.dataset.delThumb || ''
     const path = h.dataset.path || ''
     const isGenlog = !!h.dataset.genlog
-    const hasOriginal = !!(path && !delThumb && !isGenlog)
-    const url = delThumb || href || (path ? '/api/output/file?path=' + encodeURIComponent(path) : '')
+    const hasOriginal = !!(path && !delThumb)
+    const url = delThumb || (path ? '/api/output/file?path=' + encodeURIComponent(path) : href)
     items.push({
       url,
       _key: path || url,
