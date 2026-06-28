@@ -17,16 +17,13 @@ function collectLbItems() {
     const href = isAnchor ? (el as HTMLAnchorElement).getAttribute('href') || '' : ''
     const delThumb = h.dataset.delThumb || ''
     const path = h.dataset.path || ''
-    const isGenlog = !!h.dataset.genlog
-    const hasOriginal = !!(path && !delThumb)
     const url = delThumb || (path ? '/api/output/file?path=' + encodeURIComponent(path) : href)
     items.push({
       url,
       _key: path || url,
-      downloadUrl: hasOriginal ? '/api/output/file?path=' + encodeURIComponent(path) + '&full=1' : '',
       path, mtime: h.dataset.mtime || '', ip: h.dataset.ip || '',
       author: h.dataset.author || '',
-      isGenlog, delThumb,
+      delThumb,
     })
   })
   return items
@@ -80,6 +77,16 @@ async function doFork() {
   }
 }
 
+async function doCopyLink() {
+  const cur = lbCur.value
+  if (!cur?.path) return
+  try {
+    const d = await api('POST', '/api/output/signed-url', { path: cur.path })
+    await navigator.clipboard.writeText(location.origin + (d.url || cur.url))
+    alert('链接已复制')
+  } catch { await navigator.clipboard.writeText(location.origin + '/api/output/file?path=' + encodeURIComponent(cur.path) + '&full=1'); alert('已复制（无签名）') }
+}
+
 function handleKeydown(e: KeyboardEvent) { if (!lbOpen.value) return; if (e.key === 'Escape') closeLb(); if (e.key === 'ArrowLeft') lbPrev(); if (e.key === 'ArrowRight') lbNext() }
 function handleThumbClick(e: Event) {
   const target = e.target as HTMLElement; const img = target.closest('.lb-thumb') as HTMLElement
@@ -116,9 +123,10 @@ onUnmounted(() => { document.body.style.overflow = ''; document.removeEventListe
       <span v-else-if="lbGhUser" class="text-emerald-300">{{ lbGhUser }}</span>
       <span class="text-gray-400">{{ lbCur?.mtime ? fmt(parseInt(lbCur.mtime)) : '' }}</span>
       <span class="text-amber-300">{{ lbCur?.ip ? 'IP: ' + lbCur.ip : '' }}</span>
-      <button v-if="lbCur?.path" @click="doFork" class="text-xs px-2 py-0.5 bg-pink-600 text-white rounded hover:bg-pink-700 cursor-pointer border-0">&#x1F374; Fork</button>
-      <button v-if="lbBanGid" class="text-xs px-2 py-0.5 bg-red-600 text-white rounded hover:bg-red-700 cursor-pointer border-0" @click="lbBanUser">&#x1F6AB; 封禁用户</button>
-      <a v-if="lbCur && lbCur.downloadUrl" :href="lbCur.downloadUrl" target="_blank" rel="noopener" download class="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700">&#x2B07; 下载原图</a>
+      <a v-if="lbCur?.path" :href="'/api/output/file?path=' + encodeURIComponent(lbCur.path) + '&full=1&download=1'" target="_blank" rel="noopener" class="text-white/60 hover:text-white no-underline text-base" title="下载原图">⬇️</a>
+      <button v-if="lbCur?.path" @click="doFork" class="text-pink-300 hover:text-pink-100 cursor-pointer border-0 bg-transparent text-base" title="Fork 工作流">🍴</button>
+      <button v-if="lbCur?.path" @click="doCopyLink" class="text-white/50 hover:text-white cursor-pointer border-0 bg-transparent text-base" title="复制链接">🔗</button>
+      <button v-if="lbBanGid" class="text-white/50 hover:text-red-400 cursor-pointer border-0 bg-transparent text-base" @click="lbBanUser" title="封禁用户">🔨</button>
     </div>
     <div v-if="forkLoading" class="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center">
       <div class="bg-white/95 rounded-2xl px-8 py-6 shadow-2xl flex items-center gap-3">
