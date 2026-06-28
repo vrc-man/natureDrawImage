@@ -230,6 +230,29 @@ for p in paths:
 conn.commit()
 ```
 
+### 模式 7：跨数据库类型迁移，返回结构未对齐调用方
+
+现象：HTTP 返回 200，数据也在，但前端显示"暂无数据"或空白图表。
+
+根因：从 SQLite 迁移到 MySQL 时，只改了 SQL 语法（`?` → `%s`、`strftime` → `FROM_UNIXTIME`），但**函数的返回值字段名和结构与老版本不一致**，调用方（前端或 app.py）不认。
+
+```python
+# SQLite 原版返回（前端 LeaderBoardSection.vue 依赖这个结构）：
+{"items": [{"login": "...", "gen_count": 123, "hourly": [24h分布], "peak_hour": 16, "peak_day": "2026-06-28"}], "total": 333}
+
+# MySQL 迁移时凭感觉写的（字段名完全错位）：
+{"entries": [{"login": "...", "count": 123}], "limit": 3}
+#      ↑ 前端读 data.items，拿到空列表
+```
+
+修复方向：迁移时要经过三层核对——
+
+```
+□ 第 1 层：逐函数对比新旧两个 operations.py，确保函数签名一致
+□ 第 2 层：对比返回结构的字段名、嵌套层级、字段类型
+□ 第 3 层：翻前端代码确认它期待什么字段（Vue/ts 组件里的 api 调用）
+```
+
 ---
 
 ## 三、排查数据丢失的分步清单
@@ -273,6 +296,33 @@ conn.commit()
 ⑤ 有办法回滚吗？
 ```
 
+### 迁移数据库类型前先问自己
+
+```
+① 新旧两个 operations.py 逐函数对比过吗？函数签名是否一致？
+② 每个函数的返回值结构比对过吗？字段名、嵌套层级、字段类型是否相同？
+③ 翻过调用方（前端 Vue 组件 / app.py）代码，确认它期待什么字段吗？
+④ 前端发了什么参数（如 tz_offset）？后端接了吗？没有接的话默认行为是否对齐？
+```
+
+### 迁移完成后验证清单
+
+改完 operations.py 后，至少做这两步才能确认没漏：
+
+```
+□ 第一步：diff 函数清单
+   补一个 diff 新旧两个 operations.py 的 def 行，确保函数没漏搬：
+   diff <(grep "^def " 老项目/db/operations.py) <(grep "^def " 新项目/db/operations.py)
+
+   输出会列出：左边独有 = 老项目有但新项目没有的函数（漏搬了）
+             右边独有 = 新项目有但老项目没有的函数（可能新增，也可能是改错名）
+
+□ 第二步：curl 验证返回结构
+   涉及前端的接口，启动服务后 curl 一下，确认返回字段和前端期待的一致：
+   curl /api/admin/features/gen-leaderboard?range=today
+   一眼看出 entries 还是 items、count 还是 gen_count
+```
+
 ### 数据库操作层级规范
 
 ```
@@ -305,6 +355,7 @@ SQLite
 | JSON 迁移期 | access_keys 绑定丢失 | `_save_access_keys` 全量覆盖 feature 的原子 INSERT | 改为 `db.claim/unclaim/increment/decrement` 原子函数 |
 | 2026-06 | 镜像删除时部分图片标记未落库 | 批量操作在循环外部 commit，中间崩溃导致部分丢失 | 引入 `mark_images_deleted` 事务保护 |
 | 2026-06 | GC 误删新生成的图片 | GC 扫描和生图任务时序竞争（TOCTOU） | 加 5 分钟新文件保护窗口 |
+| 2026-06-28 | 排行榜返回空图表（HTTP 200） | SQLite→MySQL 迁移时 `get_gen_leaderboard` 返回字段名和结构与老版不一致，前端不认 | 三层核对：新旧 operations.py 函数签名、返回结构、前端预期 |
 
 ---
 

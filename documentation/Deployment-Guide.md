@@ -25,13 +25,14 @@ I:\cc\
 │
 └── natureDrawImage-main-mysqlRefactoring\
     ├── natureDrawImage-env\              # 本项目 Python 虚拟环境
-    ├── web\app.py                        # Web 主程序，端口 23601
-    ├── web\db\schema.py                  # MySQL schema 和连接配置
+    ├── web\app.py                        # Web 主程序
+    ├── start.py                          # 启动脚本：检测 MySQL → 启动 uvicorn
+    ├── stop.py                           # 关闭脚本：通知 Web 优雅关闭
     ├── .env                              # 环境变量，含 MySQL 密码、站点配置等
     ├── start-Py64-311.bat                # 创建/检查虚拟环境并启动 Web
-    ├── start-all.bat                     # 启动 Web 循环模式
-    ├── start-web.bat                     # 启动 Web
-    ├── stop-all.bat                      # 安全关闭 Web/MySQL
+    ├── start-all.bat                     # 启动 Web（推荐）
+    ├── start-web.bat                     # 启动 Web（备用）
+    ├── stop-all.bat                      # 安全关闭 Web
     ├── init-db.bat                       # 初始化数据库/建表
     ├── 启动同步工具.bat                   # 打开 SQLite→MySQL 同步/备份/还原工具
     └── scripts\sync_gui.py               # 同步工具 GUI
@@ -45,7 +46,7 @@ I:\cc\
 |---|---|
 | 第一次创建/修复虚拟环境并启动 Web | `start-Py64-311.bat` |
 | 平时启动 Web | `start-all.bat` 或 `start-web.bat` |
-| 安全关闭 Web/MySQL | `stop-all.bat` |
+| 安全关闭 Web | `stop-all.bat` |
 | 初始化数据库建表 | `init-db.bat` |
 | 打开同步/备份/还原工具 | `启动同步工具.bat` |
 
@@ -177,7 +178,7 @@ start-all.bat
 然后浏览器打开：
 
 ```text
-http://127.0.0.1:23601
+http://127.0.0.1:8080
 ```
 
 ### 只启动 Web
@@ -190,7 +191,7 @@ start-web.bat
 
 ---
 
-## 5. 日常关闭项目/数据库
+## 5. 日常关闭项目
 
 ### 只关闭 Web
 
@@ -200,9 +201,9 @@ start-web.bat
 Ctrl + C
 ```
 
-这通常只会停止 Web，不一定停止 MySQL。
+这会优雅关闭 Web。MySQL 通过 Windows 启动目录自启，不会关闭。
 
-### 安全关闭 Web 和 MySQL
+### 安全关闭 Web
 
 推荐双击：
 
@@ -210,12 +211,9 @@ Ctrl + C
 stop-all.bat
 ```
 
-它会：
+它会调用 `stop.py` 向 Web 发送关闭通知。
 
-1. 尝试通知 Web 保存/关闭；
-2. 调用 `I:\cc\mysql-8.0.28-winx64\stop_mysql.bat stop` 安全停止 MySQL。
-
-> 不建议直接叉掉 MySQL 窗口，更不建议运行中直接拔移动硬盘。
+> MySQL 由 Windows 启动目录自启，无需手动关闭。
 
 ---
 
@@ -359,7 +357,7 @@ scripts\convert_operations.py
 
 ```text
 双击 start-all.bat
-打开 http://127.0.0.1:23601
+打开 http://127.0.0.1:8080
 ```
 
 ### 关闭

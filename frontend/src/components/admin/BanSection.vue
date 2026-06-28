@@ -88,7 +88,12 @@ async function deleteSelectedImages() {
   if (!paths.length) return
   if (!confirm('确认删除 ' + paths.length + ' 张图片？')) return
   if (prompt('确认删除') !== '确认删除') { alert('输入不匹配'); return }
-  try { await api('POST', '/api/admin/delete_batch', { paths }); ipImagesSelected.value = new Set(); showIpImages(ipImagesIp.value) } catch (e: any) { alert('删除失败: ' + e.message) }
+  try {
+    const r = await api('POST', '/api/admin/delete_batch', { paths })
+    ipImagesSelected.value = new Set()
+    await showIpImages(ipImagesIp.value)
+    alert(`删除完成：成功 ${r.deleted ?? 0} 张，失败 ${r.failed ?? 0} 张`)
+  } catch (e: any) { alert('删除失败: ' + e.message) }
 }
 
 onMounted(loadBans)

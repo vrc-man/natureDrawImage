@@ -50,7 +50,8 @@ async function save() {
   try {
     const payload: Record<string, any> = {}
     for (const f of limitFields) {
-      payload[f.key] = parseInt(limits.value[f.key], 10) || defaultFor(f.key)
+      const val = parseInt(limits.value[f.key], 10)
+      payload[f.key] = isNaN(val) ? defaultFor(f.key) : val
     }
     payload.featured_tip = limits.value.featured_tip || ''
     await api('POST', '/api/admin/limits', payload)

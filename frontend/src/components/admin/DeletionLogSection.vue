@@ -60,14 +60,24 @@ async function batchDelete() {
   if (!confirm(`确定清理选中的 ${selected.value.length} 条删除记录？`)) return
   const i = prompt(`请输入"确认删除删除记录"以继续清理 ${selected.value.length} 条记录：`)
   if (i !== '确认删除删除记录') { alert('输入不匹配，已取消'); return }
-  await api('POST', '/api/admin/deletion-log/clear', { paths: selected.value })
-  selected.value = []; page.value = 0; load()
+  try {
+    const r = await api('POST', '/api/admin/deletion-log/clear', { paths: selected.value })
+    const removed = r.removed ?? 0
+    const failed = Math.max(0, selected.value.length - removed)
+    selected.value = []
+    page.value = 0
+    await load()
+    alert(`清理完成：成功 ${removed} 条，失败 ${failed} 条`)
+  } catch (e: any) { alert('清理失败: ' + e.message) }
 }
 
 async function clearRecord(path: string) {
   if (!confirm('确认清理此条删除记录？')) return
-  await api('POST', '/api/admin/deletion-log/clear', { path })
-  load()
+  try {
+    const r = await api('POST', '/api/admin/deletion-log/clear', { path })
+    await load()
+    alert(r.message || '清理完成：成功 1 条，失败 0 条')
+  } catch (e: any) { alert('清理失败: ' + e.message) }
 }
 
 async function clearAll() {
@@ -78,8 +88,12 @@ async function clearAll() {
   const body: any = {}
   if (dateFrom.value) body.date_from = new Date(dateFrom.value + 'T00:00:00').getTime() / 1000
   if (dateTo.value) body.date_to = new Date(dateTo.value + 'T23:59:59').getTime() / 1000
-  await api('POST', '/api/admin/deletion-log/clear', body)
-  page.value = 0; load()
+  try {
+    const r = await api('POST', '/api/admin/deletion-log/clear', body)
+    page.value = 0
+    await load()
+    alert(r.message || '清理完成')
+  } catch (e: any) { alert('清空失败: ' + e.message) }
 }
 
 async function backfillThumbs() {

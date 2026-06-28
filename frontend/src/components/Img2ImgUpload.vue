@@ -30,6 +30,8 @@ function addImage(file: File) {
       }
       xhr.onerror = () => reject(new Error('上传失败'))
       xhr.open('POST', '/api/img2img/upload')
+      xhr.timeout = 45000  // 45 秒超时，给后端转发 ComfyUI 留足够余量
+      xhr.ontimeout = () => reject(new Error('上传超时'))
       xhr.send(fd)
     } catch (er) {
       images.value.splice(idx, 1)

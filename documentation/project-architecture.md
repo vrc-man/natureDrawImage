@@ -205,6 +205,8 @@ features/__init__.py       register_all(app) 挂载点
 features/health_check.py   /api/health 健康检查
 features/llm_prompt_templates.py   LLM 提示词模板管理（6 个接口）
 features/access_keys.py    访问密钥管理（7 个接口，迁出样板）
+features/gen_stats.py      /api/admin/features/gen-stats/generation 系统统计
+features/gen_leaderboard.py  /api/admin/features/gen-leaderboard 生图排行榜
 ```
 
 **设计铁律**：features 模块绝不 `from app import ...`，所有数据函数和锁都通过 `_deps.set_app_ctx()` 注入。
@@ -227,7 +229,7 @@ features/access_keys.py    访问密钥管理（7 个接口，迁出样板）
 | `queue_state.json` | `web/` | app.py | 生图队列持久化（进程重启恢复） |
 | `deletion_log.json` | `web/` | app.py | 删除记录（原图/缩略图） |
 
-**注意**：用户数据（用户/会话/密钥）已迁移到 SQLite，不使用 JSON。
+**注意**：用户数据（用户/会话/密钥/邮箱用户/邀请码/生图日志等）已迁移到 MySQL，不使用 JSON。JSON 文件仅用于尚未迁移的配置，未来会逐步迁移到 MySQL。
 
 ---
 
@@ -284,7 +286,8 @@ features/access_keys.py    访问密钥管理（7 个接口，迁出样板）
 **鉴权**：全部要求 `request.state.is_admin === true`
 
 - `/api/admin/whoami` — 管理员身份确认
-- `/api/admin/stats/generation` — 系统统计
+- `/api/admin/features/gen-stats/generation` — 系统统计（features/gen_stats，已迁出 app.py）
+- `/api/admin/features/gen-leaderboard` — 生图排行榜（features/gen_leaderboard）
 - `/api/admin/queue` — 队列管理（取消/调序）
 - `/api/admin/announcement` — 公告管理
 - `/api/admin/resolutions` — 分辨率管理
@@ -327,6 +330,8 @@ features/access_keys.py    访问密钥管理（7 个接口，迁出样板）
 | `/api/features/llm-templates` | llm_prompt_templates | 用户端模板下拉（公开） |
 | `/api/admin/features/llm-templates` (+ CRUD) | llm_prompt_templates | 管理端模板管理 |
 | `/api/admin/access-keys` (+ 6 个子接口) | access_keys | 访问密钥管理（已迁出 app.py） |
+| `/api/admin/features/gen-stats/generation` | gen_stats | 系统统计（已迁出 app.py） |
+| `/api/admin/features/gen-leaderboard` | gen_leaderboard | 生图排行榜 |
 
 ---
 

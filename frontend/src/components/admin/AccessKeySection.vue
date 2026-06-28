@@ -75,7 +75,7 @@ function typeLabel(k: any): string {
 async function deleteKey(preview: string) {
   if (!confirm('彻底删除密钥 ' + preview + '？此操作不可恢复！')) return
   if (prompt('输入"彻底删除"确认') !== '彻底删除') { alert('输入不匹配'); return }
-  try { await api('POST', '/api/admin/access-keys/remove', { key_preview: preview }); loadKeys() } catch (e: any) { alert('删除失败: ' + e.message) }
+  try { await api('POST', '/api/admin/access-keys/remove', { key_preview: preview }); await loadKeys(); alert('删除完成：成功 1 个，失败 0 个') } catch (e: any) { alert('删除失败: ' + e.message) }
 }
 async function enableKey(preview: string) {
   if (!confirm('重新启用密钥 ' + preview + '？')) return
@@ -89,7 +89,7 @@ async function disableKey(preview: string) {
 async function removeKey(preview: string) {
   if (!confirm('删除密钥 ' + preview + '？')) return
   if (prompt('确认删除') !== '确认删除') { alert('输入不匹配'); return }
-  try { await api('POST', '/api/admin/access-keys/remove', { key_preview: preview }); loadKeys() } catch (e: any) { alert('删除失败: ' + e.message) }
+  try { await api('POST', '/api/admin/access-keys/remove', { key_preview: preview }); await loadKeys(); alert('删除完成：成功 1 个，失败 0 个') } catch (e: any) { alert('删除失败: ' + e.message) }
 }
 async function revealKey(preview: string) {
   try { const r = await api('POST', '/api/admin/access-keys/reveal', { key_preview: preview }); alert('完整密钥：' + r.key) } catch (e: any) { alert('查看失败: ' + e.message) }

@@ -3,18 +3,26 @@
 ## 项目架构
 
 ```
-natureDrawImage-main-sqlit/
+natureDrawImage-main-mysqlRefactoring/
 ├── web/
-│   ├── app.py                  # FastAPI 后端
-│   ├── db/
-│   │   ├── schema.py           # SQLite Schema / 初始化 / 迁移
-│   │   └── operations.py       # SQLite 数据操作
+│   ├── app.py                  # FastAPI 后端（MySQL 版）
 │   ├── email_auth.py           # 邮箱登录/注册/邮箱管理 API
+│   ├── db/
+│   │   ├── schema.py           # MySQL Schema / 初始化 / 迁移
+│   │   └── operations.py       # MySQL 数据操作
+│   ├── features/               # 外挂功能模块（不 import app）
+│   │   ├── __init__.py          # register_all(app) 统一挂载
+│   │   ├── _deps.py             # 注入容器（set_app_ctx / ctx）
+│   │   ├── health_check.py      # /api/health 健康检查
+│   │   ├── access_keys.py       # 访问密钥管理
+│   │   ├── llm_prompt_templates.py  # LLM 提示词模板
+│   │   ├── gen_stats.py         # 系统统计
+│   │   ├── gen_leaderboard.py   # 生图排行榜
+│   │   └── config/              # 配置文件存储
 │   ├── static/
-│   │   ├── admin.html          # 旧版管理后台（历史参考，/admin 不再使用）
-│   │   ├── index.html          # 旧版首页（历史参考）
-│   │   └── dist/               # Vue 构建输出，/、/access、/admin 使用
-│   └── db/natureDrawImage.db   # SQLite 主数据库（本地运行时文件）
+│   │   ├── admin.html           # 旧版管理后台（历史参考）
+│   │   ├── index.html           # 旧版首页（历史参考）
+│   │   └── dist/                # Vue 构建输出，/、/access、/admin 使用
 ├── frontend/
 │   ├── src/
 │   │   ├── pages/
@@ -25,7 +33,7 @@ natureDrawImage-main-sqlit/
 │   │   │   ├── admin/          # 管理后台板块组件
 │   │   │   │   ├── useAdminApi.ts       # 共享 API 工具
 │   │   │   │   ├── AdminLightbox.vue    # 灯箱
-│   │   │   │   ├── StatsSection.vue      # 系统统计
+│   │   │   │   ├── StatsSection.vue      # 系统统计（/api/admin/features/gen-stats/generation）
 │   │   │   │   ├── QueueSection.vue     # 队列管理
 │   │   │   │   ├── AnnSection.vue       # 公告管理
 │   │   │   │   ├── ResSection.vue       # 分辨率管理
@@ -53,10 +61,12 @@ natureDrawImage-main-sqlit/
 │   │   ├── api/
 │   │   │   ├── endpoints.ts     # 用户端 API 封装
 │   │   │   └── types.ts         # TypeScript 类型定义
-│   │   └── assets/style.css     # 全局 CSS（含 html, body { overflow: hidden }）
+│   │   └── assets/style.css     # 全局 CSS
 │   └── ...
-└── documentation/
-    └── Project-documentation.md  # 本文件
+├── start.py                      # 启动脚本（替代批处理）
+├── stop.py                       # 关闭脚本
+├── documentation/
+│   └── Project-documentation.md  # 本文件
 ```
 
 ---
@@ -67,7 +77,13 @@ natureDrawImage-main-sqlit/
 
 - 主后端入口是 `web/app.py`，FastAPI 应用对象为 `app`。
 - 邮箱登录、注册、邀请码、邮箱用户管理等路由由 `web/email_auth.py` 提供，并在 `app.py` 底部 SPA fallback 之前调用 `init_email_auth()` 注册。
-- SQLite 初始化和迁移在 `web/db/schema.py`，常用读写封装在 `web/db/operations.py`。
+- 外挂功能模块在 `web/features/` 目录下，通过 `features/__init__.py` 的 `register_all(app)` 统一注册：
+  - `features/health_check.py` — `/api/health`
+  - `features/access_keys.py` — `/api/admin/access-keys/*`
+  - `features/llm_prompt_templates.py` — LLM 提示词模板管理
+  - `features/gen_stats.py` — 系统统计
+  - `features/gen_leaderboard.py` — 生图排行榜
+- MySQL 初始化和迁移在 `web/db/schema.py`，常用读写封装在 `web/db/operations.py`。
 
 ### 前端入口
 
@@ -211,7 +227,7 @@ _creator_map_lock = asyncio.Lock()       # 保护 creator_ip 映射
 _featured_lock = asyncio.Lock()          # 保护 featured 精选
 ```
 
-> 变量名沿用 JSON 迁移前命名，当前实际读写大多已经落到 SQLite 表。
+> 变量名沿用 JSON 迁移前命名，当前实际读写大多已经落到 MySQL 表。
 
 **加锁原则：** 校验（读）和删除（写）必须在同一个锁内完成，消除 TOCTOU 窗口。
 
@@ -221,7 +237,7 @@ _featured_lock = asyncio.Lock()          # 保护 featured 精选
 - `POST /api/admin/mark_delete_batch`: 缺 `_deleted_images_lock` + `_user_images_lock` ✅ 已加
 - 举报处理删图: 缺 `_user_images_lock` ✅ 已加
 
-### SQLite 数据表
+### MySQL 数据表
 
 | 表 | 用途 | 读 | 写 |
 |------|------|----|-----|
@@ -231,7 +247,7 @@ _featured_lock = asyncio.Lock()          # 保护 featured 精选
 | `gen_logs` | 生图日志 | `_load_gen_logs()` | `db.save_gen_log()` |
 | `featured` | 精选列表 | `_read_featured()` | `_write_featured()` |
 
-> 部分 `app.py` 函数仍保留 `_load_*` 命名，这是从 JSON 迁移到 SQLite 后的兼容包装，不代表仍写 JSON 文件。
+> 部分 `app.py` 函数仍保留 `_load_*` 命名，这是从 JSON 迁移后的兼容包装，不代表仍写 JSON 文件。
 
 ---
 
@@ -504,15 +520,16 @@ npm run build
 ## 后端部署
 
 ```bash
-# 方式一：直接运行（推荐）
-# 在项目根目录执行（不要 cd web）
-start.bat
+# 方式一：双击 start-all.bat（推荐）
 
 # 方式二：手动启动
-cd /d I:\网站\shengtu\natureDrawImage-main-sqlit
-.venv\Scripts\python.exe -m uvicorn web.app:app --host 127.0.0.1 --port 8080 --forwarded-allow-ips 127.0.0.1 --timeout-graceful-shutdown 30
+cd /d I:\cc\natureDrawImage-main-mysqlRefactoring
+natureDrawImage-env\Scripts\python.exe start.py
 
-# 方式三：外网部署
+# 方式三：直接 uvicorn
+natureDrawImage-env\Scripts\python.exe -m uvicorn web.app:app --host 127.0.0.1 --port 8080 --forwarded-allow-ips 127.0.0.1 --timeout-graceful-shutdown 60
+
+# 方式四：外网部署
 # 使用反向代理（nginx/caddy）监听 443，转发到 127.0.0.1:8080
 ```
 

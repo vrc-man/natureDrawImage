@@ -7,13 +7,22 @@ defineProps<{ visible: boolean }>()
 
 const items = ref<any[]>([])
 const status = ref('')
+const loading = ref(false)
 let timer: any = null
 
 async function load() {
+  loading.value = true
+  const start = Date.now()
   try {
     const d = await api('GET', '/api/admin/styles')
     items.value = (d.styles || []).map((s: any) => ({ name: s.name || '', tags: s.tags || '', image: s.image || '', category: s.category || '' }))
+    status.value = '✓ 已刷新'
+    setTimeout(() => { if (status.value === '✓ 已刷新') status.value = '' }, 1500)
   } catch {}
+  const elapsed = Date.now() - start
+  const minWait = 400
+  if (elapsed < minWait) await new Promise(r => setTimeout(r, minWait - elapsed))
+  loading.value = false
 }
 
 async function save() {
@@ -96,9 +105,17 @@ onMounted(load)
 <template>
   <div v-if="visible" class="bg-white rounded shadow p-4 mb-4">
     <div class="flex items-center justify-end mb-2">
-      <button @click="load" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 border-0 cursor-pointer">刷新</button>
+      <button @click="load" :disabled="loading" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 border-0 cursor-pointer disabled:opacity-50">{{ loading ? '刷新中…' : '刷新' }}</button>
     </div>
     <div>
+      <div v-if="loading" class="flex items-center justify-center py-12 gap-2">
+        <svg class="animate-spin h-6 w-6 text-pink-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        <span class="text-xs text-gray-400">加载中请稍后...</span>
+      </div>
+      <template v-else>
       <p class="text-xs text-gray-500 mb-2">配置可选画风。tags 为必填项（英文 Danbooru 标签），名称为可选别名（不填则前端直接显示 tags）。用户选择画风后，tags 会被追加到最终 prompt 最前面。</p>
 	      <!-- 画风分类标签管理 -->
 	      <div class="mb-3 border rounded p-3 bg-blue-50">
@@ -170,6 +187,7 @@ onMounted(load)
         <button @click="add" class="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600 text-sm border-0 cursor-pointer">+ 添加画风</button>
         <span class="text-xs text-gray-500">{{ status }}</span>
       </div>
+      </template>
     </div>
   </div>
 </template>

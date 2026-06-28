@@ -705,9 +705,13 @@ def query_gen_logs(login: str = "", date_from: float = 0, date_to: float = 0,
 
 
 def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0, tz_offset: float = 0) -> dict:
-    """生图排行榜：按 login 分组 SUM(count)，只统计 status='success'。"""
+    """生图排行榜：按 login 分组 SUM(count)，只统计 status='success'。
+
+    返回格式（前端 LeaderBoardSection.vue 预期）：
+      { items: [{ login, gen_count, hourly, peak_hour, peak_hour_count, peak_day, peak_day_count }], total }
+    """
     conditions = ["status='success'"]
-    params = []
+    params: list = []
     if date_from > 0:
         conditions.append("created_at >= %s")
         params.append(date_from)
@@ -715,12 +719,66 @@ def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0
         conditions.append("created_at <= %s")
         params.append(date_to)
     where = " WHERE " + " AND ".join(conditions)
+
+    # 总生成数
+    total_row = _db().execute(f"SELECT COALESCE(SUM(`count`),0) as c FROM gen_logs{where}", params).fetchone()
+    total = int(total_row["c"]) if total_row else 0
+
+    # 按 login 分组排行
+    limit_clamped = max(1, min(limit, 50))
     rows = _db().execute(
         f"SELECT login, SUM(`count`) as total FROM gen_logs{where} GROUP BY login ORDER BY total DESC LIMIT %s",
-        params + [max(1, min(limit, 50))]
+        params + [limit_clamped]
     ).fetchall()
-    entries = [{"login": r["login"] or "anonymous", "count": int(r["total"])} for r in rows]
-    return {"entries": entries, "limit": limit}
+
+    items = []
+    for r in rows:
+        login = r["login"] or "anonymous"
+        # 每用户的小时分布
+        hourly = [0] * 24
+        conds = ["status='success' AND login=%s"]
+        h_params: list = [login]
+        if date_from > 0:
+            conds.append("created_at >= %s")
+            h_params.append(date_from)
+        if date_to > 0:
+            conds.append("created_at <= %s")
+            h_params.append(date_to)
+        h_where = " WHERE " + " AND ".join(conds)
+        hourly_rows = _db().execute(
+            f"SELECT FLOOR(created_at/3600)%%24 as hh, SUM(`count`) as cnt FROM gen_logs{h_where} GROUP BY hh ORDER BY hh",
+            h_params
+        ).fetchall()
+        for hr in hourly_rows:
+            h = int(hr["hh"])
+            if 0 <= h < 24:
+                hourly[h] = int(hr["cnt"])
+
+        peak_hour = max(range(24), key=lambda i: hourly[i])
+        peak_hour_count = hourly[peak_hour]
+
+        peak_day = ""
+        peak_day_count = 0
+        day_rows = _db().execute(
+            f"SELECT DATE(FROM_UNIXTIME(created_at)) as day, SUM(`count`) as cnt "
+            f"FROM gen_logs{h_where} GROUP BY day ORDER BY cnt DESC LIMIT 1",
+            h_params
+        ).fetchall()
+        if day_rows and day_rows[0]["day"]:
+            peak_day = str(day_rows[0]["day"])
+            peak_day_count = int(day_rows[0]["cnt"])
+
+        items.append({
+            "login": login,
+            "gen_count": int(r["total"]),
+            "hourly": hourly,
+            "peak_hour": peak_hour,
+            "peak_hour_count": peak_hour_count,
+            "peak_day": peak_day,
+            "peak_day_count": peak_day_count,
+        })
+
+    return {"items": items, "total": total}
 
 
 def delete_gen_logs_by_ids(log_ids: list) -> int:

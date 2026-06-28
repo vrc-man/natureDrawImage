@@ -5473,6 +5473,16 @@ async def _notify_cooldown_expired(github_id: str) -> None:
                 pass
 
 
+def _add_user_notification(github_id: str, message: str) -> None:
+    """写入用户通知，失败不影响主流程。"""
+    if not github_id or not message:
+        return
+    try:
+        db.add_notification(str(github_id), message)
+    except Exception as _e:
+        print(f"[WARN] add_notification 失败: {type(_e).__name__}: {_e}")
+
+
 def _schedule_cooldown_notify(github_id: str, delay_sec: int) -> None:
     """在 delay_sec 秒后通过状态 WS 通知前端冷却已结束。"""
     old = _cooldown_tasks.pop(github_id, None)
@@ -5888,7 +5898,8 @@ async def _process_queue() -> None:
                     pass
             await _run_task(ws, RunRequest(**next_item["params"]),
                           client_ip=next_item.get("client_ip", "unknown"),
-                          github_id=str(next_item.get("github_id", "")))
+                          github_id=str(next_item.get("github_id", "")),
+                          queue_item=next_item)
         except WebSocketDisconnect:
             # 用户断连：任务继续以 headless 模式运行，不打断
             pass
@@ -5916,6 +5927,9 @@ async def _process_queue() -> None:
                 pass
             next_item["error_message"] = user_msg
             next_item["status"] = "failed"
+            if next_item.get("detached") or ws is None:
+                _add_user_notification(str(next_item.get("github_id", "")), f"你的后台生图任务失败：{user_msg}")
+                next_item["_notification_written"] = True
             try:
                 await emit(ws, {"type": "error", "message": user_msg, "error_message": user_msg})
             except Exception:
@@ -5944,10 +5958,15 @@ async def _process_queue() -> None:
                     await asyncio.wait_for(ws.close(), timeout=5)
                 except (Exception, asyncio.TimeoutError):
                     pass
-            # 记录 headless 完成的任务
-            if headless:
+            # 记录断连后台完成的任务，并写入持久化通知
+            if headless or next_item.get("detached"):
                 gid = str(next_item.get("github_id", ""))
                 if gid:
+                    if next_item.get("status") == "failed":
+                        if not next_item.get("_notification_written"):
+                            _add_user_notification(gid, f"你的后台生图任务失败：{next_item.get('error_message') or '生成失败'}")
+                    else:
+                        _add_user_notification(gid, "你的后台生图任务已完成，请到「我的」查看结果")
                     async with _headless_lock:
                         _headless_completed[gid] = {"time": _time.time()}
                         if len(_headless_completed) > 200:
@@ -6127,6 +6146,7 @@ async def ws_run(ws: WebSocket):
                         except Exception:
                             pass
                     qi["ws"] = ws
+                    qi["detached"] = False
                     qi["client_ip"] = client_ip
                     break
 
@@ -6212,6 +6232,7 @@ async def ws_run(ws: WebSocket):
                     "created_at": _time.time(),
                     "claimed_key": claimed_key,  # 用于任务失败时回滚密钥次数
                     "reservation_ws_id": id(ws) if key_preconsumed else 0,
+                    "detached": False,
                 }
                 _task_queue.append(queue_item)
                 _save_queue_state()
@@ -6267,10 +6288,13 @@ async def ws_run(ws: WebSocket):
                     if qi.get("ws") is ws:
                         if qi["status"] == "waiting":
                             qi["ws"] = None  # 保留排队位置，用户可重连恢复
+                            qi["detached"] = True
                             _save_queue_state()
                             await _broadcast_queue()
                         elif qi["status"] == "running":
                             qi["ws"] = None  # 转为 headless，任务继续运行
+                            qi["detached"] = True
+                            _save_queue_state()
                         break
             # 递减 /ws/run 每 IP 连接数
             if client_ip:
@@ -6358,7 +6382,7 @@ async def _auto_select_img2img_workflow(image_count: int) -> Optional[str]:
     return candidates[0][0]
 
 
-async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown", github_id: str = ""):
+async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown", github_id: str = "", queue_item: Optional[Dict[str, Any]] = None):
     import time as _time
     path = req.workflow_path
     inline = req.inline_workflow
@@ -6470,7 +6494,7 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
                     req.nl_prompt, original_prompt=positive_prefix, negative_prompt=req.negative_prompt, on_chunk=_on_chunk,
                     mode=req.prompt_mode, template_id=req.llm_template_id,
                 )
-                sd_prompt = _join_positive_parts(direct_base, llm_positive)
+                sd_prompt = _join_positive_parts(positive_prefix, direct_base, llm_positive)
             else:
                 llm_positive, llm_negative = await translate_prompt(
                     req.nl_prompt, negative_prompt=req.negative_prompt, on_chunk=_on_chunk,
@@ -6626,6 +6650,9 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
 
     await emit(ws, {"type": "log", "message": "[3/4] 提交到 生图服务模块..."})
     prompt_id = await submit_prompt(prompt_dict)
+    if queue_item is not None:
+        queue_item.setdefault("params", {})["_prompt_id"] = prompt_id
+        _save_queue_state()
     await emit(ws, {"type": "log", "message": f"prompt_id={prompt_id[:8]}"})
     await emit(ws, {"type": "prompt_id", "prompt_id": prompt_id, "final_prompt": sd_prompt})
     _current_task_info.update({
@@ -6992,6 +7019,10 @@ async def api_admin_queue_cancel(request: Request):
                             except Exception:
                                 pass
                         _task_queue.remove(qi)
+                        ck = qi.get("claimed_key", "")
+                        reservation_ws_id = int(qi.get("reservation_ws_id") or 0)
+                        if ck:
+                            await _rollback_key_reservation(reservation_ws_id, ck)
                     _save_queue_state()
                     await _broadcast_queue()
                     return {"ok": True, "message": f"已取消任务 #{item_id}"}
@@ -7030,10 +7061,16 @@ async def api_admin_queue_force_unlock(request: Request):
         # 取消正在运行的 _process_queue 任务，触发 finally 块释放 _run_lock
         if _current_run_task is not None and not _current_run_task.done():
             _current_run_task.cancel()
-    # 清空所有等待中任务
+    # 清空所有等待中任务，并回滚等待任务的密钥预扣
     async with _queue_lock:
+        waiting_items = [qi for qi in _task_queue if qi["status"] != "running"]
         _task_queue[:] = [qi for qi in _task_queue if qi["status"] == "running"]
         _save_queue_state()
+    for qi in waiting_items:
+        ck = qi.get("claimed_key", "")
+        reservation_ws_id = int(qi.get("reservation_ws_id") or 0)
+        if ck:
+            await _rollback_key_reservation(reservation_ws_id, ck)
     await _broadcast_queue()
     await _push_status(reset=True)
     return {"ok": True, "was_locked": was_locked, "message": "已取消当前任务并清空队列" if was_locked else "队列已清空"}
@@ -8166,26 +8203,7 @@ async def api_admin_gc_stats(request: Request):
 }
 
 
-@app.get("/api/admin/stats/generation")
-async def api_admin_stats_generation(request: Request, date_from: float = 0, date_to: float = 0, login: str = ""):
-    """系统统计：今日生图总数、每小时分布、每日分布。支持 date_from/date_to (epoch秒)/login 筛选。"""
-    if not getattr(request.state, "is_admin", False):
-        raise HTTPException(403)
-    login = login.strip()
-    if date_from and date_to:
-        return {
-            "today_total": db.count_gen_logs_range(date_from, date_to, login),
-            "hourly": db.get_gen_logs_hourly_range(date_from, date_to, login),
-            "daily": db.get_gen_logs_daily_range(date_from, date_to, login),
-        }
-    return {
-        "today_total": db.count_gen_logs_today(login),
-        "hourly": db.get_gen_logs_hourly_today(login),
-        "daily": db.get_gen_logs_daily_7days(login),
-    }
-
-
-# ---------------- 公告端点 ----------------
+# 公告端点 - 放在 gen-stats 下方
 
 @app.get("/api/announcement")
 async def api_announcement():
@@ -9102,7 +9120,7 @@ async def api_admin_gen_logs_clear(request: Request, date_from: float = 0, date_
         removed = db.clear_gen_logs(date_from, date_to)
     else:
         removed = db.clear_gen_logs(unlink_all=True)
-    return {"ok": True, "message": f"已清空 {removed} 条日志"}
+    return {"ok": True, "removed": removed, "message": f"已清空 {removed} 条日志"}
 
 
 @app.post("/api/admin/gen-logs/scan-orphans")

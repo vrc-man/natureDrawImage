@@ -58,8 +58,15 @@ async function batchDelete() {
   if (!confirm(`确定删除选中的 ${selected.value.length} 条生图日志？`)) return
   const i = prompt(`请输入"确认删除生图日志"以继续删除 ${selected.value.length} 条记录：`)
   if (i !== '确认删除生图日志') { alert('输入不匹配，已取消'); return }
-  await api('POST', '/api/admin/gen-logs/delete', { ids: selected.value })
-  selected.value = []; page.value = 0; load()
+  try {
+    const r = await api('POST', '/api/admin/gen-logs/delete', { ids: selected.value })
+    const removed = r.removed ?? 0
+    const failed = Math.max(0, selected.value.length - removed)
+    selected.value = []
+    page.value = 0
+    await load()
+    alert(`删除完成：成功 ${removed} 条，失败 ${failed} 条`)
+  } catch (e: any) { alert('删除失败: ' + e.message) }
 }
 
 async function clearAll() {
@@ -73,8 +80,13 @@ async function clearAll() {
   if (dateFrom.value) params.push('date_from=' + (new Date(dateFrom.value + 'T00:00:00').getTime() / 1000))
   if (dateTo.value) params.push('date_to=' + (new Date(dateTo.value + 'T23:59:59').getTime() / 1000))
   if (params.length) qs = '?' + params.join('&')
-  await api('DELETE', '/api/admin/gen-logs' + qs)
-  statusText.value = '✓ 日志已清空'; page.value = 0; load()
+  try {
+    const r = await api('DELETE', '/api/admin/gen-logs' + qs)
+    statusText.value = `✓ 已清空 ${r.removed ?? 0} 条日志`
+    page.value = 0
+    await load()
+    alert(`删除完成：成功 ${r.removed ?? 0} 条，失败 0 条`)
+  } catch (e: any) { alert('清空失败: ' + e.message) }
 }
 
 const orphanSearch = ref('')

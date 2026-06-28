@@ -26,8 +26,11 @@ const filteredMeta = computed(() => {
 })
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+const loading = ref(false)
 
 async function load() {
+  loading.value = true
+  const start = Date.now()
   try {
     const [filesRes, metaRes, limitsRes] = await Promise.all([
       api('GET', '/api/admin/workflow_files'),
@@ -42,8 +45,13 @@ async function load() {
       const m = metaMap.get(f)
       return { workflow: f, thumbnail: (m?.thumbnail || ''), lora_link: (m?.lora_link || ''), category: (m?.category || '') }
     }).sort((a, b) => a.workflow.localeCompare(b.workflow))
-    status.value = ''
+    status.value = '✓ 已刷新'
+    setTimeout(() => { if (status.value === '✓ 已刷新') status.value = '' }, 1500)
   } catch (e: any) { status.value = '加载失败: ' + e.message }
+  const elapsed = Date.now() - start
+  const minWait = 400
+  if (elapsed < minWait) await new Promise(r => setTimeout(r, minWait - elapsed))
+  loading.value = false
 }
 
 async function saveWfMeta() {
@@ -164,9 +172,17 @@ onMounted(load)
         <button v-if="searchKey" @click="searchKey=''" class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 cursor-pointer border-0">清除</button>
         <span v-if="searchKey" class="text-[11px] text-gray-400">{{ filteredMeta.length }} / {{ wfMeta.length }} 个匹配</span>
       </div>
-      <button @click="load" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 border-0 cursor-pointer">刷新</button>
+      <button @click="load" :disabled="loading" class="text-sm px-3 py-1 bg-gray-200 rounded hover:bg-gray-300 border-0 cursor-pointer disabled:opacity-50">{{ loading ? '刷新中…' : '刷新' }}</button>
     </div>
     <div>
+      <div v-if="loading" class="flex items-center justify-center py-12 gap-2">
+        <svg class="animate-spin h-6 w-6 text-pink-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        <span class="text-xs text-gray-400">加载中请稍后...</span>
+      </div>
+      <template v-else>
       <p class="text-xs text-gray-500 mb-2">自动从 ComfyUI 工作流目录扫描。为每个工作流配置缩略图、Lora 链接和分类，修改后自动保存。</p>
 
       <div class="mb-3 border rounded p-3 bg-blue-50">
@@ -250,6 +266,7 @@ onMounted(load)
       <div class="flex items-center gap-2">
         <span class="text-xs text-gray-500">{{ status }}</span>
       </div>
+      </template>
     </div>
   </div>
 </template>

@@ -29,7 +29,7 @@
 | 数据存储 | JSON / SQLite | MySQL 8.0 |
 | 旧数据迁移 | 无 | SQLite → MySQL 同步工具 |
 | 数据备份 | 手动 | GUI 备份/还原 MySQL `.sql` |
-| 启动方式 | 手动命令 | Windows `.bat` 一键启动/关闭 |
+| 启动方式 | 手动命令 | `start.py` + `.bat` 一键启动/关闭 |
 | 配置方式 | 硬编码或本地文件 | `.env` 环境变量 |
 
 ---
@@ -37,9 +37,9 @@
 ## 功能概览
 
 - **工作流管理**：列出/搜索 ComfyUI 工作流，支持缩略图与 Lora 链接配置。
-- **画风一键切换**：管理员预配画风卡片，用户点击即可追加 tags。
+- **画风/角色一键切换**：管理员预配画风、角色卡片，用户点击即可追加 tags。
 - **两种 prompt 写法**：直接 Tag / LLM 自然语言翻译 + 改写。
-- **多 LLM 后端**：LM Studio / Google AI Studio / 自定义 OpenAI 兼容 API。
+- **多 LLM 后端**：LM Studio / Google AI Studio / 自定义 OpenAI 兼容 API，支持自定义提示词模板。
 - **WebSocket 实时进度**：节点名、进度条、取消按钮。
 - **GPU 状态条**：通过 `nvidia-smi` 轮询 GPU/显存/温度等状态。
 - **全局并发锁 + 旁观模式**：同一时刻只允许一个生图任务。
@@ -50,6 +50,7 @@
 - **邮箱认证**：邮箱注册/登录、找回密码、验证邮件、TOTP。
 - **MySQL 数据层**：用户、日志、配置、图片记录、邮箱用户等统一存储到 MySQL。
 - **数据库同步工具**：旧 SQLite 只读快照同步到新 MySQL，支持备份/还原。
+- **外挂功能模块**：访问密钥、LLM 模板、健康检查、排行榜、系统统计等以 `web/features/` 插件化。
 
 ---
 
@@ -58,19 +59,21 @@
 默认 Web 端口：
 
 ```text
-23601
+8080
 ```
+
+可在 `.env` 中通过 `WEB_PORT` 自定义。
 
 本机访问：
 
 ```text
-http://127.0.0.1:23601
+http://127.0.0.1:8080
 ```
 
 管理后台：
 
 ```text
-http://127.0.0.1:23601/admin
+http://127.0.0.1:8080/admin
 ```
 
 ---
@@ -85,7 +88,9 @@ http://127.0.0.1:23601/admin
 start-all.bat
 ```
 
-或：
+它会调用 `start.py` — 先检查 MySQL 是否运行，再启动 uvicorn Web 服务。
+
+或直接：
 
 ```text
 start-web.bat
@@ -107,7 +112,7 @@ natureDrawImage-env
 
 不要再使用旧文档里的 `.venv`。
 
-### 安全关闭 Web/MySQL
+### 安全关闭 Web
 
 双击：
 
@@ -115,7 +120,7 @@ natureDrawImage-env
 stop-all.bat
 ```
 
-它会尝试通知 Web，然后安全关闭 MySQL。
+它会调用 `stop.py`（向 Web 发送关闭通知）。MySQL 通过 Windows 启动目录自启，不跟随关闭。
 
 ---
 
@@ -218,7 +223,16 @@ natureDrawImage-main-mysqlRefactoring\
 │   │   ├── schema.py              # MySQL schema、连接、建表
 │   │   └── operations.py          # 数据访问层
 │   ├── features\                 # 外挂功能模块
-│   └── static\                   # 静态资源、登录页、旧页面等
+│   │   ├── __init__.py             # register_all() 统一挂载点
+│   │   ├── _deps.py                # 注入容器（不 import app）
+│   │   ├── health_check.py         # /api/health 健康检查
+│   │   ├── access_keys.py          # 访问密钥管理
+│   │   ├── llm_prompt_templates.py # LLM 提示词模板管理
+│   │   ├── gen_stats.py            # 系统统计
+│   │   ├── gen_leaderboard.py      # 生图排行榜
+│   │   └── config\                 # 配置文件存储目录
+│   ├── static\                   # 静态资源、登录页、Vue 构建产物等
+│   │   └── dist\                  # Vue SPA 构建输出
 │
 ├── frontend\                     # Vue 3 前端
 │   ├── src\
@@ -236,6 +250,9 @@ natureDrawImage-main-mysqlRefactoring\
 │   ├── migrate_data.py            # 已废弃
 │   └── convert_operations.py      # 已废弃
 │
+├── start.py                       # 启动脚本：检查 MySQL → 启动 uvicorn
+├── stop.py                        # 关闭脚本：向 Web 发送关闭通知
+├
 ├── documentation\
 │   ├── Deployment-Guide.md        # 初始部署与日常启动指南
 │   ├── Database-Sync-Guide.md     # 数据库同步、备份、还原指南
@@ -243,10 +260,10 @@ natureDrawImage-main-mysqlRefactoring\
 │   └── project-architecture.md
 │
 ├── natureDrawImage-env\           # Python 虚拟环境
-├── start-Py64-311.bat             # 创建/检查虚拟环境并启动
-├── start-all.bat                  # 启动 Web
-├── start-web.bat                  # 启动 Web
-├── stop-all.bat                   # 安全关闭 Web/MySQL
+├── start-Py64-311.bat             # 创建/检查虚拟环境并启动 Web
+├── start-all.bat                  # 启动 Web（推荐）
+├── start-web.bat                  # 启动 Web（备用）
+├── stop-all.bat                   # 安全关闭 Web
 ├── init-db.bat                    # 初始化数据库/建表
 ├── 启动同步工具.bat                # 打开同步工具
 ├── requirements.txt
@@ -280,7 +297,7 @@ MYSQL_DATABASE=natureDrawImage
 OUTPUT_DIR_STR=C:\path\to\ComfyUI\output
 COMFYUI_WORKFLOWS_DIR=C:\path\to\ComfyUI\user\default\workflows
 
-SITE_URL=http://127.0.0.1:23601
+SITE_URL=http://127.0.0.1:8080
 SITE_NAME=二次元绘梦
 
 SMTP_HOST=smtp.qq.com
@@ -317,14 +334,17 @@ npm run build
 | `GET /api/workflows/current?path=` | 工作流摘要 + 默认分辨率 + 内置 prompt |
 | `GET /api/thumbnail?path=` | 工作流缩略图 |
 | `GET /api/styles` | 画风列表 |
+| `GET /api/characters` | 角色列表 |
 | `GET /api/resolutions` | 分辨率预设 |
 | `GET /api/output/list?limit=&offset=` | 输出目录分页 |
 | `GET /api/output/file?path=` | 取输出图 |
 | `GET /api/output/featured` | 精选列表 |
 | `GET /api/gpu` | GPU 状态 |
 | `GET /api/announcement` | 当前公告 |
+| `GET /api/health` | 健康检查（features/health_check） |
 | `POST /api/translate` | LLM 翻译/改写 |
 | `POST /api/report` | 举报图片 |
+| `GET /api/features/llm-templates` | LLM 提示词模板列表（features/llm_prompt_templates） |
 | `WS /ws/run` | 提交生图 + 接收进度 |
 | `WS /ws/status` | 订阅全局任务状态 |
 
@@ -341,6 +361,9 @@ npm run build
 | 路径 | 说明 |
 |---|---|
 | `GET /admin` | Vue SPA 管理后台 |
+| `GET /api/admin/stats/generation` | 系统统计（已迁移到 features/gen_stats） |
+| `GET /api/admin/features/gen-stats/generation` | 系统统计（新路径，Vue 已切换） |
+| `GET /api/admin/features/gen-leaderboard` | 生图排行榜（features/gen_leaderboard） |
 | `GET/POST /api/admin/limits` | 限流配置 |
 | `GET/POST /api/admin/styles` | 画风管理 |
 | `GET/POST /api/admin/characters` | 角色管理 |
@@ -355,7 +378,7 @@ npm run build
 | `POST /api/admin/report/resolve` | 处理举报 |
 | `GET/DELETE /api/admin/gen-logs` | 生图日志 |
 | `GET/POST /api/admin/deletion-log` | 删除记录回收站 |
-| `GET/POST /api/admin/access-keys` | 访问密钥管理 |
+| `GET/POST /api/admin/access-keys` | 访问密钥管理（features/access_keys） |
 | `GET/POST /api/admin/email-dashboard` | 邮箱管理仪表盘 |
 | `GET /api/admin/email-users` | 邮箱用户列表 |
 | `GET /api/admin/email-logs` | 发信日志 |
@@ -436,7 +459,8 @@ natureDrawImage-env\Scripts\python.exe scripts\sync_sqlite_to_mysql.py
 
 | 文档 | 说明 |
 |---|---|
-| `documentation\Deployment-Guide.md` | 初始部署、启动、关闭、备份流程 |
+| `documentation\Deployment-Guide.md` | Windows 初始部署、启动、关闭、备份流程 |
+| `documentation\Deployment-Guide-Linux.md` | Linux 部署指南（systemd + Nginx + MySQL） |
 | `documentation\Database-Sync-Guide.md` | SQLite→MySQL 同步、MySQL 备份/还原 |
 | `documentation\project-architecture.md` | 项目架构说明 |
 | `documentation\Project-documentation.md` | 项目详细功能文档 |

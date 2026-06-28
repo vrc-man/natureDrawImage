@@ -67,6 +67,7 @@ async function del(path: string) {
     await api('POST', '/api/admin/delete', { path })
     images.value = images.value.filter(i => i.path !== path)
     total.value = Math.max(0, total.value - 1)
+    alert('删除完成：成功 1 张，失败 0 张')
   } catch (e: any) { alert('删除失败: ' + e.message) }
 }
 

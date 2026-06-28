@@ -50,7 +50,7 @@ function fill7d(labels: string[], data: number[]) {
 }
 
 function queryParams() {
-  let url = '/api/admin/stats/generation'
+  let url = '/api/admin/features/gen-stats/generation'
   const params: string[] = []
   params.push('tz_offset=' + (-new Date().getTimezoneOffset() / 60))
   if (dateFrom.value) params.push('date_from=' + (new Date(dateFrom.value + 'T00:00:00').getTime() / 1000))

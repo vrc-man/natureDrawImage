@@ -150,14 +150,18 @@ const homeBgImageData = ref(localStorage.getItem('homeBgImageData') || '')
 const homeBgImageName = ref(localStorage.getItem('homeBgImageName') || '')
 const homeBgImageMode = ref<HomeBgMode>(savedHomeBgMode === 'tile' || savedHomeBgMode === 'stretch' ? savedHomeBgMode : 'stretch')
 const homeBgImageScale = ref(parseInt(localStorage.getItem('homeBgImageScale') || '100'))
+const homeBgImagePosX = ref(parseInt(localStorage.getItem('homeBgImagePosX') || '50'))
+const homeBgImagePosY = ref(parseInt(localStorage.getItem('homeBgImagePosY') || '50'))
 const homeBgError = ref('')
 const homeBackgroundStyle = computed(() => {
   if (!homeBgImageData.value) return {}
   const scaleSet = localStorage.getItem('homeBgImageScale') !== null
   const scale = Math.min(300, Math.max(10, Number.isFinite(homeBgImageScale.value) ? homeBgImageScale.value : 100))
+  const px = Math.min(100, Math.max(0, homeBgImagePosX.value)) + '%'
+  const py = Math.min(100, Math.max(0, homeBgImagePosY.value)) + '%'
   return homeBgImageMode.value === 'tile'
-    ? { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'repeat', backgroundSize: scaleSet ? `${scale}% auto` : 'auto', backgroundPosition: 'top left' }
-    : { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'no-repeat', backgroundSize: scaleSet ? `${scale}% auto` : '100% 100%', backgroundPosition: 'center center' }
+    ? { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'repeat', backgroundSize: scaleSet ? `${scale}% auto` : 'auto', backgroundPosition: `${px} ${py}` }
+    : { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'no-repeat', backgroundSize: scaleSet ? `${scale}% auto` : '100% 100%', backgroundPosition: `${px} ${py}` }
 })
 
 // Password change
@@ -195,6 +199,14 @@ function setHomeBgImageScale(v: number) {
   const next = Math.min(300, Math.max(10, Number.isFinite(v) ? v : 100))
   homeBgImageScale.value = next
   localStorage.setItem('homeBgImageScale', String(next))
+}
+function setHomeBgPosX(v: number) {
+  const next = Math.min(100, Math.max(0, Number.isFinite(v) ? v : 50))
+  homeBgImagePosX.value = next; localStorage.setItem('homeBgImagePosX', String(next))
+}
+function setHomeBgPosY(v: number) {
+  const next = Math.min(100, Math.max(0, Number.isFinite(v) ? v : 50))
+  homeBgImagePosY.value = next; localStorage.setItem('homeBgImagePosY', String(next))
 }
 
 // Resolution presets
@@ -627,7 +639,14 @@ async function actuallyStartRun(g: PendingGen) {
     progressText.value = uploadRef.value.hasPendingUploads()
       ? '等待参考图上传...'
       : '参考图已就绪，正在提交任务...'
-    await uploadRef.value.waitAllUploads()
+    try {
+      await uploadRef.value.waitAllUploads()
+    } catch (e: any) {
+      showErrorToast('参考图上传失败: ' + (e.message || '未知错误'))
+      _isGenerating.value = false
+      progressText.value = ''
+      return
+    }
     progressText.value = '参考图已上传，正在提交任务...'
     const names = uploadRef.value.getImageNames()
     image1_name = names[0] || ''; image2_name = names[1] || ''; image3_name = names[2] || ''
@@ -1316,14 +1335,33 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                       拉伸
                     </label>
                   </div>
-                  <div v-if="homeBgImageData" class="mt-2">
+                  <div v-if="homeBgImageData" class="mt-2 space-y-2">
                     <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
                       <span>背景图缩放</span>
                       <span>{{ homeBgImageScale }}%</span>
                     </div>
                     <div class="flex items-center gap-2">
                       <input type="range" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
-                      <input type="number" min="10" max="300" step="5" :value="homeBgImageScale" @change="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                      <input type="number" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                      <span class="text-xs text-gray-400 shrink-0">%</span>
+                    </div>
+                    <!-- 背景图位置 -->
+                    <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                      <span>水平位置</span>
+                      <span>{{ homeBgImagePosX }}%</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <input type="range" min="0" max="100" step="5" :value="homeBgImagePosX" @input="setHomeBgPosX(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                      <input type="number" min="0" max="100" step="5" :value="homeBgImagePosX" @input="setHomeBgPosX(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                      <span class="text-xs text-gray-400 shrink-0">%</span>
+                    </div>
+                    <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
+                      <span>垂直位置</span>
+                      <span>{{ homeBgImagePosY }}%</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <input type="range" min="0" max="100" step="5" :value="homeBgImagePosY" @input="setHomeBgPosY(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                      <input type="number" min="0" max="100" step="5" :value="homeBgImagePosY" @input="setHomeBgPosY(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
                       <span class="text-xs text-gray-400 shrink-0">%</span>
                     </div>
                   </div>

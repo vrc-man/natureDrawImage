@@ -29,11 +29,12 @@ async function load(reset = false) {
 async function del(path: string) {
   if (!confirm('确定要删除这张作品吗？')) return
   try {
-    await deleteMyImage(path)
+    const r: any = await deleteMyImage(path)
     items.value = items.value.filter((i: any) => i.path !== path)
     total.value = Math.max(0, total.value - 1)
     selected.value.delete(path)
-  } catch {}
+    alert(`删除完成：成功 ${r?.deleted ?? 1} 张，失败 0 张`)
+  } catch (e: any) { alert('删除失败: ' + (e?.message || e)) }
 }
 
 function toggleSelect(path: string, index: number, shiftKey = false) {
@@ -92,10 +93,14 @@ async function deleteSelected() {
   const i = prompt(`即将删除选中的 ${selected.value.size} 张图片，请输入"确认删除这些图片"以继续：`)
   if (i !== '确认删除这些图片') { alert('输入不匹配，已取消'); return }
   const paths = Array.from(selected.value)
-  try { await deleteMyImages(paths) } catch {}
-  items.value = items.value.filter((i: any) => !paths.includes(i.path))
-  total.value = Math.max(0, total.value - paths.length)
-  selected.value = new Set()
+  try {
+    const r: any = await deleteMyImages(paths)
+    const deleted = r?.deleted ?? paths.length
+    items.value = items.value.filter((i: any) => !paths.includes(i.path))
+    total.value = Math.max(0, total.value - deleted)
+    selected.value = new Set()
+    alert(`删除完成：成功 ${deleted} 张，失败 ${Math.max(0, paths.length - deleted)} 张`)
+  } catch (e: any) { alert('删除失败: ' + (e?.message || e)) }
 }
 
 async function deleteAll() {
@@ -103,10 +108,14 @@ async function deleteAll() {
   if (!confirm(`确定删除全部 ${total.value} 张作品？`)) return
   const i = prompt(`即将删除全部 ${total.value} 张作品，请输入"确认全部删除图片"以继续：`)
   if (i !== '确认全部删除图片') { alert('输入不匹配，已取消'); return }
-  try { await deleteAllMyImages() } catch {}
-  items.value = []
-  total.value = 0
-  selected.value = new Set()
+  try {
+    const r: any = await deleteAllMyImages()
+    const deleted = r?.deleted ?? total.value
+    items.value = []
+    total.value = 0
+    selected.value = new Set()
+    alert(`删除完成：成功 ${deleted} 张，失败 0 张`)
+  } catch (e: any) { alert('删除失败: ' + (e?.message || e)) }
 }
 
 function fmtTime(ts: number) {
@@ -158,7 +167,7 @@ defineExpose({ load, items, total })
 
     <div v-if="items.length" id="myworks-gallery" class="grid grid-cols-3 sm:grid-cols-4 gap-2">
       <div v-for="(img, i) in items" :key="img.path || i" class="relative group" :class="{'ring-2 ring-blue-400 rounded-lg': selected.has(img.path)}">
-        <input v-if="selectMode" type="checkbox" :checked="selected.has(img.path)" @change="toggleSelect(img.path, i, $event.shiftKey)" class="absolute top-1 left-1 w-4 h-4 z-10 cursor-pointer accent-blue-500" />
+        <input v-if="selectMode" type="checkbox" :checked="selected.has(img.path)" @change="toggleSelect(img.path, i, ($event as MouseEvent).shiftKey)" class="absolute top-1 left-1 w-4 h-4 z-10 cursor-pointer accent-blue-500" />
         <div class="relative bg-gray-100 rounded-lg overflow-hidden">
           <div class="aspect-square flex items-center justify-center">
             <svg v-if="!img._loaded" class="animate-spin h-5 w-5 text-pink-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">

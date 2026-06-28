@@ -381,8 +381,8 @@ def init_email_auth():
         if not getattr(request.state, "is_admin", False):
             raise HTTPException(403)
         try:
-            count = max(1, min(int(payload.get("count", 1)), 20))
-            max_uses = int(payload.get("max_uses", 1))
+            count = max(1, min(int(payload.get("count", 1)), 10))
+            max_uses = 1
         except (ValueError, TypeError):
             raise HTTPException(400, "参数无效")
         async with _invite_lock:
@@ -439,7 +439,7 @@ def init_email_auth():
                             raise HTTPException(400, "邮箱已注册")
                         if invite_code:
                             entry = db2.execute("SELECT * FROM invite_codes WHERE code=%s", (invite_code,)).fetchone()
-                            if entry and (entry["max_uses"] <= 0 or entry["used_count"] < entry["max_uses"]):
+                            if entry and entry["used_count"] < 1:
                                 new_used = int(entry["used_count"] or 0) + 1
                                 if entry["max_uses"] > 0 and new_used >= entry["max_uses"]:
                                     db2.execute("DELETE FROM invite_codes WHERE code=%s", (invite_code,))
@@ -447,9 +447,9 @@ def init_email_auth():
                                     db2.execute("UPDATE invite_codes SET used_count=%s WHERE code=%s", (new_used, invite_code))
                                 has_invite = True
                             elif entry:
-                                raise HTTPException(400, "邀请码已被用完")
+                                raise HTTPException(400, "邀请码无效或已用完")
                             else:
-                                raise HTTPException(400, "无效邀请码")
+                                raise HTTPException(400, "邀请码无效或已用完")
                         _first = (
                             db2.execute("SELECT COUNT(*) as c FROM email_users").fetchone()["c"] == 0
                             and db2.execute("SELECT COUNT(*) as c FROM users").fetchone()["c"] == 0

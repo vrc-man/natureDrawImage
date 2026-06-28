@@ -6,8 +6,7 @@ defineProps<{ visible: boolean }>()
 
 const d = ref<any>({})
 const codes = ref<any[]>([])
-const genCount = ref(10)
-const genMaxUses = ref(1)
+const genCount = ref(1)
 const genStatus = ref('')
 const hourlyIP = ref(3)
 const dailyIP = ref(10)
@@ -71,17 +70,18 @@ async function loadLogs() {
 async function refreshAll() { await Promise.all([loadAll(), loadUsers(), loadLogs()]) }
 
 async function generateCodes() {
-  if (!confirm(`生成 ${genCount.value} 个邀请码（最大使用 ${genMaxUses.value} 次）？`)) return
+  const count = Math.max(1, Math.min(Number(genCount.value) || 1, 10))
+  if (!confirm(`生成 ${count} 个一次性邀请码？`)) return
   genStatus.value = '生成中...'
-  try { await api('POST', '/api/admin/invite-codes/generate', { count: genCount.value, max_uses: genMaxUses.value }); genStatus.value = '✅ 生成成功'; setTimeout(() => genStatus.value = '', 3000); loadAll() }
+  try { await api('POST', '/api/admin/invite-codes/generate', { count, max_uses: 1 }); genStatus.value = '✅ 生成成功'; setTimeout(() => genStatus.value = '', 3000); loadAll() }
   catch (e: any) { genStatus.value = '❌ ' + e.message }
 }
 async function deleteCode(code: string) {
   if (!confirm('删除邀请码 ' + code + '？')) return
   if (prompt('确认删除该邀请码') !== '确认删除该邀请码') { alert('输入不匹配'); return }
-  try { await api('POST', '/api/admin/invite-codes/delete', { code }); loadAll() } catch (e: any) { alert('删除失败: ' + e.message) }
+  try { await api('POST', '/api/admin/invite-codes/delete', { code }); await loadAll(); alert('删除完成：成功 1 个，失败 0 个') } catch (e: any) { alert('删除失败: ' + e.message) }
 }
-function codePct(c: any) { return Math.min(c.used_count / c.max_uses * 100, 100) }
+function codePct(c: any) { return Math.min((c.used_count || 0) / Math.max(1, c.max_uses || 1) * 100, 100) }
 function codeBarClass(pct: number) { return pct >= 100 ? 'bg-red-500' : pct >= 50 ? 'bg-yellow-500' : 'bg-green-500' }
 
 async function saveConfig() {
@@ -213,10 +213,8 @@ onUnmounted(() => stopAuto())
     <div class="mb-5">
       <div class="flex items-center gap-2 mb-2 text-xs">
         <span class="text-gray-600">生成</span>
-        <input type="number" v-model.number="genCount" min="1" max="20" class="w-14 border border-gray-200 rounded px-1 py-0.5 text-xs" />
-        <span class="text-gray-500">个，可用</span>
-        <input type="number" v-model.number="genMaxUses" min="1" max="9999" class="w-14 border border-gray-200 rounded px-1 py-0.5 text-xs" />
-        <span class="text-gray-500">次</span>
+        <input type="number" v-model.number="genCount" min="1" max="10" class="w-14 border border-gray-200 rounded px-1 py-0.5 text-xs" />
+        <span class="text-gray-500">个一次性邀请码（每码限用1次，最多10个）</span>
         <button @click="generateCodes" class="px-2 py-0.5 bg-green-500 text-white rounded hover:bg-green-600 cursor-pointer border-0 text-xs">生成</button>
         <span class="text-gray-500">{{ genStatus }}</span>
       </div>
