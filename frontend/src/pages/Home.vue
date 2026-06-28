@@ -100,6 +100,7 @@ const pendingForkPath = ref<string>('')
 
 // Run state
 const _isGenerating = ref(false)
+const _submittingRun = ref(false)
 const _finishing = ref(false)
 const _watchingMode = ref(false)
 const _myQueueRunning = ref(false)
@@ -127,6 +128,7 @@ let statusWS: WebSocket | null = null
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let gpuTimer: ReturnType<typeof setInterval> | null = null
 let notifyTimer: ReturnType<typeof setInterval> | null = null
+let submitGuardTimer: ReturnType<typeof setTimeout> | null = null
 let authedServicesStarted = false
 
 // Notification state
@@ -316,6 +318,7 @@ onUnmounted(() => {
   if (statusWS) try { statusWS.close() } catch {}
   if (gpuTimer) clearInterval(gpuTimer)
   if (notifyTimer) clearInterval(notifyTimer)
+  if (submitGuardTimer) clearTimeout(submitGuardTimer)
   if (cooldownTimer) clearInterval(cooldownTimer)
 })
 
@@ -454,19 +457,30 @@ let _notifiedTaskIds = new Set<number>()
 let _hasRunningBefore = false
 let _doneNotified = false  // WS done/error 已通知过，防止 pollMyQueue 重复
 let _lastHasMyQueueTask = false
+let _queuePollingActive = false
 function _queuePollDelay() {
   if (document.hidden) return _lastHasMyQueueTask ? 5000 : 15000
   return _lastHasMyQueueTask ? 1000 : 3000
 }
+function _clearQueuePollTimer() {
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null }
+}
 function _scheduleNextQueuePoll(delay = _queuePollDelay()) {
-  stopPolling()
+  if (!_queuePollingActive) return
+  _clearQueuePollTimer()
   pollTimer = setTimeout(async () => {
     await pollMyQueue()
-    _scheduleNextQueuePoll()
+    if (_queuePollingActive) _scheduleNextQueuePoll()
   }, delay)
 }
-function startPolling() { _scheduleNextQueuePoll(0) }
-function stopPolling() { if (pollTimer) { clearTimeout(pollTimer); pollTimer = null } }
+function startPolling() {
+  _queuePollingActive = true
+  _scheduleNextQueuePoll(0)
+}
+function stopPolling() {
+  _queuePollingActive = false
+  _clearQueuePollTimer()
+}
 function onQueueVisibilityChange() {
   if (!authedServicesStarted) return
   _scheduleNextQueuePoll()
@@ -489,8 +503,6 @@ async function pollMyQueue() {
       // 队列空+无WS → 有运行时任务记录则恢复（原版逻辑）
       if (_watchingMode.value || _hasRunningBefore) {
         _isGenerating.value = false
-        const btn = document.getElementById('btn-run') as HTMLButtonElement | null
-        if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
         if (!_doneNotified) {
           _doneNotified = true; _watchingMode.value = false; _hasRunningBefore = false; _finishing.value = true
           if (mode.value === 'img2img') uploadRef.value?.clearAll()
@@ -501,18 +513,11 @@ async function pollMyQueue() {
       }
     } else {
       _myQueueRunning.value = !!running.length
-      // 有任务时禁用按钮（原版逻辑：刷新页面后 _isGenerating 可能为 false 但任务仍在运行）
-      if (hasMyTask) {
-        const btn = document.getElementById('btn-run') as HTMLButtonElement | null
-        if (btn && !btn.disabled) btn.disabled = true
-      }
     }
 
     // WS 断开后轮询检测任务完成
     if (_watchingMode.value) {
       if (!running.length && !waiting.length) {
-        const btn = document.getElementById('btn-run') as HTMLButtonElement | null
-        if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
         if (!_finishing.value && !_doneNotified) {
           _watchingMode.value = false; _doneNotified = true
           const failedItem = items.find((i: any) => i.status === 'failed')
@@ -528,10 +533,6 @@ async function pollMyQueue() {
     }
     // 页面刷新后检测已完成/失败的任务
     const doneItems = items.filter((i: any) => i.status === 'done' || i.status === 'failed')
-    if (doneItems.length) {
-      const btn = document.getElementById('btn-run') as HTMLButtonElement | null
-      if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
-    }
     for (const item of doneItems) {
       if (!_notifiedTaskIds.has(item.id)) {
         _notifiedTaskIds.add(item.id)
@@ -597,12 +598,16 @@ function prepareGen() {
   const direct = directPrompt.value.trim()
   const nl = nlPrompt.value.trim()
   const neg = negativePrompt.value.trim()
-  const selectedStyleName = localStorage.getItem('currentStyleName') || ''
+  const selectedStyleName = mode.value === 'txt2img' ? (localStorage.getItem('currentStyleName') || '') : ''
   let selectedCharNames: string[] = []
-  try { selectedCharNames = JSON.parse(localStorage.getItem('currentCharacterNames') || '[]') } catch {}
-  const style = localStorage.getItem('currentStyle') || ''
+  if (mode.value === 'txt2img') {
+    try { selectedCharNames = JSON.parse(localStorage.getItem('currentCharacterNames') || '[]') } catch {}
+  }
+  const style = mode.value === 'txt2img' ? (localStorage.getItem('currentStyle') || '') : ''
   let char = ''
-  try { char = JSON.parse(localStorage.getItem('currentCharacters') || '[]').join(', '); } catch {}
+  if (mode.value === 'txt2img') {
+    try { char = JSON.parse(localStorage.getItem('currentCharacters') || '[]').join(', '); } catch {}
+  }
   if (!direct && !nl) { showErrorToast('请输入提示词'); return null }
   // 检查分辨率是否在预设中，不在就自动用第一个
   if (!resolutions.value.some(r => r.w === width.value && r.h === height.value) && resolutions.value.length) {
@@ -620,7 +625,7 @@ function prepareGen() {
 }
 
 async function startRun() {
-  if (_isGenerating.value) return
+  if (_submittingRun.value) return
   const g = prepareGen()
   if (!g) return
   if (g.nl && !genNoticeAcked.value) {
@@ -643,15 +648,28 @@ function cancelGenNotice() {
   _isGenerating.value = false
 }
 
+function _startSubmitGuard() {
+  _submittingRun.value = true
+  if (submitGuardTimer) clearTimeout(submitGuardTimer)
+  submitGuardTimer = setTimeout(() => {
+    _submittingRun.value = false
+    submitGuardTimer = null
+  }, 2000)
+}
+
 async function actuallyStartRun(g: PendingGen) {
-  _watchingMode.value = false
-  _finishing.value = false
-  _doneNotified = false
-  _hasRunningBefore = false
-  _isGenerating.value = true
-  progressPct.value = 0
-  resultImages.value = []
-  logLines.value = []
+  const hasExistingTask = _isGenerating.value || _watchingMode.value || _lastHasMyQueueTask || !!(activeWS && activeWS.readyState <= WebSocket.OPEN)
+  if (!hasExistingTask) {
+    _watchingMode.value = false
+    _finishing.value = false
+    _doneNotified = false
+    _hasRunningBefore = false
+    _isGenerating.value = true
+    progressPct.value = 0
+    resultImages.value = []
+    logLines.value = []
+  }
+  _startSubmitGuard()
 
   let image1_name = '', image2_name = '', image3_name = ''
   if (mode.value === 'img2img' && uploadRef.value) {
@@ -662,6 +680,8 @@ async function actuallyStartRun(g: PendingGen) {
       await uploadRef.value.waitAllUploads()
     } catch (e: any) {
       showErrorToast('参考图上传失败: ' + (e.message || '未知错误'))
+      if (submitGuardTimer) { clearTimeout(submitGuardTimer); submitGuardTimer = null }
+      _submittingRun.value = false
       _isGenerating.value = false
       progressText.value = ''
       return
@@ -675,7 +695,8 @@ async function actuallyStartRun(g: PendingGen) {
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const ws = new WebSocket(`${proto}//${location.host}/ws/run`)
-  activeWS = ws
+  const isPrimaryRunWS = !hasExistingTask
+  if (isPrimaryRunWS) activeWS = ws
 
   ws.onopen = () => {
     const payload: any = {
@@ -689,8 +710,8 @@ async function actuallyStartRun(g: PendingGen) {
       llm_template_id: llmTemplateId.value ? Number(llmTemplateId.value) : null,
       width: g.w,
       height: g.h,
-      style_tags: g.style,
-      character_tags: g.char,
+      style_tags: mode.value === 'txt2img' ? g.style : '',
+      character_tags: mode.value === 'txt2img' ? g.char : '',
       img2img_use_preset: img2imgUsePreset.value,
       image1_name, image2_name, image3_name,
     }
@@ -698,16 +719,16 @@ async function actuallyStartRun(g: PendingGen) {
     ws.send(JSON.stringify(payload))
   }
   ws.onmessage = (e) => {
-    try { handleMsg(JSON.parse(e.data)) } catch {}
+    try { handleMsg(JSON.parse(e.data), ws) } catch {}
   }
   ws.onclose = () => {
-    activeWS = null
-    _watchingMode.value = true
+    if (isPrimaryRunWS && activeWS === ws) activeWS = null
+    if (isPrimaryRunWS) _watchingMode.value = true
     pollMyQueue()
   }
 }
 
-function handleMsg(m: any) {
+function handleMsg(m: any, sourceWS: WebSocket | null = activeWS) {
   if (m.type === 'log') { logLines.value.push(m.message) }
   else if (m.type === 'queued') {
     queueStatus.value = m.message || '排队中...'
@@ -761,10 +782,11 @@ function handleMsg(m: any) {
     finishRun(true)
   }
   else if (m.type === 'error') {
+    const isActiveSource = !sourceWS || sourceWS === activeWS
     logLines.value.push('❌ ' + m.message)
     llmText.value = ''
     sound.play('error')
-    progressText.value = '失败: ' + m.message
+    if (isActiveSource) progressText.value = '失败: ' + m.message
     sound.sendNotification('❌ ' + m.message)
     const el = document.createElement('div')
     el.className = 'toast-el bg-white/95 backdrop-blur border border-red-200 rounded-2xl shadow-xl px-5 py-4 text-sm sm:text-base text-red-700 cursor-pointer select-none'
@@ -772,9 +794,13 @@ function handleMsg(m: any) {
     el.onclick = () => { el.style.animation = 'toastOut 0.25s ease-in'; setTimeout(() => el.remove(), 250) }
     const tc = document.getElementById('toast-container')
     if (tc) tc.appendChild(el)
-    _pendingCooldown.value = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1
-    _doneNotified = true
-    finishRun()
+    if (isActiveSource) {
+      _pendingCooldown.value = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1
+      _doneNotified = true
+      finishRun()
+    } else {
+      pollMyQueue()
+    }
   }
 }
 
@@ -789,6 +815,22 @@ function pushHistory(m: any) {
 function flashGreen() {
   notifyUnreadCount.value++
   setTimeout(() => { if (notifyUnreadCount.value > 0) notifyUnreadCount.value-- }, 2000)
+}
+
+function resetRunUiState() {
+  if (submitGuardTimer) { clearTimeout(submitGuardTimer); submitGuardTimer = null }
+  _submittingRun.value = false
+  _isGenerating.value = false
+  _finishing.value = false
+  _watchingMode.value = false
+  _myQueueRunning.value = false
+  progressText.value = ''
+  progressPct.value = 0
+  queueStatus.value = ''
+  llmText.value = ''
+  pollMyQueue()
+  if (authedServicesStarted) _scheduleNextQueuePoll(0)
+  showToast('已恢复前端按钮状态，后端任务不受影响')
 }
 
 function finishRun(clearUpload = false) {
@@ -1136,13 +1178,20 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 </div>
 
                 <!-- Run button -->
-                <button @click="startRun"
-                  class="w-full py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl font-semibold text-base shadow-lg shadow-pink-300/30 transition-all active:scale-[0.98] disabled:from-gray-200 disabled:to-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed border-0"
-                id="btn-run"
-                :class="{cooldown: cooldownSec > 0}"
-                :disabled="_isGenerating || needsAccessKey">
-                {{ _isGenerating ? '⏳ 生成中...' : cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : needsAccessKey ? '🔑 需要访问密钥' : '▶ 开始生成' }}
-              </button>
+                <div class="flex gap-2">
+                  <button @click="startRun"
+                    class="flex-1 py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl font-semibold text-base shadow-lg shadow-pink-300/30 transition-all active:scale-[0.98] disabled:from-gray-200 disabled:to-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed border-0"
+                    id="btn-run"
+                    :class="{cooldown: cooldownSec > 0}"
+                    :disabled="_submittingRun || needsAccessKey || cooldownSec > 0">
+                    {{ _submittingRun ? '⏳ 提交中...' : cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : needsAccessKey ? '🔑 需要访问密钥' : '▶ 开始生成' }}
+                  </button>
+                  <button @click="resetRunUiState"
+                    title="仅恢复前端按钮状态，不取消后端任务"
+                    class="shrink-0 px-4 py-3 rounded-2xl border border-pink-100 bg-white/80 text-xs text-gray-500 hover:text-pink-500 hover:border-pink-200 transition-all active:scale-[0.98]">
+                    恢复
+                  </button>
+                </div>
               </div>
 
               <!-- Progress card -->

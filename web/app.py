@@ -6115,40 +6115,21 @@ async def ws_run(ws: WebSocket):
         github_id = str(ws_user.get("github_id", ""))
         reconnect_item = None
 
-        # 每用户最多 1 个队列槽位（先检查重连，重连不受冷却限制）
+        # 每用户最多 1 个队列槽位；已有 waiting/running 任务时由后端直接拒绝新提交
         async with _queue_lock:
             for qi in _task_queue:
                 if qi.get("github_id") == github_id and qi["status"] in ("waiting", "running"):
-                    if qi["status"] == "running":
-                        try:
-                            await ws.send_json({"type": "error", "message": "正在生图中，请等待当前任务完成"})
-                        except Exception:
-                            pass
-                        try:
-                            await ws.close()
-                        except Exception:
-                            pass
-                        # 释放预留的 IP 槽位
-                        if run_slot_reserved:
-                            async with _ws_per_ip_lock:
-                                cnt = _ws_run_per_ip.get(client_ip, 0) - 1
-                                if cnt <= 0:
-                                    _ws_run_per_ip.pop(client_ip, None)
-                                else:
-                                    _ws_run_per_ip[client_ip] = cnt
-                        return
-                    # 断线重连：复用已有排队项，先关闭旧 ws 防止孤儿连接
-                    reconnect_item = qi
-                    old_ws = qi.get("ws")
-                    if old_ws and old_ws is not ws:
-                        try:
-                            await asyncio.wait_for(old_ws.close(), timeout=3)
-                        except Exception:
-                            pass
-                    qi["ws"] = ws
-                    qi["detached"] = False
-                    qi["client_ip"] = client_ip
-                    break
+                    message = "正在生图中，请等待当前任务完成" if qi["status"] == "running" else "已有任务在排队中，请等待完成后再提交"
+                    try:
+                        await ws.send_json({"type": "error", "message": message})
+                    except Exception:
+                        pass
+                    try:
+                        await ws.close()
+                    except Exception:
+                        pass
+                    await _release_run_slot()
+                    return
 
             # 新建任务：计数器递增和入队均在锁内完成，防止并发重复
             if reconnect_item is None:
