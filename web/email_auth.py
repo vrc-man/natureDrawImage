@@ -886,7 +886,7 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         now = time.time()
         date_from = date_from or 0
         date_to = date_to or (now + 86400)
-        where = ["created_at >= %s", "created_at <= %s"]
+        where = ["created_at >= %s", "created_at < %s"]
         params = [date_from, date_to]
         if search.strip():
             where.append("recipient LIKE %s")

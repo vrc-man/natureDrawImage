@@ -520,10 +520,13 @@ def load_gen_logs_raw():
     """Return all gen_logs rows as list of dicts (for fallback lookups)."""
     return [dict(r) for r in _db().execute("SELECT * FROM gen_logs ORDER BY created_at DESC").fetchall()]
 
-def count_gen_logs_today(login: str = "") -> int:
-    """今日（UTC）成功生图总数。可选 login 筛选。"""
-    sql = "SELECT COUNT(*) as c FROM gen_logs WHERE status='success' AND DATE(FROM_UNIXTIME(created_at))=CURDATE()"
-    params: list = []
+def count_gen_logs_today(tz_offset: float = 0, login: str = "") -> int:
+    """今日成功生图总数。tz_offset 为浏览器时区偏移（小时），取本地今天的 epoch 范围。"""
+    now = _time_module.time()
+    today_start = now - ((now + tz_offset * 3600) % 86400)
+    today_end = today_start + 86400
+    sql = "SELECT COUNT(*) as c FROM gen_logs WHERE status='success' AND created_at>=%s AND created_at<%s"
+    params: list = [today_start, today_end]
     if login:
         sql += " AND (login LIKE %s OR github_id LIKE %s)"
         params.extend([f"%{login}%", f"%{login}%"])
@@ -531,10 +534,13 @@ def count_gen_logs_today(login: str = "") -> int:
     return r["c"] if r else 0
 
 
-def get_gen_logs_hourly_today(login: str = "") -> List[Dict]:
-    """今日（UTC）每小时的生图数量。可选 login 筛选。"""
-    sql = "SELECT DATE_FORMAT(FROM_UNIXTIME(created_at), '%%H') as hour,COUNT(*) as count FROM gen_logs WHERE status='success' AND DATE(FROM_UNIXTIME(created_at))=CURDATE()"
-    params: list = []
+def get_gen_logs_hourly_today(tz_offset: float = 0, login: str = "") -> List[Dict]:
+    """今日每小时生图数量。tz_offset 用于本地时区偏移。"""
+    now = _time_module.time()
+    today_start = now - ((now + tz_offset * 3600) % 86400)
+    today_end = today_start + 86400
+    sql = "SELECT LPAD(FLOOR((created_at+%s)/3600)%%24,2,'0') as hour,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=%s AND created_at<%s"
+    params: list = [tz_offset * 3600, today_start, today_end]
     if login:
         sql += " AND (login LIKE %s OR github_id LIKE %s)"
         params.extend([f"%{login}%", f"%{login}%"])
@@ -543,10 +549,12 @@ def get_gen_logs_hourly_today(login: str = "") -> List[Dict]:
     return [dict(r) for r in rows]
 
 
-def get_gen_logs_daily_7days(login: str = "") -> List[Dict]:
-    """最近7天（UTC）每日生图数量。可选 login 筛选。"""
-    sql = "SELECT DATE(FROM_UNIXTIME(created_at)) as day,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=UNIX_TIMESTAMP() - 7*86400"
-    params: list = []
+def get_gen_logs_daily_7days(tz_offset: float = 0, login: str = "") -> List[Dict]:
+    """最近7天每日生图数量。tz_offset 用于本地时区偏移。"""
+    now = _time_module.time()
+    cutoff = now - 7 * 86400
+    sql = "SELECT DATE('1970-01-01') + INTERVAL FLOOR((created_at+%s)/86400) DAY as day,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=%s AND created_at<%s"
+    params: list = [tz_offset * 3600, cutoff, now]
     if login:
         sql += " AND (login LIKE %s OR github_id LIKE %s)"
         params.extend([f"%{login}%", f"%{login}%"])
@@ -566,10 +574,10 @@ def count_gen_logs_range(date_from: float, date_to: float, login: str = "") -> i
     return r["c"] if r else 0
 
 
-def get_gen_logs_hourly_range(date_from: float, date_to: float, login: str = "") -> List[Dict]:
-    """指定时间范围每小时的生图数量。可选 login 筛选。"""
-    sql = "SELECT DATE_FORMAT(FROM_UNIXTIME(created_at), '%%H') as hour,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=%s AND created_at<%s"
-    params: list = [date_from, date_to]
+def get_gen_logs_hourly_range(date_from: float, date_to: float, tz_offset: float = 0, login: str = "") -> List[Dict]:
+    """指定时间范围每小时的生图数量。tz_offset 用于本地时区偏移。"""
+    sql = "SELECT LPAD(FLOOR((created_at+%s)/3600)%%24,2,'0') as hour,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=%s AND created_at<%s"
+    params: list = [tz_offset * 3600, date_from, date_to]
     if login:
         sql += " AND (login LIKE %s OR github_id LIKE %s)"
         params.extend([f"%{login}%", f"%{login}%"])
@@ -578,10 +586,10 @@ def get_gen_logs_hourly_range(date_from: float, date_to: float, login: str = "")
     return [dict(r) for r in rows]
 
 
-def get_gen_logs_daily_range(date_from: float, date_to: float, login: str = "") -> List[Dict]:
-    """指定时间范围每日生图数量。可选 login 筛选。"""
-    sql = "SELECT DATE(FROM_UNIXTIME(created_at)) as day,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=%s AND created_at<%s"
-    params: list = [date_from, date_to]
+def get_gen_logs_daily_range(date_from: float, date_to: float, tz_offset: float = 0, login: str = "") -> List[Dict]:
+    """指定时间范围每日生图数量。tz_offset 用于本地时区偏移。"""
+    sql = "SELECT DATE('1970-01-01') + INTERVAL FLOOR((created_at+%s)/86400) DAY as day,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=%s AND created_at<%s"
+    params: list = [tz_offset * 3600, date_from, date_to]
     if login:
         sql += " AND (login LIKE %s OR github_id LIKE %s)"
         params.extend([f"%{login}%", f"%{login}%"])
@@ -694,7 +702,7 @@ def query_gen_logs(login: str = "", date_from: float = 0, date_to: float = 0,
         conditions.append("created_at >= %s")
         params.append(date_from)
     if date_to:
-        conditions.append("created_at <= %s")
+        conditions.append("created_at < %s")
         params.append(date_to)
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     total = _db().execute(f"SELECT COUNT(*) as c FROM gen_logs{where}", params).fetchone()["c"]
@@ -716,7 +724,7 @@ def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0
         conditions.append("created_at >= %s")
         params.append(date_from)
     if date_to > 0:
-        conditions.append("created_at <= %s")
+        conditions.append("created_at < %s")
         params.append(date_to)
     where = " WHERE " + " AND ".join(conditions)
 
@@ -742,12 +750,12 @@ def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0
             conds.append("created_at >= %s")
             h_params.append(date_from)
         if date_to > 0:
-            conds.append("created_at <= %s")
+            conds.append("created_at < %s")
             h_params.append(date_to)
         h_where = " WHERE " + " AND ".join(conds)
         hourly_rows = _db().execute(
-            f"SELECT FLOOR(created_at/3600)%%24 as hh, SUM(`count`) as cnt FROM gen_logs{h_where} GROUP BY hh ORDER BY hh",
-            h_params
+            f"SELECT FLOOR((created_at+%s)/3600)%%24 as hh, SUM(`count`) as cnt FROM gen_logs{h_where} GROUP BY hh ORDER BY hh",
+            [tz_offset * 3600] + h_params
         ).fetchall()
         for hr in hourly_rows:
             h = int(hr["hh"])
@@ -760,9 +768,9 @@ def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0
         peak_day = ""
         peak_day_count = 0
         day_rows = _db().execute(
-            f"SELECT DATE(FROM_UNIXTIME(created_at)) as day, SUM(`count`) as cnt "
+            f"SELECT DATE('1970-01-01') + INTERVAL FLOOR((created_at+%s)/86400) DAY as day, SUM(`count`) as cnt "
             f"FROM gen_logs{h_where} GROUP BY day ORDER BY cnt DESC LIMIT 1",
-            h_params
+            [tz_offset * 3600] + h_params
         ).fetchall()
         if day_rows and day_rows[0]["day"]:
             peak_day = str(day_rows[0]["day"])
@@ -803,7 +811,7 @@ def clear_gen_logs(date_from: float = 0, date_to: float = 0, *, unlink_all: bool
             conditions.append("created_at >= %s")
             params.append(date_from)
         if date_to:
-            conditions.append("created_at <= %s")
+            conditions.append("created_at < %s")
             params.append(date_to)
         where = " WHERE " + " AND ".join(conditions) if conditions else ""
         removed = _db().execute(f"SELECT COUNT(*) as c FROM gen_logs{where}", params).fetchone()["c"]
@@ -843,7 +851,7 @@ def query_deletion_logs_thumb(path: str = "", date_from: float = 0, date_to: flo
         conditions.append("deleted_at >= %s")
         params.append(date_from)
     if date_to:
-        conditions.append("deleted_at <= %s")
+        conditions.append("deleted_at < %s")
         params.append(date_to)
     where = " WHERE " + " AND ".join(conditions) if conditions else ""
     rows = _db().execute(f"SELECT * FROM deletion_logs{where}", params).fetchall()
@@ -860,7 +868,7 @@ def clear_deletion_logs(path: str = "", date_from: float = 0, date_to: float = 0
         conditions.append("deleted_at >= %s")
         params.append(date_from)
     if date_to:
-        conditions.append("deleted_at <= %s")
+        conditions.append("deleted_at < %s")
         params.append(date_to)
     where = " WHERE " + " AND ".join(conditions) if conditions else ""
     r = _db().execute(f"DELETE FROM deletion_logs{where}", params)
@@ -895,7 +903,7 @@ def query_deletion_log(search: str = "", date_from: float = 0, date_to: float = 
         conditions.append("deleted_at >= %s")
         params.append(date_from)
     if date_to:
-        conditions.append("deleted_at <= %s")
+        conditions.append("deleted_at < %s")
         params.append(date_to)
     where = (" WHERE " + " AND ".join(conditions)) if conditions else ""
     total = _db().execute(f"SELECT COUNT(*) as c FROM deletion_logs{where}", params).fetchone()["c"]
@@ -1217,7 +1225,7 @@ def load_gc_logs(limit: int = 20, offset: int = 0, min_time: float = 0, max_time
         where.append("timestamp >= %s")
         params.append(min_time)
     if max_time > 0:
-        where.append("timestamp <= %s")
+        where.append("timestamp < %s")
         params.append(max_time)
     sql = "SELECT * FROM gc_logs"
     if where:
@@ -1248,7 +1256,7 @@ def count_gc_logs(min_time: float = 0, max_time: float = 0) -> int:
         where.append("timestamp >= %s")
         params.append(min_time)
     if max_time > 0:
-        where.append("timestamp <= %s")
+        where.append("timestamp < %s")
         params.append(max_time)
     sql = "SELECT COUNT(*) as cnt FROM gc_logs"
     if where:

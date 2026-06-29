@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api, fmt, fmtShort, onlineGithubIds } from './useAdminApi'
+import { dayStartTs, nextDayStartTs } from './dateRange'
 
 defineProps<{ visible: boolean }>()
 
@@ -62,8 +63,8 @@ async function loadLogs() {
   try {
     let u = `/api/admin/email-logs?limit=${logLimit}&offset=${logOffset.value}`
     if (logSearch.value) u += `&search=${encodeURIComponent(logSearch.value)}`
-    if (logDateFrom.value) u += '&date_from=' + Math.floor(new Date(logDateFrom.value + 'T00:00:00').getTime() / 1000)
-    if (logDateTo.value) u += '&date_to=' + Math.floor(new Date(logDateTo.value + 'T23:59:59').getTime() / 1000)
+    if (logDateFrom.value) u += '&date_from=' + Math.floor(dayStartTs(logDateFrom.value))
+    if (logDateTo.value) u += '&date_to=' + Math.floor(nextDayStartTs(logDateTo.value))
     const r = await api('GET', u); logs.value = r.logs || []; logTotal.value = r.total || 0
   } catch {}
 }

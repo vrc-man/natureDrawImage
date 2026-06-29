@@ -189,6 +189,12 @@ scripts\sync_gui.py
 documentation\Database-Sync-Guide.md
 ```
 
+数据库读写与时间处理规范见：
+
+```text
+documentation\DATABASE_SQL_TIME_GUIDE.md
+```
+
 ---
 
 ## 初始部署文档
@@ -256,6 +262,7 @@ natureDrawImage-main-mysqlRefactoring\
 ├── documentation\
 │   ├── Deployment-Guide.md        # 初始部署与日常启动指南
 │   ├── Database-Sync-Guide.md     # 数据库同步、备份、还原指南
+│   ├── DATABASE_SQL_TIME_GUIDE.md # 数据库读写与时间处理规范
 │   ├── Project-documentation.md
 │   └── project-architecture.md
 │
@@ -269,6 +276,11 @@ natureDrawImage-main-mysqlRefactoring\
 ├── requirements.txt
 └── .env                           # 环境变量，勿提交
 ```
+
+### 文档目录说明
+
+- `documentation/`：项目级文档目录，放部署指南、数据库同步/备份/还原说明、架构说明、AI 快速上手指南、Bug 排查记录、数据库读写与时间处理规范等。适合部署、维护、二次开发前先阅读。
+- `web/features/`：后端外挂功能模块目录，里面的 `.py` 是可插拔 API 功能，`README.md` / 设计文档用于说明 feature 模块的开发方式、接口约定和具体功能设计。适合新增独立后端功能时参考。
 
 ---
 

@@ -175,10 +175,13 @@ features/
 ├── __init__.py                 # register_all(app)：统一挂载入口
 ├── _deps.py                    # 鉴权、路径工具、少量 app 上下文注入
 ├── README.md                   # 本文档
+├── featured_request_design.md  # 精选申请功能设计记录
 ├── access_keys.py              # 访问密钥管理
+├── gen_stats.py                # 系统生图统计
 ├── gen_leaderboard.py          # 生图排行榜
 ├── health_check.py             # 图片目录健康检查
-└── llm_prompt_templates.py     # LLM 提示词模板
+├── llm_prompt_templates.py     # LLM 提示词模板
+└── config/                     # feature 私有/默认配置文件
 ```
 
 ---
@@ -272,14 +275,14 @@ for name, r in routers:
 例如排行榜：
 
 ```python
-def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0) -> dict:
+def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0, tz_offset: float = 0) -> dict:
     conditions = ["status='success'"]
     params = []
     if date_from > 0:
         conditions.append("created_at >= %s")
         params.append(date_from)
     if date_to > 0:
-        conditions.append("created_at <= %s")
+        conditions.append("created_at < %s")
         params.append(date_to)
     where = " WHERE " + " AND ".join(conditions)
     rows = _db().execute(
@@ -470,7 +473,36 @@ _db().execute("SELECT * FROM table WHERE id=%s", (id_,))
 _db().execute(f"SELECT * FROM table WHERE name='{name}'")
 ```
 
-### 7.4 事务
+### 7.4 时间字段与日期范围
+
+业务时间字段统一存 Unix epoch 秒，由 Python 写入：
+
+```python
+created_at = time.time()
+```
+
+日期范围查询统一使用半开区间：
+
+```sql
+created_at >= %s AND created_at < %s
+```
+
+不要使用：
+
+```sql
+created_at <= %s
+CURDATE()
+UNIX_TIMESTAMP()
+FROM_UNIXTIME()
+```
+
+如果需要按浏览器所在时区分组统计，参考：
+
+```text
+documentation/DATABASE_SQL_TIME_GUIDE.md
+```
+
+### 7.5 事务
 
 多条写入需要一致性时：
 
@@ -484,7 +516,7 @@ with transaction() as conn:
 
 feature 不直接调用 transaction，优先把事务封装在 `operations.py` 函数里。
 
-### 7.5 不要暴露通用 execute_sql
+### 7.6 不要暴露通用 execute_sql
 
 不要为了省事新增：
 
@@ -526,7 +558,7 @@ web/features/config/banner_rules.json
 
 命名规则：Python 模块名和 JSON 文件名保持一致，`my_feature.py` 对应 `config/my_feature.json`。
 
-注意：这些 JSON 属于运行时配置/插件私有数据，**默认不要提交到 Git**；文档中说明约定即可，不需要提交 `default_xxx.json` 或真实配置文件。
+注意：这些 JSON 如果包含运行时私有配置或敏感内容，**默认不要提交到 Git**；如果只是无敏感的默认模板/示例配置（如 `config/llm_prompt_templates.json`），可以提交作为开箱默认值。
 
 ### 应该进 MySQL 的场景
 
@@ -761,7 +793,8 @@ limit = max(1, min(limit, 200))
 | `health_check.py` | `/api/admin/features/health` | 图片目录健康检查，只读统计总数/占用/缺缩略图/孤儿 |
 | `llm_prompt_templates.py` | `/api/admin/features/llm-templates` 和 `/api/features/llm-templates` | LLM 提示词模板，插件自有 JSON 存储 |
 | `access_keys.py` | `/api/admin/access-keys` | 访问密钥管理，从 app.py 迁出，保留老接口路径兼容前端 |
-| `gen_leaderboard.py` | `/api/admin/features/gen-leaderboard` | 生图排行榜，从 MySQL `gen_logs` 聚合统计 |
+| `gen_stats.py` | `/api/admin/features/gen-stats` | 系统生图统计，支持浏览器时区 `tz_offset` 和日期范围筛选 |
+| `gen_leaderboard.py` | `/api/admin/features/gen-leaderboard` | 生图排行榜，从 MySQL `gen_logs` 聚合统计，支持 `tz_offset` |
 
 ---
 
@@ -784,6 +817,8 @@ limit = max(1, min(limit, 200))
 - [ ] 新表已加入 `schema.py`；
 - [ ] 常用查询字段有索引；
 - [ ] SQL 使用 `%s` 参数绑定；
+- [ ] 时间范围查询使用 `>= date_from` + `< date_to` 半开区间；
+- [ ] 没有在业务统计中使用 `CURDATE()` / `UNIX_TIMESTAMP()` / `FROM_UNIXTIME()`；
 - [ ] 多表/多步写入有事务；
 - [ ] 没有 SQLite 语法。
 

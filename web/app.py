@@ -7827,7 +7827,7 @@ async def api_admin_images_delete_by_query(request: Request, payload: DeleteByQu
         # 日期过滤
         if date_from is not None and mt < date_from:
             continue
-        if date_to is not None and mt > date_to:
+        if date_to is not None and mt >= date_to:
             continue
         # 创建者过滤
         if creator:
@@ -9188,7 +9188,7 @@ async def api_admin_gen_logs_scan_result(request: Request, login: str = "", date
     if date_from:
         items = [x for x in items if x.get("created_at", 0) >= date_from]
     if date_to:
-        items = [x for x in items if x.get("created_at", 0) <= date_to]
+        items = [x for x in items if x.get("created_at", 0) < date_to]
     return {"orphans": items, "total": len(items)}
 
 

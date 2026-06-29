@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api, fmt, relTime } from './useAdminApi'
+import { dayStartTs, nextDayStartTs } from './dateRange'
 
 defineProps<{ visible: boolean }>()
 
@@ -29,10 +30,10 @@ async function loadGcLogs(reset = false) {
   try {
     let url = `/api/admin/gc/logs?limit=20&offset=${gcPage.value * 20}`
     if (gcDateFrom.value) {
-      url += '&min_time=' + encodeURIComponent(String(new Date(gcDateFrom.value).getTime() / 1000))
+      url += '&min_time=' + encodeURIComponent(String(dayStartTs(gcDateFrom.value)))
     }
     if (gcDateTo.value) {
-      url += '&max_time=' + encodeURIComponent(String(new Date(gcDateTo.value).setHours(23, 59, 59) / 1000))
+      url += '&max_time=' + encodeURIComponent(String(nextDayStartTs(gcDateTo.value)))
     }
     const d = await api('GET', url)
     gcLogs.value = d.items || []

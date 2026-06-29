@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api, fmt, copyText } from './useAdminApi'
+import { dayStartTs, nextDayStartTs } from './dateRange'
 
 defineProps<{ visible: boolean }>()
 
@@ -36,8 +37,8 @@ async function load() {
     let u = `/api/admin/gen-logs?limit=${PAGE_SIZE}&offset=${page.value * PAGE_SIZE}`
     if (search.value) u += '&login=' + encodeURIComponent(search.value)
     if (pathSearch.value) u += '&path=' + encodeURIComponent(pathSearch.value)
-    if (dateFrom.value) u += '&date_from=' + (new Date(dateFrom.value + 'T00:00:00').getTime() / 1000)
-    if (dateTo.value) u += '&date_to=' + (new Date(dateTo.value + 'T23:59:59').getTime() / 1000)
+    if (dateFrom.value) u += '&date_from=' + (dayStartTs(dateFrom.value))
+    if (dateTo.value) u += '&date_to=' + (nextDayStartTs(dateTo.value))
     const r = await api('GET', u)
     items.value = r.items || []; total.value = r.total || 0
     const s = page.value * PAGE_SIZE + 1, e = Math.min(s + items.value.length - 1, total.value)
@@ -77,8 +78,8 @@ async function clearAll() {
   let qs = ''
   const params: string[] = []
   if (search.value) params.push('login=' + encodeURIComponent(search.value))
-  if (dateFrom.value) params.push('date_from=' + (new Date(dateFrom.value + 'T00:00:00').getTime() / 1000))
-  if (dateTo.value) params.push('date_to=' + (new Date(dateTo.value + 'T23:59:59').getTime() / 1000))
+  if (dateFrom.value) params.push('date_from=' + (dayStartTs(dateFrom.value)))
+  if (dateTo.value) params.push('date_to=' + (nextDayStartTs(dateTo.value)))
   if (params.length) qs = '?' + params.join('&')
   try {
     const r = await api('DELETE', '/api/admin/gen-logs' + qs)
@@ -109,8 +110,8 @@ async function backfillThumbs() {
   backfilling.value = true
   backfillMsg.value = ''
   const body: any = {}
-  if (df) body.date_from = new Date(df + 'T00:00:00').getTime() / 1000
-  if (dt) body.date_to = new Date(dt + 'T23:59:59').getTime() / 1000
+  if (df) body.date_from = dayStartTs(df)
+  if (dt) body.date_to = nextDayStartTs(dt)
   try {
     const r = await api('POST', '/api/admin/gen-logs/backfill-thumbs', body)
     if (!r.ok) { backfilling.value = false; alert(r.error || '启动失败'); return }
@@ -162,8 +163,8 @@ async function scanOrphans() {
   orphanDateFrom.value = ''
   orphanDateTo.value = ''
   const body: any = {}
-  if (scanDateFrom.value) body.date_from = new Date(scanDateFrom.value + 'T00:00:00').getTime() / 1000
-  if (scanDateTo.value) body.date_to = new Date(scanDateTo.value + 'T23:59:59').getTime() / 1000
+  if (scanDateFrom.value) body.date_from = dayStartTs(scanDateFrom.value)
+  if (scanDateTo.value) body.date_to = nextDayStartTs(scanDateTo.value)
   try {
     const r = await api('POST', '/api/admin/gen-logs/scan-orphans', body)
     if (!r.ok) { scanning.value = false; alert(r.error || '扫描启动失败'); return }
@@ -201,8 +202,8 @@ async function loadOrphanResults() {
     let url = '/api/admin/gen-logs/scan-orphans/result'
     const params: string[] = []
     if (orphanSearch.value.trim()) params.push('login=' + encodeURIComponent(orphanSearch.value.trim()))
-    if (orphanDateFrom.value) params.push('date_from=' + (new Date(orphanDateFrom.value + 'T00:00:00').getTime() / 1000))
-    if (orphanDateTo.value) params.push('date_to=' + (new Date(orphanDateTo.value + 'T23:59:59').getTime() / 1000))
+    if (orphanDateFrom.value) params.push('date_from=' + (dayStartTs(orphanDateFrom.value)))
+    if (orphanDateTo.value) params.push('date_to=' + (nextDayStartTs(orphanDateTo.value)))
     if (params.length) url += '?' + params.join('&')
     const d = await api('GET', url)
     orphans.value = d.orphans || []
@@ -234,8 +235,8 @@ async function clearOrphansByRange() {
   if (!confirm(`确定清理【${label}】内原图已全部丢失的孤儿日志 + 残留缩略图？`)) return
   if (prompt('请输入"确认清理"以继续：') !== '确认清理') { alert('输入不匹配，已取消'); return }
   const body: any = {}
-  if (df) body.date_from = new Date(df + 'T00:00:00').getTime() / 1000
-  if (dt) body.date_to = new Date(dt + 'T23:59:59').getTime() / 1000
+  if (df) body.date_from = dayStartTs(df)
+  if (dt) body.date_to = nextDayStartTs(dt)
   try {
     const d = await api('POST', '/api/admin/gen-logs/delete-orphans-by-range', body)
     orphanMsg.value = `✓ ${d.message || '清理完成'}`

@@ -31,7 +31,8 @@ const selectedUser = computed(() => data.value?.items?.[selectedIndex.value] || 
 async function load() {
   loading.value = true
   try {
-    const d = await api('GET', `/api/admin/features/gen-leaderboard?range=${range.value}`)
+    const tzOffset = -new Date().getTimezoneOffset() / 60
+    const d = await api('GET', `/api/admin/features/gen-leaderboard?range=${range.value}&tz_offset=${tzOffset}`)
     data.value = d
     if (selectedIndex.value >= (d.items?.length || 0)) selectedIndex.value = 0
   } catch {}

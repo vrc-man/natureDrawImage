@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { api, fmt, fmtShort } from './useAdminApi'
+import { dayStartTs, nextDayStartTs } from './dateRange'
 
 defineProps<{ visible: boolean }>()
 
@@ -46,8 +47,8 @@ function resetSearch() { nameSearch.value = ''; loadImages(true) }
 
 async function deleteByFilter() {
   const body: any = {}
-  if (filterDateFrom.value) body.date_from = new Date(filterDateFrom.value + 'T00:00:00').getTime() / 1000
-  if (filterDateTo.value) body.date_to = new Date(filterDateTo.value + 'T23:59:59').getTime() / 1000
+  if (filterDateFrom.value) body.date_from = dayStartTs(filterDateFrom.value)
+  if (filterDateTo.value) body.date_to = nextDayStartTs(filterDateTo.value)
   if (filterCreator.value.trim()) body.creator = filterCreator.value.trim()
   if (!body.date_from && !body.date_to && !body.creator) { alert('请至少设置一个筛选条件'); return }
   const desc = [body.date_from ? '日期起' : '', body.date_to ? '日期止' : '', body.creator ? '创建者: ' + body.creator : ''].filter(Boolean).join(', ')

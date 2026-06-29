@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api, fmt, copyText } from './useAdminApi'
+import { dayStartTs, nextDayStartTs } from './dateRange'
 
 defineProps<{ visible: boolean }>()
 
@@ -38,8 +39,8 @@ async function load() {
     let u = `/api/admin/deletion-log?limit=${PAGE_SIZE}&offset=${page.value * PAGE_SIZE}`
     if (search.value) u += '&search=' + encodeURIComponent(search.value)
     if (pathSearch.value) u += '&path=' + encodeURIComponent(pathSearch.value)
-    if (dateFrom.value) u += '&date_from=' + (new Date(dateFrom.value + 'T00:00:00').getTime() / 1000)
-    if (dateTo.value) u += '&date_to=' + (new Date(dateTo.value + 'T23:59:59').getTime() / 1000)
+    if (dateFrom.value) u += '&date_from=' + dayStartTs(dateFrom.value)
+    if (dateTo.value) u += '&date_to=' + nextDayStartTs(dateTo.value)
     const r = await api('GET', u)
     items.value = r.items || []; total.value = r.total || 0
     const s = page.value * PAGE_SIZE + 1, e = Math.min(s + items.value.length - 1, total.value)
@@ -86,8 +87,8 @@ async function clearAll() {
   const i = prompt('请输入"确认删除删除记录"以继续：')
   if (i !== '确认删除删除记录') { alert('输入不匹配，已取消'); return }
   const body: any = {}
-  if (dateFrom.value) body.date_from = new Date(dateFrom.value + 'T00:00:00').getTime() / 1000
-  if (dateTo.value) body.date_to = new Date(dateTo.value + 'T23:59:59').getTime() / 1000
+  if (dateFrom.value) body.date_from = dayStartTs(dateFrom.value)
+  if (dateTo.value) body.date_to = nextDayStartTs(dateTo.value)
   try {
     const r = await api('POST', '/api/admin/deletion-log/clear', body)
     page.value = 0
