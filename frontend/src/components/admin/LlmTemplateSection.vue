@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api, fmtShort } from './useAdminApi'
+import { ADMIN_TOAST_SHORT } from './uiTimers'
 
 interface LlmTemplate {
   id: number
@@ -85,7 +86,7 @@ async function save() {
     }
     closeModal()
     await load()
-    setTimeout(() => { if (status.value.startsWith('✓')) status.value = '' }, 2000)
+    setTimeout(() => { if (status.value.startsWith('✓')) status.value = '' }, ADMIN_TOAST_SHORT)
   } catch (e: any) {
     alert('保存失败: ' + e.message)
   }

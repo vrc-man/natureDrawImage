@@ -1,0 +1,4 @@
+export const ADMIN_TOAST_SHORT = 5000
+export const ADMIN_TOAST_RESULT = 12000
+export const ADMIN_TOAST_ERROR = 15000
+export const ADMIN_MODAL_SUCCESS_CLOSE = 3000

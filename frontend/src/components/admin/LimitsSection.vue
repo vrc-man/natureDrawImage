@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from './useAdminApi'
+import { ADMIN_TOAST_SHORT } from './uiTimers'
 
 defineProps<{ visible: boolean }>()
 
@@ -56,7 +57,7 @@ async function save() {
     payload.featured_tip = limits.value.featured_tip || ''
     await api('POST', '/api/admin/limits', payload)
     status.value = '✓ 已保存'
-    setTimeout(() => { if (status.value === '✓ 已保存') status.value = '' }, 2000)
+    setTimeout(() => { if (status.value === '✓ 已保存') status.value = '' }, ADMIN_TOAST_SHORT)
   } catch (e: any) {
     status.value = '保存失败: ' + e.message
   }

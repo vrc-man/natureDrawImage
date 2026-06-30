@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { api } from './useAdminApi'
+import { ADMIN_TOAST_SHORT } from './uiTimers'
 
 defineProps<{ visible: boolean }>()
 
@@ -28,7 +29,7 @@ async function save() {
     resStatus.value = '保存中…'
     await api('POST', '/api/admin/resolutions', { presets: adminRes.value })
     resStatus.value = '✓ 已保存'
-    setTimeout(() => { if (resStatus.value === '✓ 已保存') resStatus.value = '' }, 2000)
+    setTimeout(() => { if (resStatus.value === '✓ 已保存') resStatus.value = '' }, ADMIN_TOAST_SHORT)
   } catch (e: any) {
     resStatus.value = '保存失败: ' + e.message
   }

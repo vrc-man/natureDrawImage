@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api, fmt, relTime } from './useAdminApi'
 import { dayStartTs, nextDayStartTs } from './dateRange'
+import { ADMIN_TOAST_ERROR, ADMIN_TOAST_RESULT } from './uiTimers'
 
 defineProps<{ visible: boolean }>()
 
@@ -77,12 +78,12 @@ async function runGc(backup: boolean) {
           gcResult.value = 'GC 完成！清理了: ' + JSON.stringify(d.cleaned || {})
           loadGcStats()
           loadGcLogs(true)
-          setTimeout(() => { if (gcResult.value.startsWith('GC 完成')) gcResult.value = '' }, 5000)
+          setTimeout(() => { if (gcResult.value.startsWith('GC 完成')) gcResult.value = '' }, ADMIN_TOAST_RESULT)
         } else if (d.status === 'error') {
           if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
           gcRunning.value = false
           gcResult.value = 'GC 出错: ' + (d.error || '未知错误')
-          setTimeout(() => { if (gcResult.value.startsWith('GC 出错')) gcResult.value = '' }, 8000)
+          setTimeout(() => { if (gcResult.value.startsWith('GC 出错')) gcResult.value = '' }, ADMIN_TOAST_ERROR)
         }
       } catch (e: any) {
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
@@ -174,7 +175,7 @@ async function runCleanEmptyDirs() {
   try {
     const d = await api('POST', '/api/admin/gc/clean-empty-dirs')
     cleanDirsResult.value = `清理完成：删除 ${d.removed ?? 0} 个空日期目录`
-    setTimeout(() => { if (cleanDirsResult.value.includes('清理完成')) cleanDirsResult.value = '' }, 5000)
+    setTimeout(() => { if (cleanDirsResult.value.includes('清理完成')) cleanDirsResult.value = '' }, ADMIN_TOAST_RESULT)
   } catch (e: any) {
     cleanDirsResult.value = '清理失败: ' + e.message
   } finally {
@@ -213,7 +214,7 @@ async function runHealthCheck() {
           healthRunning.value = false
           healthDetails.value = s
           healthResult.value = '检查完成'
-          setTimeout(() => { if (healthResult.value === '检查完成') healthResult.value = '' }, 5000)
+          setTimeout(() => { if (healthResult.value === '检查完成') healthResult.value = '' }, ADMIN_TOAST_RESULT)
         } else if (s.status === 'error') {
           if (healthPollTimer) { clearInterval(healthPollTimer); healthPollTimer = null }
           healthRunning.value = false

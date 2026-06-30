@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api, resizeImage, batchUploadThumbnails, type BatchThumbItem } from './useAdminApi'
+import { ADMIN_TOAST_SHORT } from './uiTimers'
 import { showCenterToast } from '@/composables/useToast'
 
 defineProps<{ visible: boolean }>()
@@ -17,7 +18,7 @@ async function load() {
     const d = await api('GET', '/api/admin/styles')
     items.value = (d.styles || []).map((s: any) => ({ name: s.name || '', tags: s.tags || '', image: s.image || '', category: s.category || '' }))
     status.value = '✓ 已刷新'
-    setTimeout(() => { if (status.value === '✓ 已刷新') status.value = '' }, 1500)
+    setTimeout(() => { if (status.value === '✓ 已刷新') status.value = '' }, ADMIN_TOAST_SHORT)
   } catch {}
   const elapsed = Date.now() - start
   const minWait = 400
@@ -30,7 +31,7 @@ async function save() {
     status.value = '保存中…'
     await api('POST', '/api/admin/styles', { styles: items.value })
     status.value = '✓ 已保存'
-    setTimeout(() => { if (status.value === '✓ 已保存') status.value = '' }, 2000)
+    setTimeout(() => { if (status.value === '✓ 已保存') status.value = '' }, ADMIN_TOAST_SHORT)
   } catch (e: any) { status.value = '保存失败: ' + e.message }
 }
 

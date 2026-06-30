@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api, fmt, copyText } from './useAdminApi'
 import { dayStartTs, nextDayStartTs } from './dateRange'
+import { ADMIN_TOAST_RESULT } from './uiTimers'
 
 defineProps<{ visible: boolean }>()
 
@@ -129,7 +130,7 @@ function pollBackfill() {
         if (backfillPollTimer) clearInterval(backfillPollTimer); backfillPollTimer = null
         backfilling.value = false
         backfillMsg.value = `✓ 补充完成：新增 ${s.regenerated || 0} 张，跳过 ${s.skipped || 0}，失败 ${s.failed || 0}`
-        setTimeout(() => { if (backfillMsg.value.startsWith('✓')) backfillMsg.value = '' }, 8000)
+        setTimeout(() => { if (backfillMsg.value.startsWith('✓')) backfillMsg.value = '' }, ADMIN_TOAST_RESULT)
       } else if (s.status === 'error') {
         if (backfillPollTimer) clearInterval(backfillPollTimer); backfillPollTimer = null
         backfilling.value = false
@@ -224,7 +225,7 @@ async function clearOrphans() {
     orphanDateFrom.value = ''
     orphanDateTo.value = ''
     orphanMsg.value = `✓ 已清理 ${cnt} 条孤儿记录`
-    setTimeout(() => { if (orphanMsg.value.startsWith('✓')) orphanMsg.value = '' }, 4000)
+    setTimeout(() => { if (orphanMsg.value.startsWith('✓')) orphanMsg.value = '' }, ADMIN_TOAST_RESULT)
   } catch (e: any) { orphanMsg.value = '删除失败: ' + e.message }
 }
 
@@ -241,7 +242,7 @@ async function clearOrphansByRange() {
     const d = await api('POST', '/api/admin/gen-logs/delete-orphans-by-range', body)
     orphanMsg.value = `✓ ${d.message || '清理完成'}`
     orphans.value = []; orphanRange.value = null
-    setTimeout(() => { if (orphanMsg.value.startsWith('✓')) orphanMsg.value = '' }, 5000)
+    setTimeout(() => { if (orphanMsg.value.startsWith('✓')) orphanMsg.value = '' }, ADMIN_TOAST_RESULT)
   } catch (e: any) { orphanMsg.value = '清理失败: ' + e.message }
 }
 
@@ -254,7 +255,7 @@ async function clearOrphansWeekAgo() {
     orphanMsg.value = `✓ ${d.message || '清理完成'}`
     orphans.value = []; orphanRange.value = null
     loadGenlogsInfo()
-    setTimeout(() => { if (orphanMsg.value.startsWith('✓')) orphanMsg.value = '' }, 5000)
+    setTimeout(() => { if (orphanMsg.value.startsWith('✓')) orphanMsg.value = '' }, ADMIN_TOAST_RESULT)
   } catch (e: any) { orphanMsg.value = '清理失败: ' + e.message }
 }
 

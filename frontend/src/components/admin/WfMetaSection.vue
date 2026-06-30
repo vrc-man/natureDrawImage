@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { api, resizeImage, batchUploadThumbnails, type BatchThumbItem } from './useAdminApi'
+import { ADMIN_TOAST_SHORT } from './uiTimers'
 import { showCenterToast } from '@/composables/useToast'
 
 defineProps<{ visible: boolean }>()
@@ -46,7 +47,7 @@ async function load() {
       return { workflow: f, thumbnail: (m?.thumbnail || ''), lora_link: (m?.lora_link || ''), category: (m?.category || '') }
     }).sort((a, b) => a.workflow.localeCompare(b.workflow))
     status.value = '✓ 已刷新'
-    setTimeout(() => { if (status.value === '✓ 已刷新') status.value = '' }, 1500)
+    setTimeout(() => { if (status.value === '✓ 已刷新') status.value = '' }, ADMIN_TOAST_SHORT)
   } catch (e: any) { status.value = '加载失败: ' + e.message }
   const elapsed = Date.now() - start
   const minWait = 400
@@ -61,7 +62,7 @@ async function saveWfMeta() {
     wfMeta.value = (d.workflow_meta || []).map((m: any) => ({ workflow: m.workflow || '', thumbnail: m.thumbnail || '', lora_link: m.lora_link || '', category: m.category || '' }))
     status.value = '✓ 已保存'
     showCenterToast('✓ 已保存')
-    setTimeout(() => { if (status.value === '✓ 已保存') status.value = '' }, 2000)
+    setTimeout(() => { if (status.value === '✓ 已保存') status.value = '' }, ADMIN_TOAST_SHORT)
   } catch (e: any) { status.value = '保存失败: ' + e.message }
 }
 
@@ -106,7 +107,7 @@ async function onRename(w: WfEntry, e: Event) {
     await api('POST', '/api/admin/workflow_rename', { old: oldFull, new: newFull })
     w.workflow = newFull
     status.value = '✓ 已重命名'
-    setTimeout(() => { if (status.value === '✓ 已重命名') status.value = '' }, 2000)
+    setTimeout(() => { if (status.value === '✓ 已重命名') status.value = '' }, ADMIN_TOAST_SHORT)
   } catch (e: any) {
     input.value = oldFull.replace(/\.json$/i, '')
     status.value = '重命名失败: ' + e.message

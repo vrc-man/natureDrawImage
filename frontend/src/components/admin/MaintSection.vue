@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { api } from './useAdminApi'
+import { ADMIN_TOAST_SHORT } from './uiTimers'
 
 defineProps<{ visible: boolean }>()
 
@@ -33,7 +34,7 @@ async function save() {
       message: maintMessage.value,
     })
     maintStatus.value = '✓ 已保存'
-    setTimeout(() => { if (maintStatus.value === '✓ 已保存') maintStatus.value = '' }, 2000)
+    setTimeout(() => { if (maintStatus.value === '✓ 已保存') maintStatus.value = '' }, ADMIN_TOAST_SHORT)
   } catch (e: any) {
     maintStatus.value = '保存失败: ' + e.message
   }

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { api, fmt, fmtShort, onlineGithubIds } from './useAdminApi'
 import { dayStartTs, nextDayStartTs } from './dateRange'
+import { ADMIN_MODAL_SUCCESS_CLOSE, ADMIN_TOAST_SHORT } from './uiTimers'
 
 defineProps<{ visible: boolean }>()
 
@@ -74,7 +75,7 @@ async function generateCodes() {
   const count = Math.max(1, Math.min(Number(genCount.value) || 1, 10))
   if (!confirm(`生成 ${count} 个一次性邀请码？`)) return
   genStatus.value = '生成中...'
-  try { await api('POST', '/api/admin/invite-codes/generate', { count, max_uses: 1 }); genStatus.value = '✅ 生成成功'; setTimeout(() => genStatus.value = '', 3000); loadAll() }
+  try { await api('POST', '/api/admin/invite-codes/generate', { count, max_uses: 1 }); genStatus.value = '✅ 生成成功'; setTimeout(() => { if (genStatus.value === '✅ 生成成功') genStatus.value = '' }, ADMIN_TOAST_SHORT); loadAll() }
   catch (e: any) { genStatus.value = '❌ ' + e.message }
 }
 async function deleteCode(code: string) {
@@ -88,13 +89,13 @@ function codeBarClass(pct: number) { return pct >= 100 ? 'bg-red-500' : pct >= 5
 async function saveConfig() {
   if (!confirm('保存邮箱注册限制？')) return
   configStatus.value = '保存中...'
-  try { await api('POST', '/api/admin/email-config', { REG_HOURLY_LIMIT_PER_IP: hourlyIP.value, REG_DAILY_LIMIT_PER_IP: dailyIP.value, REG_DAILY_LIMIT_PER_EMAIL: dailyEmail.value }); configStatus.value = '✅ 保存成功'; setTimeout(() => configStatus.value = '', 3000) }
+  try { await api('POST', '/api/admin/email-config', { REG_HOURLY_LIMIT_PER_IP: hourlyIP.value, REG_DAILY_LIMIT_PER_IP: dailyIP.value, REG_DAILY_LIMIT_PER_EMAIL: dailyEmail.value }); configStatus.value = '✅ 保存成功'; setTimeout(() => { if (configStatus.value === '✅ 保存成功') configStatus.value = '' }, ADMIN_TOAST_SHORT) }
   catch (e: any) { configStatus.value = '❌ ' + e.message }
 }
 async function saveRateLimits() {
   if (!confirm('保存频率限制（重启生效）？')) return
   rlStatus.value = '保存中...'
-  try { await api('POST', '/api/admin/rate-limits', rateLimits.value); rlStatus.value = '✅ 保存成功，重启生效'; setTimeout(() => rlStatus.value = '', 3000) }
+  try { await api('POST', '/api/admin/rate-limits', rateLimits.value); rlStatus.value = '✅ 保存成功，重启生效'; setTimeout(() => { if (rlStatus.value === '✅ 保存成功，重启生效') rlStatus.value = '' }, ADMIN_TOAST_SHORT) }
   catch (e: any) { rlStatus.value = '❌ ' + e.message }
 }
 
@@ -152,7 +153,7 @@ async function sendCustomEmail() {
   if (!emailModalSubject.value || !emailModalBody.value) { alert('请填写主题和内容'); return }
   if (!confirm(`确认发送邮件给 ${emailModalUser.value.email}？`)) return
   emailModalStatus.value = '发送中...'
-  try { await api('POST', '/api/admin/email-users/send-custom-email', { github_id: emailModalUser.value.github_id, subject: emailModalSubject.value, message: emailModalBody.value }); emailModalStatus.value = '✅ 发送成功'; setTimeout(() => closeEmailModal(), 2000) }
+  try { await api('POST', '/api/admin/email-users/send-custom-email', { github_id: emailModalUser.value.github_id, subject: emailModalSubject.value, message: emailModalBody.value }); emailModalStatus.value = '✅ 发送成功'; setTimeout(() => closeEmailModal(), ADMIN_MODAL_SUCCESS_CLOSE) }
   catch (e: any) { emailModalStatus.value = '❌ ' + e.message }
 }
 
