@@ -9,6 +9,7 @@ import os
 import socket
 import subprocess
 import threading
+import pymysql.cursors
 from pathlib import Path
 from tkinter import END, E, N, S, W, Button, Entry, Label, Scrollbar, Text, Tk, filedialog, messagebox
 
@@ -35,7 +36,6 @@ for _candidate in [
         _MYSQL_BIN_DIR = _candidate
         break
 
-_MYSQLDUMP_PATH = str(_MYSQL_BIN_DIR / "mysqldump.exe") if _MYSQL_BIN_DIR else "mysqldump"
 _MYSQL_CLIENT_PATH = str(_MYSQL_BIN_DIR / "mysql.exe") if _MYSQL_BIN_DIR else "mysql"
 DEFAULT_SQLITE_PATH = r"I:\网站\shengtu\natureDrawImage-main-sqlit\web\db\natureDrawImage.db"
 
@@ -208,32 +208,78 @@ class SyncTool:
 
     def _do_backup(self, dst_path: str) -> None:
         self.running = True
+        tmp_path = dst_path + ".tmp"
+        conn = None
         try:
             self.log(f"⏳ 正在备份 {_DB_NAME}...")
-            cmd = [
-                _MYSQLDUMP_PATH,
-                "--single-transaction",
-                "--quick",
-                "-h",
-                _DB_HOST,
-                "-P",
-                str(_DB_PORT),
-                "-u",
-                _DB_USER,
-                *_mysql_password_arg(),
-                _DB_NAME,
-            ]
-            with open(dst_path, "w", encoding="utf-8") as f:
-                subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, check=True, timeout=300)
+            conn = pymysql.connect(
+                host=_DB_HOST,
+                port=int(_DB_PORT),
+                user=_DB_USER,
+                password=_DB_PASS,
+                database=_DB_NAME,
+                charset="utf8mb4",
+                cursorclass=pymysql.cursors.DictCursor,
+                autocommit=False,
+                connect_timeout=10,
+            )
+            with conn.cursor() as cursor:
+                cursor.execute("START TRANSACTION READ ONLY")
+                cursor.execute("SHOW TABLES")
+                tables_key = list(cursor.fetchone().keys())[0]
+                cursor.execute("SHOW TABLES")
+                tables = [row[tables_key] for row in cursor.fetchall()]
+
+                with open(tmp_path, "w", encoding="utf-8") as f:
+                    f.write(f"-- natureDrawImage MySQL backup\n")
+                    f.write(f"-- {_DB_NAME} @ {_DB_HOST}:{_DB_PORT}\n\n")
+
+                    for table in tables:
+                        cursor.execute(f"SHOW CREATE TABLE `{table}`")
+                        create_row = cursor.fetchone()
+                        create_sql = create_row.get("Create Table", "")
+                        f.write(f"-- Table: `{table}`\n")
+                        f.write(create_sql + ";\n\n")
+
+                        cursor.execute(f"SELECT * FROM `{table}`")
+                        rows = cursor.fetchall()
+                        if rows:
+                            col_names = [f"`{k}`" for k in rows[0].keys()]
+                            cols_str = ", ".join(col_names)
+                            for row in rows:
+                                vals = []
+                                for k in rows[0].keys():
+                                    v = row[k]
+                                    if v is None:
+                                        vals.append("NULL")
+                                    elif isinstance(v, (int, float)):
+                                        vals.append(str(v))
+                                    elif isinstance(v, bytes):
+                                        vals.append(f"X'{v.hex()}'")
+                                    else:
+                                        s = str(v).replace("\\", "\\\\").replace("'", "\\'")
+                                        vals.append(f"'{s}'")
+                                f.write(f"INSERT INTO `{table}` ({cols_str}) VALUES ({', '.join(vals)});\n")
+                            f.write("\n")
+
+                conn.rollback()
+
+            os.replace(tmp_path, dst_path)
             size = os.path.getsize(dst_path) // 1024
             self.log(f"✅ 备份完成: {dst_path} ({size} KB)")
-        except subprocess.TimeoutExpired:
-            self.log("❌ 备份超时（300秒）")
-        except subprocess.CalledProcessError as e:
-            self.log(f"❌ 备份失败: {e.stderr.decode('utf-8', errors='replace')}")
         except Exception as e:
             self.log(f"❌ 备份失败: {type(e).__name__}: {e}")
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
         finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
             self.running = False
 
     # ── 还原 ──

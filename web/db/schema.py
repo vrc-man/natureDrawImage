@@ -12,7 +12,6 @@ import pymysql
 import pymysql.cursors
 import json
 import os
-import subprocess
 import threading
 from contextlib import contextmanager
 from pathlib import Path
@@ -30,26 +29,7 @@ DB_DIR = Path(__file__).parent
 
 # ── 连接（每线程连接 + 事务复用，避免单进程内全局串行化） ──
 _thread_state = threading.local()
-_conn_init_lock = threading.Lock()
 _db_lock = threading.RLock()  # 兼容旧调用方；仅用于少量进程内临界区，不再包住所有 SQL
-_mysqldump_path = None  # 启动时自动探测
-
-
-def _find_mysqldump() -> str:
-    """自动探测 mysqldump 路径，兼容各种部署场景。"""
-    candidates = [
-        "mysqldump",
-        str(Path(__file__).parent.parent.parent / "mysql-8.0.28-winx64" / "bin" / "mysqldump.exe"),
-        str(Path(__file__).parent.parent / "mysql-8.0.28-winx64" / "bin" / "mysqldump.exe"),
-        "C:/Program Files/MySQL/MySQL Server 8.0/bin/mysqldump.exe",
-    ]
-    for c in candidates:
-        try:
-            subprocess.run([c, "--version"], capture_output=True, timeout=5)
-            return c
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            continue
-    return "mysqldump"  # 最后尝试系统 PATH
 
 
 def _connect() -> pymysql.Connection:
@@ -65,15 +45,6 @@ def _connect() -> pymysql.Connection:
         autocommit=True,
         connect_timeout=10,
     )
-
-
-def _ensure_mysqldump_path() -> None:
-    """懒加载 mysqldump 路径，避免多线程重复探测。"""
-    global _mysqldump_path
-    if _mysqldump_path is None:
-        with _conn_init_lock:
-            if _mysqldump_path is None:
-                _mysqldump_path = _find_mysqldump()
 
 
 def _tx_depth() -> int:
@@ -124,7 +95,7 @@ class LockedConnection:
         return self._conn.rollback()
 
     def backup(self, dst_path: str):
-        """mysqldump 在线热备——不锁表、不阻塞读写。"""
+        """pymysql 直连导出——不锁表、不阻塞读写。"""
         backup_database(dst_path)
 
     def close(self):
@@ -166,7 +137,6 @@ def transaction(immediate: bool = False) -> Iterator[LockedConnection]:
 
 def get_db() -> LockedConnection:
     """获取当前线程的数据库连接（自动创建 + 连接存活检测）。"""
-    _ensure_mysqldump_path()
     db = getattr(_thread_state, "db", None)
     if db is None:
         db = LockedConnection(_connect())
@@ -193,21 +163,76 @@ def close_db():
 
 
 def backup_database(dst_path: str):
-    """mysqldump 在线热备，不阻塞读写。"""
-    _ensure_mysqldump_path()
-    cmd = [
-        _mysqldump_path,
-        "--single-transaction",
-        "--quick",
-        "-h", _DB_HOST,
-        "-P", str(_DB_PORT),
-        "-u", _DB_USER,
-    ]
-    if _DB_PASS:
-        cmd.extend([f"-p{_DB_PASS}"])
-    cmd.append(_DB_NAME)
-    with open(dst_path, "w", encoding="utf-8") as f:
-        subprocess.run(cmd, stdout=f, stderr=subprocess.PIPE, check=True, timeout=300)
+    """使用 pymysql 直连导出为 SQL 文件，零外部依赖，不阻塞读写。"""
+    tmp_path = dst_path + ".tmp"
+    conn = None
+    try:
+        conn = pymysql.connect(
+            host=_DB_HOST,
+            port=_DB_PORT,
+            user=_DB_USER,
+            password=_DB_PASS,
+            database=_DB_NAME,
+            charset=_DB_CHARSET,
+            cursorclass=pymysql.cursors.DictCursor,
+            autocommit=False,
+            connect_timeout=10,
+        )
+        with conn.cursor() as cursor:
+            cursor.execute("START TRANSACTION READ ONLY")
+            cursor.execute("SHOW TABLES")
+            tables_key = list(cursor.fetchone().keys())[0]
+            cursor.execute("SHOW TABLES")
+            tables = [row[tables_key] for row in cursor.fetchall()]
+
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(f"-- natureDrawImage MySQL backup\n")
+                f.write(f"-- {_DB_NAME} @ {_DB_HOST}:{_DB_PORT}\n\n")
+
+                for table in tables:
+                    cursor.execute(f"SHOW CREATE TABLE `{table}`")
+                    create_row = cursor.fetchone()
+                    create_sql = create_row.get("Create Table", "")
+                    f.write(f"-- Table: `{table}`\n")
+                    f.write(create_sql + ";\n\n")
+
+                    cursor.execute(f"SELECT * FROM `{table}`")
+                    rows = cursor.fetchall()
+                    if rows:
+                        col_names = [f"`{k}`" for k in rows[0].keys()]
+                        cols_str = ", ".join(col_names)
+                        for row in rows:
+                            vals = []
+                            for k in rows[0].keys():
+                                v = row[k]
+                                if v is None:
+                                    vals.append("NULL")
+                                elif isinstance(v, (int, float)):
+                                    vals.append(str(v))
+                                elif isinstance(v, bytes):
+                                    vals.append(f"X'{v.hex()}'")
+                                else:
+                                    s = str(v).replace("\\", "\\\\").replace("'", "\\'")
+                                    vals.append(f"'{s}'")
+                            f.write(f"INSERT INTO `{table}` ({cols_str}) VALUES ({', '.join(vals)});\n")
+                        f.write("\n")
+
+            conn.rollback()
+
+        os.replace(tmp_path, dst_path)
+    except Exception:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+        raise
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # ═══════════════════════════════════════════

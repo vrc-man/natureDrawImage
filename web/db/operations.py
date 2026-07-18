@@ -18,6 +18,11 @@ from db.schema import get_db, config_get, config_set, config_get_section, transa
 _db = get_db  # 函数别名
 
 
+def _escape_like(s: str) -> str:
+    """转义 SQL LIKE 通配符 % 和 _，防止信息泄露/越权匹配。"""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def backup_database(dst_path: str) -> None:
     """mysqldump 在线热备——不锁表、不阻塞读写。"""
     from db.schema import backup_database as _mysql_bak
@@ -627,7 +632,7 @@ def get_gen_logs_date_range() -> Tuple[float, float]:
 
 
 def find_gen_log_by_file_path(file_path: str) -> Optional[Dict]:
-    rows = _db().execute("SELECT * FROM gen_logs WHERE file_paths LIKE %s", (f'%{file_path}%',)).fetchall()
+    rows = _db().execute("SELECT * FROM gen_logs WHERE file_paths LIKE %s", (f'%{_escape_like(file_path)}%',)).fetchall()
     for r in rows:
         try:
             fps = json.loads(r["file_paths"] or "[]")
@@ -694,10 +699,10 @@ def query_gen_logs(login: str = "", date_from: float = 0, date_to: float = 0,
     params = []
     if login:
         conditions.append("login LIKE %s")
-        params.append(f"%{login}%")
+        params.append(f"%{_escape_like(login)}%")
     if path:
         conditions.append("file_paths LIKE %s")
-        params.append(f"%{path}%")
+        params.append(f"%{_escape_like(path)}%")
     if date_from:
         conditions.append("created_at >= %s")
         params.append(date_from)
@@ -894,11 +899,11 @@ def query_deletion_log(search: str = "", date_from: float = 0, date_to: float = 
     params = []
     if search:
         conditions.append("(deleted_by_login LIKE %s OR creator_login LIKE %s OR path LIKE %s)")
-        s = f"%{search}%"
+        s = f"%{_escape_like(search)}%"
         params.extend([s, s, s])
     if path:
         conditions.append("path LIKE %s")
-        params.append(f"%{path}%")
+        params.append(f"%{_escape_like(path)}%")
     if date_from:
         conditions.append("deleted_at >= %s")
         params.append(date_from)

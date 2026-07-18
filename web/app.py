@@ -498,6 +498,7 @@ DEFAULT_LIMITS = {
     "gpu_poll_interval_ms": 5000,
     "gpu_cache_ttl_ms": 5000,
     "gc_interval_hours": 0.5,
+    "backup_interval_hours": 0.5,
     "gc_orphan_scan": 1,
     "startup_orphan_scan": 1,
     "gc_clean_empty_dirs": 1,
@@ -521,7 +522,10 @@ def _load_limits() -> Dict[str, Any]:
                         if isinstance(v, list):
                             merged[k] = v
                     elif isinstance(v, (int, float)) and v >= 0:
-                        merged[k] = int(v)
+                        if isinstance(DEFAULT_LIMITS[k], float):
+                            merged[k] = float(v)
+                        else:
+                            merged[k] = int(v)
                 return merged
         except Exception:
             pass
@@ -1278,6 +1282,20 @@ async def _maintenance_middleware(request: Request, call_next):
     path = request.url.path
     if path.startswith("/admin") or path.startswith("/api/admin") or path.startswith("/static"):
         return await call_next(request)
+    # 维护模式下管理员不受限制：允许访问生图页、普通 API 和 WebSocket。
+    try:
+        session_token = request.cookies.get("session", "")
+        if session_token:
+            sessions = _load_sessions()
+            sess = sessions.get(_session_hash(session_token), {})
+            github_id = str(sess.get("github_id", ""))
+            if github_id:
+                users = _load_users()
+                user = users.get(github_id, {})
+                if user.get("role") == "admin":
+                    return await call_next(request)
+    except Exception:
+        pass
     # 维护模式下允许管理员通过 WebSocket 生图
     if path.startswith("/ws/"):
         try:
@@ -1904,15 +1922,15 @@ async def _backup_data_files():
                           key=lambda d: d.name, reverse=True)
         for old in existing[5:]:
             _shutil.rmtree(old, ignore_errors=True)
-        # MySQL 热备（mysqldump --single-transaction 在线不锁表）
+        # MySQL 热备（pymysql 直连导出）
+        mysql_ok = False
         try:
             await asyncio.to_thread(db.backup_database, str(backup_subdir / "natureDrawImage.sql"))
-            copied += 1
-            print(f'[backup] MySQL 数据库已备份 (mysqldump)')
+            mysql_ok = True
+            print(f'[backup] MySQL 数据库已备份')
         except Exception as bak_e:
             print(f"[backup] MySQL 备份失败: {type(bak_e).__name__}: {bak_e}")
-        if copied:
-            print(f"[backup] 已备份 {copied} 个文件到 {backup_subdir.name}")
+        print(f"[backup] 配置文件备份 {copied} 个" + (f"，MySQL 已导出" if mysql_ok else "，MySQL 导出失败"))
     except Exception as e:
         print(f"[backup] 备份失败: {type(e).__name__}: {e}")
 
@@ -1934,9 +1952,16 @@ async def _gc_loop():
 
 
 async def _backup_loop():
-    """后台备份循环，30 分钟一次，独立于 GC。"""
+    """后台备份循环，可配置间隔（默认 0.5 小时=30 分钟），独立于 GC。"""
     while True:
-        await asyncio.sleep(1800)
+        try:
+            interval_h = float(_limits.get("backup_interval_hours", 0.5))
+        except (ValueError, TypeError):
+            interval_h = 0.5
+        if interval_h <= 0:
+            await asyncio.sleep(1800)
+            continue
+        await asyncio.sleep(interval_h * 3600)
         try:
             await _backup_data_files()
         except Exception:
@@ -2084,10 +2109,40 @@ async def _cleanup_orphan_files_at_startup():
         print(f"[startup] 清理孤儿缩略图: {result['thumbs_deleted']} 个")
 
 
+def _backup_orphan_original(src: Path, rel: str, backup_root: Path) -> Path:
+    """安全备份孤儿原图：复制到 .tmp，校验完整后再转正式备份文件。"""
+    import shutil as _shutil_orphan
+    import uuid as _uuid_orphan
+
+    dst = backup_root / Path(rel)
+    try:
+        dst.resolve().relative_to(backup_root.resolve())
+    except Exception:
+        raise RuntimeError("backup path escapes backup root")
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp = dst.with_name(dst.name + f".{os.getpid()}.{_uuid_orphan.uuid4().hex}.tmp")
+    try:
+        before_size = src.stat().st_size
+        _shutil_orphan.copy2(str(src), str(tmp))
+        after_src_size = src.stat().st_size
+        tmp_size = tmp.stat().st_size
+        if before_size != after_src_size or tmp_size != before_size:
+            raise RuntimeError(f"backup size mismatch: src_before={before_size}, src_after={after_src_size}, tmp={tmp_size}")
+        tmp.replace(dst)
+        return dst
+    except Exception:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+        raise
+
+
 def _do_orphan_scan(prefix: str = "orphan") -> dict:
     """扫描并清理无 gen_logs 关联的原图和缩略图，返回详细结果。
     新文件保护：5 分钟内落盘的文件一律跳过，避开「生成→缩略图→写日志」竞态误删。"""
-    import shutil as _shutil_orphan
     _now_ts = _time_module.time()
     _SAFE_WINDOW = 300  # 秒：5 分钟内的新文件不当孤儿
     gen_log_paths = db.get_all_gen_log_file_paths()
@@ -2114,19 +2169,16 @@ def _do_orphan_scan(prefix: str = "orphan") -> dict:
                         continue
                 except Exception:
                     pass
-                backup_ok = False
                 try:
-                    obackup_dir.mkdir(parents=True, exist_ok=True)
-                    dst = obackup_dir / rel.replace("/", "_")
-                    _shutil_orphan.copy2(str(orig), str(dst))
-                    backup_ok = True
+                    backup_path = _backup_orphan_original(orig, rel, obackup_dir)
                 except Exception as e:
-                    pass
+                    originals_failed.append({"path": rel, "reason": f"backup_failed: {type(e).__name__}: {e}"})
+                    continue
                 try:
                     orig.unlink()
-                    originals_deleted.append({"path": rel, "backed_up": backup_ok})
+                    originals_deleted.append({"path": rel, "backed_up": True, "backup_path": str(backup_path)})
                 except Exception as e:
-                    originals_failed.append({"path": rel, "reason": str(e)})
+                    originals_failed.append({"path": rel, "reason": f"delete_failed_after_backup: {type(e).__name__}: {e}"})
     # 缩略图
     thumbs_deleted = 0
     if THUMB_CACHE_DIR.exists():
@@ -3802,6 +3854,8 @@ async def api_whoami(request: Request):
             "cooldown_total": int(cooldown_sec),
             "unread_notifications": len(db.get_unread_notifications(str(user.get("github_id", "")))),
             "my_queue_count": sum(1 for qi in _task_queue if str(qi.get("github_id", "")) == str(user.get("github_id", ""))),
+            "maintenance_enabled": bool(_maintenance.get("enabled", False)),
+            "maintenance_message": _maintenance.get("message", ""),
         }
     return {"login": None, "is_admin": False, "logged_in": False, "access_granted": False}
 
@@ -4261,7 +4315,17 @@ async def api_style_thumbnail(request: Request, name: str):
 # ============== ComfyUI output 浏览（只读） ==============
 
 OUTPUT_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
-_DL_SECRET_KEY = (os.getenv("DL_SECRET_KEY") or hashlib.sha256(b"natureDrawImage_dl_2026").hexdigest())[:32]
+_DL_SECRET_KEY = os.getenv("DL_SECRET_KEY")
+if not _DL_SECRET_KEY:
+    import secrets as _secrets
+    _DL_SECRET_KEY = _secrets.token_hex(16)
+    print("=" * 68)
+    print("  ⚠️  WARNING: DL_SECRET_KEY 环境变量未设置！")
+    print("  签名下载链接使用临时随机密钥（服务重启后所有旧链接将失效）")
+    print("  请在 .env 或环境变量中设置 DL_SECRET_KEY")
+    print("=" * 68)
+else:
+    _DL_SECRET_KEY = _DL_SECRET_KEY[:32]
 
 
 def _is_safe_subpath(fp: Path, parent: Path) -> bool:

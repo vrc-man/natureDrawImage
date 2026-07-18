@@ -890,7 +890,7 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         params = [date_from, date_to]
         if search.strip():
             where.append("recipient LIKE %s")
-            params.append("%" + search.strip() + "%")
+            params.append("%" + search.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
         w = " AND ".join(where)
         cnt = get_db().execute(f"SELECT COUNT(*) as c FROM email_logs WHERE {w}", params).fetchone()["c"]
         limit = max(1, min(limit, 200))
@@ -1054,7 +1054,8 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         if mail_ok:
             return {"ok": True, "message": "验证邮件已重新发送"}
         else:
-            return {"ok": True, "message": "发送拥堵，请稍后重试。手动验证: " + vu}
+            print(f"[admin] 重发验证邮件失败 (SMTP): {email}")
+            return {"ok": True, "message": "发送拥堵，请稍后重试。如持续失败请联系技术支持"}
 
 
     @app.post("/api/admin/email-users/reset-totp")
@@ -1107,7 +1108,8 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
             _email_html("密码重置", "<p style='font-size:14px;line-height:1.8'>管理员为您生成了密码重置链接。</p><div style='text-align:center;margin:20px 0'><a href='" + link + "' style='display:inline-block;padding:12px 32px;background:linear-gradient(135deg,#f472b6,#fb7185);color:#fff;text-decoration:none;border-radius:12px;font-weight:600'>重置密码</a></div><p style='font-size:12px;color:#9ca3af'>30分钟内有效，非本人操作请忽略。</p>"))
         if mail_ok:
             return {"ok": True, "message": "重置链接已发送到用户邮箱，有效期30分钟"}
-        return {"ok": True, "link": link, "message": "邮件发送失败，可手动将下方链接发送给用户，有效期30分钟"}
+        print(f"[admin] 重置密码邮件发送失败 (SMTP): {email}")
+        return {"ok": True, "message": "邮件发送失败，请检查 SMTP 配置后重试"}
 
 
     @app.post("/api/admin/email-users/send-custom-email")
