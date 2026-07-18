@@ -365,7 +365,7 @@ onUnmounted(() => {
         </div>
       </div>
       <div v-if="orphanScanDetails.originals_failed?.length">
-        <div class="font-semibold text-red-600 mb-1">✗ 删除失败 ({{ orphanScanDetails.originals_failed.length }}):</div>
+        <div class="font-semibold text-red-600 mb-1">✗ 备份/删除失败 ({{ orphanScanDetails.originals_failed.length }}):</div>
         <div v-for="f in orphanScanDetails.originals_failed" :key="f.path" class="text-[11px] text-red-600 pl-2">
           <span class="text-red-500">✗</span> {{ f.path }} — {{ f.reason }}
         </div>

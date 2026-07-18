@@ -13,6 +13,8 @@ export interface UserInfo {
   key_info?: any
   unread_notifications?: number
   my_queue_count?: number
+  maintenance_enabled?: boolean
+  maintenance_message?: string
 }
 
 export const useUserStore = defineStore('user', {

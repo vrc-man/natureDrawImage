@@ -3,43 +3,86 @@ import { ref } from 'vue'
 
 const props = defineProps<{ onLog?: (msg: string) => void }>()
 
-interface AccImg { name: string; previewUrl: string; progress: number; done: boolean }
+interface AccImg {
+  id: string
+  name: string
+  previewUrl: string
+  progress: number
+  done: boolean
+  error?: string
+  upload?: Promise<void>
+  xhr?: XMLHttpRequest
+}
 const images = ref<AccImg[]>([])
 const MAX_SHORT = 1440, MAX_LONG = 2560, MAX_BYTES = 3000 * 1024
-let _uploadPromises: Promise<void>[] = []
+
+function makeId() {
+  return globalThis.crypto?.randomUUID?.() || `img_${Date.now()}_${Math.random().toString(16).slice(2)}`
+}
+
+function isCurrent(item: AccImg) {
+  return images.value.includes(item)
+}
 
 function addImage(file: File) {
   if (images.value.length >= 3) return
   const previewUrl = URL.createObjectURL(file)
-  const idx = images.value.length
-  images.value.push({ name: '', previewUrl, progress: 0, done: false })
-  const p = new Promise<void>(async (resolve, reject) => {
+  const item: AccImg = { id: makeId(), name: '', previewUrl, progress: 0, done: false }
+  images.value.push(item)
+
+  item.upload = new Promise<void>(async (resolve) => {
+    const fail = (msg: string) => {
+      if (isCurrent(item)) {
+        item.error = msg
+        item.done = false
+      }
+      resolve()
+    }
+
     try {
       const blob = await compressImage(file)
+      if (!isCurrent(item)) { resolve(); return }
+
       const fd = new FormData()
-      fd.append('image1', blob, file.name || 'img' + (idx + 1) + '.jpg')
+      fd.append('image1', blob, file.name || 'img.jpg')
       const xhr = new XMLHttpRequest()
+      item.xhr = xhr
       xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) images.value[idx].progress = Math.round(e.loaded / e.total * 99)
+        if (e.lengthComputable && isCurrent(item)) item.progress = Math.round(e.loaded / e.total * 99)
       }
       xhr.onload = () => {
+        if (!isCurrent(item)) { resolve(); return }
+        item.xhr = undefined
         if (xhr.status >= 200 && xhr.status < 300) {
-          try { const d = JSON.parse(xhr.responseText); images.value[idx].name = d.image1_name || ''; images.value[idx].progress = 100; images.value[idx].done = true } catch (er) { reject(er) }
-        } else { reject(new Error('上传失败')) }
-        resolve()
+          try {
+            const d = JSON.parse(xhr.responseText)
+            item.name = d.image1_name || ''
+            item.progress = 100
+            item.done = true
+            item.error = ''
+            resolve()
+          } catch {
+            fail('上传响应解析失败')
+          }
+        } else {
+          let msg = '上传失败'
+          try {
+            const d = JSON.parse(xhr.responseText)
+            msg = d.detail || d.error || msg
+          } catch {}
+          fail(msg)
+        }
       }
-      xhr.onerror = () => reject(new Error('上传失败'))
+      xhr.onerror = () => { item.xhr = undefined; fail('上传失败，请检查网络或反向代理连接') }
+      xhr.onabort = () => { item.xhr = undefined; resolve() }
       xhr.open('POST', '/api/img2img/upload')
-      xhr.timeout = 45000  // 45 秒超时，给后端转发 ComfyUI 留足够余量
-      xhr.ontimeout = () => reject(new Error('上传超时'))
+      xhr.timeout = 180000  // 3 分钟超时：慢速网络上传 + 后端转发 ComfyUI 都计入这段时间
+      xhr.ontimeout = () => { item.xhr = undefined; fail('上传超时，请换更小图片或稍后重试') }
       xhr.send(fd)
-    } catch (er) {
-      images.value.splice(idx, 1)
-      URL.revokeObjectURL(previewUrl)
-      reject(er)
+    } catch (er: any) {
+      fail(er?.message || '图片处理失败')
     }
   })
-  _uploadPromises.push(p)
 }
 
 function compressImage(file: File): Promise<Blob> {
@@ -91,11 +134,18 @@ function compressImage(file: File): Promise<Blob> {
 
 function removeImage(idx: number) {
   const item = images.value[idx]
-  if (item) { URL.revokeObjectURL(item.previewUrl); images.value.splice(idx, 1) }
+  if (item) {
+    item.xhr?.abort()
+    URL.revokeObjectURL(item.previewUrl)
+    images.value.splice(idx, 1)
+  }
 }
 function clearAll() {
-  images.value.forEach(item => URL.revokeObjectURL(item.previewUrl))
-  images.value = []; _uploadPromises = []
+  images.value.forEach(item => {
+    item.xhr?.abort()
+    URL.revokeObjectURL(item.previewUrl)
+  })
+  images.value = []
 }
 function pickFile() {
   const inp = document.createElement('input')
@@ -105,9 +155,15 @@ function pickFile() {
   }
   inp.click()
 }
-async function waitAllUploads() { await Promise.all(_uploadPromises) }
-const getImageNames = () => images.value.map(i => i.name)
-const hasPendingUploads = () => images.value.some(i => !i.done)
+async function waitAllUploads() {
+  const current = [...images.value]
+  await Promise.all(current.map(i => i.upload).filter(Boolean) as Promise<void>[])
+  const failed = images.value.find(i => i.error)
+  if (failed) throw new Error(failed.error || '参考图上传失败')
+  if (images.value.some(i => !i.done || !i.name)) throw new Error('参考图上传未完成')
+}
+const getImageNames = () => images.value.filter(i => i.done && i.name).map(i => i.name)
+const hasPendingUploads = () => images.value.some(i => !i.done && !i.error)
 defineExpose({ waitAllUploads, getImageNames, clearAll, hasPendingUploads })
 </script>
 
@@ -117,11 +173,12 @@ defineExpose({ waitAllUploads, getImageNames, clearAll, hasPendingUploads })
       📤 点击上传参考图（支持多张）
     </div>
     <div v-else id="img-preview" class="flex flex-wrap gap-2">
-      <div v-for="(img, i) in images" :key="i" class="relative" style="width:128px;height:128px">
+      <div v-for="(img, i) in images" :key="img.id" class="relative" style="width:128px;height:128px">
         <img :src="img.previewUrl" class="w-full h-full object-cover rounded-xl border border-pink-100" style="width:128px;height:128px" />
         <button @click="removeImage(i)" class="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-red-500/80 text-white text-[10px] leading-none hover:bg-red-700 cursor-pointer border-0">✕</button>
+        <div v-if="img.error" class="absolute inset-x-1 bottom-6 rounded bg-red-500/80 px-1 py-0.5 text-center text-[10px] leading-tight text-white">上传失败</div>
         <div class="upload-progress">
-          <div class="upload-progress-bar" :class="{ done: img.done }" :style="{ width: img.progress + '%' }"></div>
+          <div class="upload-progress-bar" :class="{ done: img.done, error: img.error }" :style="{ width: img.progress + '%' }"></div>
         </div>
       </div>
       <div class="border-2 border-dashed border-pink-200 rounded-xl flex items-center justify-center text-lg text-gray-300 cursor-pointer hover:bg-pink-50/50" style="width:128px;height:128px" @click="pickFile">+</div>

@@ -21,6 +21,7 @@ const userStore = useUserStore()
 const sound = useSound()
 const { lbOpen, lbState, current, open: openLb, close: closeLb, prev: prevLb, next: nextLb } = useLightbox()
 const needsAccessKey = computed(() => !userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn)
+const adminMaintenanceActive = computed(() => userStore.isAdmin && !!userStore.currentUser?.maintenance_enabled)
 
 // ===== Tab =====
 type TabKey = 'generate'|'gallery'|'featured'|'myworks'|'more'
@@ -127,7 +128,7 @@ let activeWS: WebSocket | null = null
 let statusWS: WebSocket | null = null
 let pollTimer: ReturnType<typeof setTimeout> | null = null
 let gpuTimer: ReturnType<typeof setInterval> | null = null
-let notifyTimer: ReturnType<typeof setInterval> | null = null
+let notifyTimer: ReturnType<typeof setTimeout> | null = null
 let submitGuardTimer: ReturnType<typeof setTimeout> | null = null
 let authedServicesStarted = false
 
@@ -178,6 +179,8 @@ const uiZoom = ref(parseFloat(localStorage.getItem('uiZoom') || '1'))
 const compactLayout = ref(localStorage.getItem('compactLayout') === 'true')
 const pickerThumbPercent = ref(parseInt(localStorage.getItem('pickerThumbPercent') || '25'))
 const cardBgOpacity = ref(parseInt(localStorage.getItem('cardBgOpacity') || '75'))
+const savedMyQueueIdlePollSec = parseInt(localStorage.getItem('myQueueIdlePollSec') || '10')
+const myQueueIdlePollSec = ref(Number.isFinite(savedMyQueueIdlePollSec) ? Math.min(60, Math.max(2, savedMyQueueIdlePollSec)) : 10)
 const pickerThumbSize = computed(() => Math.round(300 * pickerThumbPercent.value / 100))
 
 function setUiZoom(v: number) {
@@ -203,6 +206,12 @@ function setCardBgOpacity(v: number) {
   cardBgOpacity.value = next
   localStorage.setItem('cardBgOpacity', String(next))
   document.documentElement.style.setProperty('--home-card-bg-opacity', String(next / 100))
+}
+function setMyQueueIdlePollSec(v: number) {
+  const next = Math.min(60, Math.max(2, Number.isFinite(v) ? Math.round(v) : 10))
+  myQueueIdlePollSec.value = next
+  localStorage.setItem('myQueueIdlePollSec', String(next))
+  if (_queuePollingActive && !_lastHasMyQueueTask) _scheduleNextQueuePoll(next * 1000)
 }
 function setHomeBgImageScale(v: number) {
   const next = Math.min(300, Math.max(10, Number.isFinite(v) ? v : 100))
@@ -325,7 +334,7 @@ onUnmounted(() => {
   stopPolling()
   if (statusWS) try { statusWS.close() } catch {}
   if (gpuTimer) clearInterval(gpuTimer)
-  if (notifyTimer) clearInterval(notifyTimer)
+  if (notifyTimer) clearTimeout(notifyTimer)
   if (submitGuardTimer) clearTimeout(submitGuardTimer)
   if (cooldownTimer) clearInterval(cooldownTimer)
 })
@@ -467,8 +476,9 @@ let _doneNotified = false  // WS done/error 已通知过，防止 pollMyQueue �
 let _lastHasMyQueueTask = false
 let _queuePollingActive = false
 function _queuePollDelay() {
-  if (document.hidden) return _lastHasMyQueueTask ? 5000 : 15000
-  return _lastHasMyQueueTask ? 1000 : 3000
+  const idle = myQueueIdlePollSec.value * 1000
+  if (document.hidden) return _lastHasMyQueueTask ? 8000 : Math.max(30000, idle)
+  return _lastHasMyQueueTask ? 1500 : idle
 }
 function _clearQueuePollTimer() {
   if (pollTimer) { clearTimeout(pollTimer); pollTimer = null }
@@ -584,7 +594,16 @@ function startGPUPoll() {
   const interval = parseInt(localStorage.getItem('gpuInterval') || '15') * 1000
   gpuTimer = setInterval(() => { api('GET', '/api/gpu').catch(() => {}) }, interval)
 }
-function startNotifyPoll() { notifyTimer = setInterval(pollNotifications, 2000) }
+function startNotifyPoll() {
+  const schedule = (delay = notifyQueueCount.value > 0 || notifyUnreadCount.value > 0 ? 5000 : 30000) => {
+    if (notifyTimer) clearTimeout(notifyTimer)
+    notifyTimer = setTimeout(async () => {
+      await pollNotifications()
+      schedule(document.hidden ? 60000 : (notifyQueueCount.value > 0 || notifyUnreadCount.value > 0 ? 5000 : 30000))
+    }, delay)
+  }
+  schedule(0)
+}
 
 function connectStatusWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -1083,8 +1102,13 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <!-- ============ GENERATE ============ -->
         <div v-if="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
           <div class="max-w-5xl mx-auto space-y-6">
+            <div v-if="adminMaintenanceActive" class="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-xs text-amber-700 shadow-sm">
+              🛠️ 维护模式已开启：当前仅管理员可使用生图与管理功能，普通用户会看到维护页。
+              <span v-if="userStore.currentUser?.maintenance_message" class="ml-1 text-amber-600">{{ userStore.currentUser.maintenance_message }}</span>
+            </div>
+
             <!-- Access Key (only for non-admin, no key, logged-in) -->
-            <div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-8 text-center max-w-md mx-auto">
+            <div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-8 text-center max-w-md mx-auto">
               <p class="text-4xl mb-4">🔑</p>
               <p class="text-sm text-gray-500 mb-4">{{ keyExpired ? '您的密钥已过期，请输入新密钥或联系管理员获取' : '需要使用管理员分配的访问密钥才能使用生图服务' }}</p>
               <input v-model="accessKeyInput" @keydown.enter="submitKey" type="text" placeholder="输入访问密钥" class="w-full border border-pink-200 rounded-xl px-4 py-2.5 text-sm text-center mb-3 outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border" />
@@ -1103,22 +1127,22 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
               <!-- Mode switch -->
               <div class="flex gap-2">
-                <button class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all cursor-pointer border-0 active:scale-[0.98]" :class="mode==='txt2img'?'bg-gradient-to-r from-pink-400 to-rose-400 text-white shadow-lg shadow-pink-300/30':'bg-white/70 text-gray-400 border-2 border-pink-100 hover:border-pink-300 hover:text-gray-600'" @click="setMode('txt2img')">📝 文生图</button>
-                <button class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all cursor-pointer border-0 active:scale-[0.98]" :class="mode==='img2img'?'bg-gradient-to-r from-pink-400 to-rose-400 text-white shadow-lg shadow-pink-300/30':'bg-white/70 text-gray-400 border-2 border-pink-100 hover:border-pink-300 hover:text-gray-600'" @click="setMode('img2img')">🖼️ 图生图</button>
+                <button class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all cursor-pointer border-0 active:scale-[0.98]" :class="mode==='txt2img'?'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-lg shadow-pink-300/40':'bg-white/90 text-pink-700 border-2 border-pink-200 shadow-sm hover:bg-pink-50 hover:border-pink-300 hover:text-pink-800'" @click="setMode('txt2img')">📝 文生图</button>
+                <button class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all cursor-pointer border-0 active:scale-[0.98]" :class="mode==='img2img'?'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-lg shadow-pink-300/40':'bg-white/90 text-pink-700 border-2 border-pink-200 shadow-sm hover:bg-pink-50 hover:border-pink-300 hover:text-pink-800'" @click="setMode('img2img')">🖼️ 图生图</button>
               </div>
 
               <!-- Workflow + Char/Style side by side -->
               <div class="flex flex-col sm:flex-row gap-4 sm:gap-6">
-                <div class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+                <div class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
                   <WorkflowPicker :key="mode + ':' + currentWorkflowPath" :mode="mode" @select="onWorkflowSelect" />
                 </div>
-                <div v-if="mode!=='img2img'" class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+                <div v-if="mode!=='img2img'" class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
                   <CharStylePicker />
                 </div>
               </div>
 
               <!-- Prompt form card -->
-              <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 space-y-5">
+              <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6 space-y-5">
                 <!-- Prompt grid -->
                 <div class="prompt-grid">
                   <div>
@@ -1173,7 +1197,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                   <div class="flex flex-wrap gap-1.5" id="res-presets">
                     <button v-for="r in resolutions" :key="r.w+'-'+r.h" @click="width=r.w;height=r.h" :title="r.w+'×'+r.h"
                       class="text-xs px-2 py-1 rounded-lg border transition-all cursor-pointer"
-                      :class="width===r.w&&height===r.h?'bg-pink-500 text-white border-pink-500':'bg-white text-gray-500 border-pink-100 hover:border-pink-300'">
+                      :class="width===r.w&&height===r.h?'bg-pink-500 text-white border-pink-500':'bg-white text-gray-500 border-pink-200 hover:border-pink-300'">
                       {{ r.label || r.w+'×'+r.h }}
                     </button>
                   </div>
@@ -1200,32 +1224,32 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                   </button>
                   <button @click="resetRunUiState"
                     title="仅恢复前端按钮状态，不取消后端任务"
-                    class="shrink-0 px-4 py-3 rounded-2xl border border-pink-100 bg-white/80 text-xs text-gray-500 hover:text-pink-500 hover:border-pink-200 transition-all active:scale-[0.98]">
+                    class="shrink-0 px-4 py-3 rounded-2xl border border-pink-200 bg-white/80 text-xs text-gray-500 hover:text-pink-500 hover:border-pink-200 transition-all active:scale-[0.98]">
                     恢复
                   </button>
                 </div>
               </div>
 
               <!-- Progress card -->
-              <div v-if="progressText || _isGenerating || _watchingMode || llmText" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 space-y-3">
+              <div v-if="progressText || _isGenerating || _watchingMode || llmText" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6 space-y-3">
                 <div v-if="queueStatus" id="queue-status" class="text-sm text-amber-600 text-center font-semibold">{{ queueStatus }}</div>
                 <div v-if="progressPct > 0" class="w-full bg-pink-100 rounded-full h-2.5 overflow-hidden">
                   <div id="progress-bar" class="h-2.5 rounded-full" :style="{width:progressPct+'%'}"></div>
                 </div>
                 <div id="progress-text" class="text-sm text-gray-500 text-center">{{ progressText }}</div>
-                <div v-if="llmText" class="text-xs bg-rose-50 border border-pink-100 p-3 rounded-xl max-h-36 overflow-y-auto whitespace-pre-wrap text-gray-700 leading-relaxed">{{ llmText }}</div>
+                <div v-if="llmText" class="text-xs bg-rose-50 border border-pink-200 p-3 rounded-xl max-h-36 overflow-y-auto whitespace-pre-wrap text-gray-700 leading-relaxed">{{ llmText }}</div>
               </div>
 
               <!-- Result images card -->
-              <div v-if="resultImages.length" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+              <div v-if="resultImages.length" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
                 <div class="text-base font-bold text-gray-700 mb-3">🖼️ 结果</div>
                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 justify-items-center">
-                  <img v-for="(img, i) in resultImages" :key="i" :src="img.url" class="w-full rounded-xl shadow-sm border border-pink-100 cursor-pointer" @click="openLb(resultImages.map(r=>({url:r.url,title:r.filename,filename:r.filename,path:r.path})), i)" />
+                  <img v-for="(img, i) in resultImages" :key="i" :src="img.url" class="w-full rounded-xl shadow-sm border border-pink-200 cursor-pointer" @click="openLb(resultImages.map(r=>({url:r.url,title:r.filename,filename:r.filename,path:r.path})), i)" />
                 </div>
               </div>
 
               <!-- My Queue card -->
-              <div v-if="myQueueItems.length" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+              <div v-if="myQueueItems.length" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
                 <div class="flex items-center justify-between mb-1">
                   <span id="my-queue-status" class="text-xs text-gray-400">{{ myQueueItems.some((i:any)=>i.status==='running') ? '⚡ 正在生成' : myQueueItems.some((i:any)=>i.status==='waiting') ? '⏳ 排队中' : '✅ 空闲' }}</span>
                 </div>
@@ -1249,9 +1273,9 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <!-- ============ GALLERY ============ -->
         <div v-if="activeTab === 'gallery'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><GalleryGrid ref="galleryRef" /><div class="h-20"></div></div></div>
         <!-- ============ FEATURED ============ -->
-        <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-8 text-center text-sm text-gray-500">需要访问密钥后查看精选</div><FeaturedGrid v-else /><div class="h-20"></div></div></div>
+        <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-8 text-center text-sm text-gray-500">需要访问密钥后查看精选</div><FeaturedGrid v-else /><div class="h-20"></div></div></div>
         <!-- ============ MY WORKS ============ -->
-        <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-8 text-center text-sm text-gray-500">需要访问密钥后查看作品</div><MyWorksGrid v-else ref="myworksRef" /><div class="h-20"></div></div></div>
+        <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-8 text-center text-sm text-gray-500">需要访问密钥后查看作品</div><MyWorksGrid v-else ref="myworksRef" /><div class="h-20"></div></div></div>
         <!-- ============ MORE ============ -->
         <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-6">
           <h1 class="text-xl sm:text-2xl font-bold text-gray-800">⚙️ 更多</h1>
@@ -1263,7 +1287,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
           <!-- GPU -->
           <GPUBar />
           <!-- 常用链接 -->
-          <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+          <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
             <h2 class="text-base font-semibold mb-3 text-gray-700">🔗 常用链接</h2>
             <div class="flex flex-col gap-2 text-sm">
               <a href="https://2x.nz/posts/ai-wife" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">📖 新手教程：从零开始造老婆</a>
@@ -1272,7 +1296,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
             </div>
           </div>
           <!-- 免责声明 -->
-          <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+          <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
             <h2 class="text-base font-semibold mb-3 text-gray-700">免责声明</h2>
             <div class="text-sm text-gray-600 leading-relaxed space-y-2">
               <p>使用本站服务即表示您同意：</p>
@@ -1311,7 +1335,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
       <!-- ============ GEN NOTICE MODAL ============ -->
       <Teleport to="body">
         <div v-if="showGenNoticeModal" class="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4" @click.self="cancelGenNotice">
-          <div class="bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 max-w-md w-full p-5 max-h-[90vh] overflow-y-auto">
+          <div class="bg-white/95 backdrop-blur-xl border border-pink-200 rounded-3xl shadow-2xl shadow-pink-100/40 max-w-md w-full p-5 max-h-[90vh] overflow-y-auto">
             <h3 class="text-lg font-bold mb-3 text-red-500">⚠️ 生图前必读公告</h3>
             <div class="text-sm text-gray-700 leading-relaxed space-y-2 mb-4">
               <p>您了解并已知晓自己即将进行生图操作，<strong>您的 IP 将会被记录</strong>。</p>
@@ -1333,10 +1357,10 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
       <!-- ============ SETTINGS MODAL ============ -->
       <Teleport to="body">
         <div v-if="settingsOpen" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8">
-          <div class="mx-4 w-full sm:max-w-2xl bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 max-h-[85vh] overflow-y-auto p-5" @click.stop>
+          <div class="mx-4 w-full sm:max-w-2xl bg-white/95 backdrop-blur-xl border border-pink-200 rounded-3xl shadow-2xl shadow-pink-100/40 max-h-[85vh] overflow-y-auto p-5" @click.stop>
             <!-- === MAIN SETTINGS === -->
             <template v-if="settingsView === 'main'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
                 <div class="flex items-center gap-3 min-w-0">
                   <div class="shrink-0">
                     <img v-if="userStore.currentUser?.avatar_url" :src="userStore.currentUser.avatar_url" class="w-10 h-10 rounded-full" />
@@ -1373,6 +1397,18 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                     <span class="shrink-0 w-8 text-right">{{ Math.round(soundVol*100) }}%</span>
                   </div>
                 </div>
+                <div class="px-3 py-2.5 rounded-xl hover:bg-pink-50 transition-all">
+                  <div class="flex items-center justify-between text-sm text-gray-600 mb-1">
+                    <span>⏱️ 空闲任务轮询</span>
+                    <span class="text-xs text-gray-500">{{ myQueueIdlePollSec }} 秒</span>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    <input aria-label="空闲任务轮询间隔" type="range" min="2" max="60" step="1" :value="myQueueIdlePollSec" @input="setMyQueueIdlePollSec(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                    <input aria-label="空闲任务轮询秒数" type="number" min="2" max="60" step="1" :value="myQueueIdlePollSec" @change="setMyQueueIdlePollSec(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                    <span class="text-xs text-gray-500 shrink-0">秒</span>
+                  </div>
+                  <div class="text-[11px] text-gray-400 mt-1">仅当前浏览器生效；有任务时仍会自动加快刷新。</div>
+                </div>
                 <button @click="settingsView='appearance'" class="w-full text-left flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-gray-600 transition-all cursor-pointer border-0 bg-transparent">
                   <span class="min-w-0">
                     <span class="block">🎛️ 显示与外观</span>
@@ -1388,7 +1424,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
             <!-- === APPEARANCE SETTINGS === -->
             <template v-if="settingsView === 'appearance'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
                 <div class="flex items-center gap-2 min-w-0">
                   <button @click="settingsView='main'" aria-label="返回设置" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent shrink-0">&larr;</button>
                   <h3 class="text-base font-bold text-gray-700 truncate">🎛️ 显示与外观</h3>
@@ -1400,18 +1436,18 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
                 <section class="space-y-2">
                   <div class="text-xs font-semibold text-gray-500 px-1">页面显示</div>
-                  <div class="px-3 py-3 rounded-2xl border border-pink-100 bg-white/60">
+                  <div class="px-3 py-3 rounded-2xl border border-pink-200 bg-white/60">
                     <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
                       <span>🔍 页面缩放</span>
                       <span>{{ Math.round(uiZoom * 100) }}%</span>
                     </div>
                     <div class="flex items-center gap-2">
                       <input aria-label="页面缩放" type="range" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @input="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
-                      <input aria-label="页面缩放数值" type="number" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @change="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                      <input aria-label="页面缩放数值" type="number" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @change="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
                       <span class="text-xs text-gray-500 shrink-0">%</span>
                     </div>
                   </div>
-                  <label class="flex items-center justify-between px-3 py-3 rounded-2xl border border-pink-100 bg-white/60 hover:bg-pink-50 cursor-pointer transition-all select-none">
+                  <label class="flex items-center justify-between px-3 py-3 rounded-2xl border border-pink-200 bg-white/60 hover:bg-pink-50 cursor-pointer transition-all select-none">
                     <span>
                       <span class="block text-sm text-gray-600">📏 紧凑布局</span>
                       <span class="block text-xs text-gray-500 mt-0.5">减少卡片间距和输入区域留白</span>
@@ -1422,14 +1458,14 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
                 <section class="space-y-2">
                   <div class="text-xs font-semibold text-gray-500 px-1">内容选择器</div>
-                  <div class="px-3 py-3 rounded-2xl border border-pink-100 bg-white/60">
+                  <div class="px-3 py-3 rounded-2xl border border-pink-200 bg-white/60">
                     <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
                       <span>🖼️ 工作流缩略图大小</span>
                       <span>{{ pickerThumbPercent }}% · {{ pickerThumbSize }}px</span>
                     </div>
                     <div class="flex items-center gap-2">
                       <input aria-label="工作流缩略图大小" type="range" min="20" max="100" step="5" :value="pickerThumbPercent" @input="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
-                      <input aria-label="工作流缩略图大小数值" type="number" min="20" max="100" step="5" :value="pickerThumbPercent" @change="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                      <input aria-label="工作流缩略图大小数值" type="number" min="20" max="100" step="5" :value="pickerThumbPercent" @change="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
                       <span class="text-xs text-gray-500 shrink-0">%</span>
                     </div>
                   </div>
@@ -1437,20 +1473,20 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
                 <section class="space-y-2">
                   <div class="text-xs font-semibold text-gray-500 px-1">卡片与背景</div>
-                  <div class="px-3 py-3 rounded-2xl border border-pink-100 bg-white/60">
+                  <div class="px-3 py-3 rounded-2xl border border-pink-200 bg-white/60">
                     <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
                       <span>🪟 卡片背景不透明度</span>
                       <span>{{ cardBgOpacity }}%</span>
                     </div>
                     <div class="flex items-center gap-2">
                       <input aria-label="卡片背景不透明度" type="range" min="40" max="95" step="5" :value="cardBgOpacity" @input="setCardBgOpacity(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
-                      <input aria-label="卡片背景不透明度数值" type="number" min="40" max="95" step="5" :value="cardBgOpacity" @change="setCardBgOpacity(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                      <input aria-label="卡片背景不透明度数值" type="number" min="40" max="95" step="5" :value="cardBgOpacity" @change="setCardBgOpacity(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
                       <span class="text-xs text-gray-500 shrink-0">%</span>
                     </div>
                     <div class="text-[11px] text-gray-500 mt-1">低不透明度更突出背景图；高不透明度提升文字可读性。</div>
                   </div>
 
-                  <div class="px-3 py-3 rounded-2xl border border-pink-100 bg-white/60">
+                  <div class="px-3 py-3 rounded-2xl border border-pink-200 bg-white/60">
                     <div class="flex items-center justify-between text-xs text-gray-500 mb-2 gap-2">
                       <span class="shrink-0">🖼️ 页面背景图片</span>
                       <span class="truncate text-right">{{ homeBgImageName || '未设置' }}</span>
@@ -1474,7 +1510,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                       </div>
                       <div class="flex items-center gap-2">
                         <input aria-label="背景图缩放" type="range" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
-                        <input aria-label="背景图缩放数值" type="number" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                        <input aria-label="背景图缩放数值" type="number" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
                         <span class="text-xs text-gray-500 shrink-0">%</span>
                       </div>
                       <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
@@ -1483,7 +1519,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                       </div>
                       <div class="flex items-center gap-2">
                         <input aria-label="背景水平位置" type="range" min="0" max="100" step="5" :value="homeBgImagePosX" @input="setHomeBgPosX(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
-                        <input aria-label="背景水平位置数值" type="number" min="0" max="100" step="5" :value="homeBgImagePosX" @input="setHomeBgPosX(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                        <input aria-label="背景水平位置数值" type="number" min="0" max="100" step="5" :value="homeBgImagePosX" @input="setHomeBgPosX(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
                         <span class="text-xs text-gray-500 shrink-0">%</span>
                       </div>
                       <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
@@ -1492,7 +1528,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                       </div>
                       <div class="flex items-center gap-2">
                         <input aria-label="背景垂直位置" type="range" min="0" max="100" step="5" :value="homeBgImagePosY" @input="setHomeBgPosY(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
-                        <input aria-label="背景垂直位置数值" type="number" min="0" max="100" step="5" :value="homeBgImagePosY" @input="setHomeBgPosY(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                        <input aria-label="背景垂直位置数值" type="number" min="0" max="100" step="5" :value="homeBgImagePosY" @input="setHomeBgPosY(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
                         <span class="text-xs text-gray-500 shrink-0">%</span>
                       </div>
                     </div>
@@ -1505,7 +1541,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
             <!-- === TOTP SETTINGS === -->
             <template v-if="settingsView === 'totp'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
                 <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
                 <button @click="closeSettings" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
               </div>
@@ -1514,7 +1550,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
             <!-- === PASSWORD CHANGE === -->
             <template v-if="settingsView === 'password'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
                 <div class="flex items-center gap-2">
                   <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
                   <h3 class="text-base font-bold text-gray-700">🔑 更改密码</h3>
