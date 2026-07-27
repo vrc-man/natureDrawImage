@@ -534,7 +534,7 @@ def count_gen_logs_today(tz_offset: float = 0, login: str = "") -> int:
     params: list = [today_start, today_end]
     if login:
         sql += " AND (login LIKE %s OR github_id LIKE %s)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     r = _db().execute(sql, params).fetchone()
     return r["c"] if r else 0
 
@@ -548,7 +548,7 @@ def get_gen_logs_hourly_today(tz_offset: float = 0, login: str = "") -> List[Dic
     params: list = [tz_offset * 3600, today_start, today_end]
     if login:
         sql += " AND (login LIKE %s OR github_id LIKE %s)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     sql += " GROUP BY hour ORDER BY hour"
     rows = _db().execute(sql, params).fetchall()
     return [dict(r) for r in rows]
@@ -562,7 +562,7 @@ def get_gen_logs_daily_7days(tz_offset: float = 0, login: str = "") -> List[Dict
     params: list = [tz_offset * 3600, cutoff, now]
     if login:
         sql += " AND (login LIKE %s OR github_id LIKE %s)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     sql += " GROUP BY day ORDER BY day"
     rows = _db().execute(sql, params).fetchall()
     return [dict(r) for r in rows]
@@ -574,7 +574,7 @@ def count_gen_logs_range(date_from: float, date_to: float, login: str = "") -> i
     params: list = [date_from, date_to]
     if login:
         sql += " AND (login LIKE %s OR github_id LIKE %s)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     r = _db().execute(sql, params).fetchone()
     return r["c"] if r else 0
 
@@ -585,7 +585,7 @@ def get_gen_logs_hourly_range(date_from: float, date_to: float, tz_offset: float
     params: list = [tz_offset * 3600, date_from, date_to]
     if login:
         sql += " AND (login LIKE %s OR github_id LIKE %s)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     sql += " GROUP BY hour ORDER BY hour"
     rows = _db().execute(sql, params).fetchall()
     return [dict(r) for r in rows]
@@ -597,7 +597,7 @@ def get_gen_logs_daily_range(date_from: float, date_to: float, tz_offset: float 
     params: list = [tz_offset * 3600, date_from, date_to]
     if login:
         sql += " AND (login LIKE %s OR github_id LIKE %s)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     sql += " GROUP BY day ORDER BY day"
     rows = _db().execute(sql, params).fetchall()
     return [dict(r) for r in rows]

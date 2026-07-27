@@ -45,6 +45,12 @@ def register_all(app) -> None:
     except Exception as e:
         print(f"[features] gen_stats 加载失败: {type(e).__name__}: {e}")
 
+    try:
+        from .share import router as share_router
+        routers.append(("share", share_router))
+    except Exception as e:
+        print(f"[features] share 加载失败: {type(e).__name__}: {e}")
+
     for name, r in routers:
         try:
             app.include_router(r)

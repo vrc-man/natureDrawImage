@@ -212,7 +212,7 @@ def backup_database(dst_path: str):
                                 elif isinstance(v, bytes):
                                     vals.append(f"X'{v.hex()}'")
                                 else:
-                                    s = str(v).replace("\\", "\\\\").replace("'", "\\'")
+                                    s = str(v).replace("\\", "\\\\").replace("'", "\\'").replace("\n", "\\n").replace("\r", "\\r")
                                     vals.append(f"'{s}'")
                             f.write(f"INSERT INTO `{table}` ({cols_str}) VALUES ({', '.join(vals)});\n")
                         f.write("\n")

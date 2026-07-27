@@ -5,6 +5,11 @@ import { api, fmt } from './useAdminApi'
 const lbOpen = ref(false)
 const lbItems = ref<any[]>([]), lbIndex = ref(0), lbCur = ref<any>(null), lbGhUser = ref(''), lbBanGid = ref('')
 const forkLoading = ref(false)
+const shareOpen = ref(false)
+const shareMaxDownloads = ref(1)
+const shareExpiresHours = ref(24)
+const shareLoading = ref(false)
+const shareResult = ref('')
 const imgLoading = ref(true)
 
 function closeLb() { lbOpen.value = false; document.body.style.overflow = '' }
@@ -79,14 +84,31 @@ async function doFork() {
   }
 }
 
-async function doCopyLink() {
+function openShare() {
   const cur = lbCur.value
   if (!cur?.path) return
+  shareMaxDownloads.value = 1
+  shareExpiresHours.value = 24
+  shareResult.value = ''
+  shareOpen.value = true
+}
+
+async function doShare() {
+  if (shareLoading.value) return
+  const cur = lbCur.value
+  if (!cur?.path) return
+  shareLoading.value = true
   try {
-    const d = await api('POST', '/api/output/signed-url', { path: cur.path })
-    await navigator.clipboard.writeText(location.origin + (d.url || cur.url))
-    alert('链接已复制')
-  } catch { await navigator.clipboard.writeText(location.origin + '/api/output/file?path=' + encodeURIComponent(cur.path) + '&full=1'); alert('已复制（无签名）') }
+    const d = await api('POST', '/api/output/share', { path: cur.path, max_downloads: shareMaxDownloads.value, expires_hours: shareExpiresHours.value })
+    const url = location.origin + d.url
+    await navigator.clipboard.writeText(url)
+    const exp = d.expires_hours ? (d.expires_hours < 1 ? (d.expires_hours * 60) + ' 分钟' : d.expires_hours + ' 小时') : '无限（重启后失效）'
+    shareResult.value = '✅ 链接已复制到剪贴板\n' + url + '\n有效期：' + exp + ' · 下载次数：' + (d.max_downloads ? d.max_downloads + ' 次' : '不限')
+  } catch (e: any) {
+    shareResult.value = '❌ 生成失败: ' + (e.message || '')
+  } finally {
+    shareLoading.value = false
+  }
 }
 
 function handleKeydown(e: KeyboardEvent) { if (!lbOpen.value) return; if (e.key === 'Escape') closeLb(); if (e.key === 'ArrowLeft') lbPrev(); if (e.key === 'ArrowRight') lbNext() }
@@ -127,8 +149,30 @@ onUnmounted(() => { document.body.style.overflow = ''; document.removeEventListe
       <span class="text-amber-300">{{ lbCur?.ip ? 'IP: ' + lbCur.ip : '' }}</span>
       <a v-if="lbCur?.path && !lbCur?.isGenlog && !lbCur?.isDeletion" :href="'/api/output/file?path=' + encodeURIComponent(lbCur.path) + '&full=1&download=1'" target="_blank" rel="noopener" class="text-white/60 hover:text-white no-underline text-base" title="下载原图">⬇️</a>
       <button v-if="lbCur?.path && !lbCur?.isDeletion" @click="doFork" class="text-pink-300 hover:text-pink-100 cursor-pointer border-0 bg-transparent text-base" title="Fork 工作流">🍴</button>
-      <button v-if="lbCur?.path && !lbCur?.isGenlog && !lbCur?.isDeletion" @click="doCopyLink" class="text-white/50 hover:text-white cursor-pointer border-0 bg-transparent text-base" title="复制链接">🔗</button>
+      <button v-if="lbCur?.path && !lbCur?.isGenlog && !lbCur?.isDeletion" @click="openShare" class="text-white/50 hover:text-white cursor-pointer border-0 bg-transparent text-base" title="分享">🔗</button>
       <button v-if="lbBanGid" class="text-white/50 hover:text-red-400 cursor-pointer border-0 bg-transparent text-base" @click="lbBanUser" title="封禁用户">🔨</button>
+    </div>
+    <div v-if="shareOpen" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4" @click.stop>
+      <div class="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5" @click.stop>
+        <h3 class="text-base font-bold text-gray-700 mb-3">🔗 分享图片</h3>
+        <div class="grid grid-cols-2 gap-2 mb-2">
+          <label class="block text-sm text-gray-600">
+            有效期（小时）
+            <input v-model.number="shareExpiresHours" type="number" min="0" max="720" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 box-border" />
+            <p class="text-xs text-gray-400 mt-1">0 = 不限（重启后失效）</p>
+          </label>
+          <label class="block text-sm text-gray-600">
+            下载次数
+            <input v-model.number="shareMaxDownloads" type="number" min="0" max="100" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 box-border" />
+            <p class="text-xs text-gray-400 mt-1">0 = 不限次数</p>
+          </label>
+        </div>
+        <div v-if="shareResult" class="mb-3 p-3 rounded-xl text-xs whitespace-pre-wrap break-all" :class="shareResult.startsWith('✅') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'">{{ shareResult }}</div>
+        <div class="flex gap-2">
+          <button @click="shareOpen=false" class="flex-1 py-2 bg-gray-100 rounded-xl hover:bg-gray-200 text-sm text-gray-600 transition-all cursor-pointer border-0">关闭</button>
+          <button @click="doShare" :disabled="shareLoading" class="flex-1 py-2 rounded-xl text-sm font-semibold transition-all cursor-pointer border-0 flex items-center justify-center gap-1.5" :class="shareLoading ? 'bg-pink-300 text-white cursor-not-allowed' : 'bg-gradient-to-r from-pink-400 to-rose-400 text-white hover:from-pink-300 hover:to-rose-300'"><span v-if="shareLoading" class="inline-block w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>{{ shareLoading ? '生成中...' : '生成并复制链接' }}</button>
+        </div>
+      </div>
     </div>
     <div v-if="forkLoading" class="fixed inset-0 z-[80] bg-black/40 backdrop-blur-sm flex items-center justify-center">
       <div class="bg-white/95 rounded-2xl px-8 py-6 shadow-2xl flex items-center gap-3">

@@ -138,7 +138,7 @@ const notifyUnreadCount = ref(0)
 
 // Settings modal
 const settingsOpen = ref(false)
-const settingsView = ref<'main'|'appearance'|'totp'|'password'>('main')
+const settingsView = ref<'main'|'appearance'|'totp'|'password'|'share'>('main')
 const soundNotify = ref(localStorage.getItem('soundNotify') === 'true')
 const doneNotify = ref(localStorage.getItem('doneNotify') !== 'false')
 const soundVol = ref(parseFloat(localStorage.getItem('soundVolume') || '0.7'))
@@ -1031,6 +1031,101 @@ async function changePassword() {
   } catch (e: any) { cpStatus.value = e.message }
 }
 
+// ===== 分享链接管理 =====
+const shareLinks = ref<any[]>([])
+const shareLinksLoading = ref(false)
+const shareLinksError = ref('')
+const shareSelectMode = ref(false)
+const shareSelected = ref<Set<string>>(new Set())
+
+async function loadShareLinks() {
+  shareLinksLoading.value = true
+  shareLinksError.value = ''
+  try {
+    const d = await api<any>('GET', '/api/output/share/links')
+    shareLinks.value = d.items || []
+  } catch (e: any) { shareLinksError.value = e.message } finally { shareLinksLoading.value = false }
+}
+
+function shareToggleSelect(token: string) {
+  const s = new Set(shareSelected.value)
+  if (s.has(token)) s.delete(token); else s.add(token)
+  shareSelected.value = s
+}
+
+function shareToggleAll() {
+  const all = shareLinks.value.every(x => shareSelected.value.has(x.token))
+  shareSelected.value = all ? new Set() : new Set(shareLinks.value.map(x => x.token))
+}
+
+async function revokeShareLink(token: string) {
+  if (!confirm('确定撤销此分享链接？')) return
+  try {
+    await api('POST', '/api/output/share/revoke', { token })
+    shareLinks.value = shareLinks.value.filter(x => x.token !== token)
+    shareSelected.value.delete(token)
+  } catch (e: any) { alert('撤销失败: ' + e.message) }
+}
+
+async function revokeSelectedShares() {
+  const tokens = [...shareSelected.value]
+  if (!tokens.length) return
+  if (!confirm(`确定撤销选中的 ${tokens.length} 个分享链接？`)) return
+  for (const t of tokens) {
+    try { await api('POST', '/api/output/share/revoke', { token: t }) } catch {}
+  }
+  shareLinks.value = shareLinks.value.filter(x => !shareSelected.value.has(x.token))
+  shareSelected.value = new Set()
+}
+
+async function revokeAllShareLinks() {
+  if (!confirm('确定撤销所有分享链接？此操作不可恢复')) return
+  const tokens = shareLinks.value.map(x => x.token)
+  for (const t of tokens) {
+    try { await api('POST', '/api/output/share/revoke', { token: t }) } catch {}
+  }
+  shareLinks.value = []
+  shareSelected.value = new Set()
+}
+
+const shareExtToken = ref('')
+const shareExtOpen = ref(false)
+const shareExtDownloads = ref(0)
+const shareExtHours = ref(0)
+const shareExtStatus = ref('')
+
+function openShareExtend(token: string) {
+  shareExtToken.value = token
+  shareExtDownloads.value = 0
+  shareExtHours.value = 0
+  shareExtStatus.value = ''
+  shareExtOpen.value = true
+}
+
+async function doShareExtend() {
+  if (!shareExtDownloads.value && !shareExtHours.value) { shareExtStatus.value = '请设置续次数或续时间'; return }
+  shareExtStatus.value = '...'
+  try {
+    await api('POST', '/api/output/share/update', { token: shareExtToken.value, add_downloads: shareExtDownloads.value, add_hours: shareExtHours.value })
+    shareExtStatus.value = '✅ 已更新'
+    await loadShareLinks()
+    setTimeout(() => { if (shareExtOpen.value) shareExtOpen.value = false }, 1500)
+  } catch (e: any) { shareExtStatus.value = '❌ ' + e.message }
+}
+
+function shareRemainingTime(expires_at: number): string {
+  if (!expires_at) return '无限'
+  const left = expires_at - Date.now() / 1000
+  if (left <= 0) return '已过期'
+  if (left < 3600) return Math.ceil(left / 60) + ' 分钟'
+  if (left < 86400) return Math.round(left / 3600) + ' 小时'
+  return Math.round(left / 86400) + ' 天'
+}
+
+function copyShareLink(url: string) {
+  navigator.clipboard.writeText(location.origin + url).then(() => alert('链接已复制'))
+}
+
 // ===== Logout =====
 async function logout() {
   await apiRaw('/auth/logout', { method: 'POST', headers: {'Content-Type':'application/json'} })
@@ -1416,6 +1511,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                   </span>
                   <span class="text-xs text-gray-500 shrink-0">缩放 {{ Math.round(uiZoom * 100) }}% · 卡片 {{ cardBgOpacity }}% ›</span>
                 </button>
+                <button @click="settingsView='share'; loadShareLinks()" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all cursor-pointer border-0 bg-transparent">🔗 分享管理</button>
                 <button v-if="userStore.currentUser?.is_email_user" @click="settingsView='totp'" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all cursor-pointer border-0 bg-transparent">🔐 两步验证</button>
                 <button v-if="userStore.currentUser?.is_email_user" @click="settingsView='password'" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all cursor-pointer border-0 bg-transparent">🔑 更改密码</button>
                 <button @click="logout" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-red-50 text-sm text-red-500 transition-all cursor-pointer border-0 bg-transparent">🚪 退出登录</button>
@@ -1565,9 +1661,83 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 <span class="text-xs block text-center min-h-[18px]" :class="cpStatus.includes('✅')?'text-green-500':'text-red-400'">{{ cpStatus }}</span>
               </div>
             </template>
+
+            <!-- === SHARE MANAGEMENT === -->
+            <template v-if="settingsView === 'share'">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
+                <div class="flex items-center gap-2">
+                  <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
+                  <h3 class="text-base font-bold text-gray-700">🔗 分享管理</h3>
+                </div>
+                <button @click="closeSettings" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
+              </div>
+              <div class="space-y-2 pt-2">
+                <div class="flex items-center gap-2 mb-1">
+                  <button @click="loadShareLinks" :disabled="shareLinksLoading" class="text-xs px-2 py-1 rounded cursor-pointer border-0 bg-gray-100 text-gray-500 hover:bg-gray-200 disabled:opacity-50">🔄 刷新</button>
+                  <button v-if="shareLinks.length" @click="shareSelectMode = !shareSelectMode; if(!shareSelectMode) shareSelected = new Set()" class="text-xs px-2 py-1 rounded cursor-pointer border-0" :class="shareSelectMode ? 'bg-pink-100 text-pink-600' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">☑ 编辑</button>
+                  <button v-if="shareLinks.length > 1" @click="revokeAllShareLinks" class="text-xs px-2 py-1 bg-red-100 text-red-500 rounded hover:bg-red-200 cursor-pointer border-0">撤销全部</button>
+                </div>
+                <div v-if="shareLinksLoading" class="text-center text-xs text-gray-400 py-4">加载中...</div>
+                <div v-else-if="shareLinksError" class="text-center text-xs text-red-400 py-4">{{ shareLinksError }}</div>
+                <div v-else-if="!shareLinks.length" class="text-center text-xs text-gray-400 py-4">暂无有效分享链接</div>
+                <div v-else>
+                  <div v-if="shareSelectMode && shareSelected.size" class="mb-2 flex items-center gap-2 px-3 py-1.5 bg-red-50 rounded-lg border border-red-200">
+                    <span class="text-xs text-red-600 flex-1">已选 {{ shareSelected.size }} 项</span>
+                    <button @click="revokeSelectedShares" class="text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 cursor-pointer border-0">批量撤销</button>
+                  </div>
+                  <div v-for="it in shareLinks" :key="it.token" class="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-gray-50 border border-gray-100">
+                    <div v-if="shareSelectMode" class="flex items-center h-5 shrink-0">
+                      <input type="checkbox" :checked="shareSelected.has(it.token)" @change="shareToggleSelect(it.token)" class="w-3.5 h-3.5 accent-pink-500 cursor-pointer" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-xs text-gray-700 truncate" :title="it.path">{{ it.path.split('/').pop() }}</div>
+                      <div class="text-[10px] text-gray-400">
+                        {{ it.max_downloads ? it.downloads + '/' + it.max_downloads + ' 次' : '不限次' }}
+                        · 剩余 {{ shareRemainingTime(it.expires_at) }}
+                        · {{ it.created_login || '未知' }}
+                      </div>
+                    </div>
+                    <button @click="copyShareLink(it.url)" class="text-[10px] px-2 py-1 bg-pink-100 text-pink-600 rounded hover:bg-pink-200 cursor-pointer border-0 shrink-0">复制</button>
+                    <button v-if="!shareSelectMode" @click="openShareExtend(it.token)" class="text-[10px] px-2 py-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 cursor-pointer border-0 shrink-0">续</button>
+                    <button v-if="!shareSelectMode" @click="revokeShareLink(it.token)" class="text-[10px] px-2 py-1 bg-red-100 text-red-500 rounded hover:bg-red-200 cursor-pointer border-0 shrink-0">撤销</button>
+                  </div>
+                  <div v-if="shareSelectMode && shareLinks.length" class="mt-2 flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200">
+                    <label class="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+                      <input type="checkbox" :checked="shareLinks.length > 0 && shareLinks.every(x => shareSelected.has(x.token))" @change="shareToggleAll" class="w-3.5 h-3.5 accent-pink-500 cursor-pointer" />
+                      全选/取消
+                    </label>
+                    <span class="text-xs text-gray-400 ml-auto">{{ shareSelected.size }}/{{ shareLinks.length }} 已选</span>
+                  </div>
+                </div>
+                <div class="text-[10px] text-gray-400 px-1 mt-2">分享链接存于内存，服务器重启后自动失效。已删除图片的链接会在访问时自动销毁。</div>
+              </div>
+
+            </template>
+
+            <!-- Extend Modal (在 settings 弹窗之外，避免 backdrop-filter 影响 fixed) -->
+            <Teleport to="body">
+              <div v-if="shareExtOpen" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4" @click.self="shareExtOpen=false">
+                <div class="bg-white rounded-2xl shadow-xl max-w-xs w-full p-4">
+                  <h4 class="text-sm font-bold text-gray-700 mb-3">📤 续期/续次数</h4>
+                  <label class="block text-xs text-gray-600 mb-2">
+                    增加下载次数
+                    <input v-model.number="shareExtDownloads" type="number" min="0" max="100" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 box-border" />
+                  </label>
+                  <label class="block text-xs text-gray-600 mb-3">
+                    增加有效期（小时）
+                    <input v-model.number="shareExtHours" type="number" min="0" max="720" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 box-border" />
+                  </label>
+                  <div v-if="shareExtStatus" class="mb-2 text-xs" :class="shareExtStatus.startsWith('✅')?'text-green-500':'text-red-400'">{{ shareExtStatus }}</div>
+                  <div class="flex gap-2">
+                    <button @click="shareExtOpen=false" class="flex-1 py-2 bg-gray-100 rounded-xl hover:bg-gray-200 text-xs text-gray-600 cursor-pointer border-0">取消</button>
+                    <button @click="doShareExtend" class="flex-1 py-2 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl hover:from-pink-300 hover:to-rose-300 text-xs font-semibold cursor-pointer border-0">确定</button>
+                  </div>
+                </div>
+              </div>
+            </Teleport>
           </div>
         </div>
-      </Teleport>
-    </div>
+    </Teleport>
+  </div>
   </div>
 </template>
