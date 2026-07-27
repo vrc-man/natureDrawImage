@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { api, fmt, fmtShort } from './useAdminApi'
+import { dayStartTs, nextDayStartTs } from './dateRange'
 
 defineProps<{ visible: boolean }>()
 
@@ -46,8 +47,8 @@ function resetSearch() { nameSearch.value = ''; loadImages(true) }
 
 async function deleteByFilter() {
   const body: any = {}
-  if (filterDateFrom.value) body.date_from = new Date(filterDateFrom.value + 'T00:00:00').getTime() / 1000
-  if (filterDateTo.value) body.date_to = new Date(filterDateTo.value + 'T23:59:59').getTime() / 1000
+  if (filterDateFrom.value) body.date_from = dayStartTs(filterDateFrom.value)
+  if (filterDateTo.value) body.date_to = nextDayStartTs(filterDateTo.value)
   if (filterCreator.value.trim()) body.creator = filterCreator.value.trim()
   if (!body.date_from && !body.date_to && !body.creator) { alert('请至少设置一个筛选条件'); return }
   const desc = [body.date_from ? '日期起' : '', body.date_to ? '日期止' : '', body.creator ? '创建者: ' + body.creator : ''].filter(Boolean).join(', ')
@@ -116,7 +117,9 @@ async function deleteSelected() {
   if (!confirm(`确定删除选中的 ${selected.value.size} 张图片？`)) return
   const paths = Array.from(selected.value)
   try {
-    await api('POST', '/api/admin/mark_delete_batch', { paths })
+    const r = await api('POST', '/api/admin/mark_delete_batch', { paths })
+    const marked = r.marked ?? paths.length
+    const failed = Math.max(0, paths.length - marked)
     const pathSet = new Set(paths)
     items.value = items.value.filter(i => !pathSet.has(i.path))
     selected.value.clear()
@@ -126,6 +129,7 @@ async function deleteSelected() {
     total.value = Math.max(0, total.value - paths.length)
     loaded.value = items.value.length
     if (!items.value.length && loaded.value < pageSize && loaded.value < total.value && total.value > 0) await loadImages(false)
+    alert(`删除完成：成功标记 ${marked} 张，失败 ${failed} 张`)
   } catch (e: any) { alert('删除失败: ' + e.message) }
 }
 
@@ -172,9 +176,9 @@ onMounted(() => loadImages(true))
       <div v-if="!items.length" class="text-center text-gray-400 text-sm py-8">暂无图片</div>
       <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
         <div v-for="(img, i) in items" :key="img.path" class="relative border rounded p-1 bg-gray-50" :class="{'ring-2 ring-blue-400': selected.has(img.path)}">
-          <input type="checkbox" :checked="selected.has(img.path)" @change="toggleItem(img.path, i, $event.shiftKey)" class="absolute top-0.5 left-0.5 w-4 h-4 cursor-pointer z-10" />
+          <input type="checkbox" :checked="selected.has(img.path)" @change="toggleItem(img.path, i, ($event as MouseEvent).shiftKey)" class="absolute top-0.5 left-0.5 w-4 h-4 cursor-pointer z-10" />
           <img :src="'/api/output/thumb?path=' + encodeURIComponent(img.path || '')" loading="lazy" decoding="async"
-            class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer" @click="toggleItem(img.path, i, $event.shiftKey)"
+            class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer" @click="toggleItem(img.path, i, ($event as MouseEvent).shiftKey)"
             :data-path="img.path" :data-mtime="img.mtime || ''" :data-ip="img.creator_ip || ''" />
           <div class="text-[9px] text-gray-500 mt-0.5 truncate" :title="img.path">{{ img.path.split('/').pop() }}</div>
           <div class="text-[8px] text-gray-400 truncate">{{ creatorInfo(img) || '\u00A0' }}</div>

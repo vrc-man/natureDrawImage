@@ -2,9 +2,8 @@
 外挂功能：访问密钥管理（从 app.py 迁出，行为 100% 保持原样）。
 
 设计（中间人模式）：
-  - 本模块**不** import app、**不** import db，所有数据库读写都走 app.py
-    通过 features._deps.set_app_ctx() 注入的同一批函数（db / 锁 / session）。
-  - 单一数据入口、共享锁，不会出现多模块争抢数据库读写。
+  - 本模块**不** import app，数据库读写通过 app.py 注入的 db.operations 门面完成。
+  - 不直接拿 db.schema.get_db；如需新增数据库能力，先封装到 db/operations.py。
   - API 路径、请求体、返回结构与原 app.py 完全一致，前端无需改动。
 
 迁出的接口：
@@ -21,9 +20,15 @@ import secrets
 import time as _time
 from typing import Any, Dict
 
+from pydantic import BaseModel
+
 from fastapi import APIRouter, Request, HTTPException
 
 from features import _deps
+
+
+class BatchDeletePayload(BaseModel):
+    keys: list[str]
 
 
 def _require_admin(request: Request) -> None:
@@ -35,8 +40,15 @@ router = APIRouter(tags=["access-keys"])
 
 
 @router.get("/api/admin/access-keys")
-async def api_admin_access_keys(request: Request, limit: int = 50, offset: int = 0):
-    """分页列出访问密钥及使用状态。"""
+async def api_admin_access_keys(
+    request: Request,
+    limit: int = 50,
+    offset: int = 0,
+    used_only: int = 0,
+    unused_only: int = 0,
+    search: str = "",
+):
+    """分页列出访问密钥及使用状态。支持筛选。"""
     _require_admin(request)
     db = _deps.ctx("db")
     load_users = _deps.ctx("load_users")
@@ -54,18 +66,31 @@ async def api_admin_access_keys(request: Request, limit: int = 50, offset: int =
         expires_at = entry.get("expires_at", 0)
         disabled_at = entry.get("disabled_at", 0)
         disabling = disabled_at and now <= disabled_at + 2
+        expired = expires_at > 0 and now > expires_at + 60
+        used_up = 0 < entry.get("max_uses", 0) <= entry.get("used_count", 0)
+        has_used = bool(used_by) or used_up or expired or bool(disabled_at)
         items.append({
             "key_preview": key[:8] + "..." + key[-4:],
             "used_by": used_by,
             "login": login,
             "created_at": entry.get("created_at", 0),
             "expires_at": expires_at,
-            "expired": expires_at > 0 and now > expires_at + 60,
+            "expired": expired,
             "disabled_at": disabled_at,
             "disabling": disabling,
+            "used_up": used_up,
+            "used": has_used,
             "max_uses": entry.get("max_uses", 0),
             "used_count": entry.get("used_count", 0),
         })
+    # 筛选
+    if used_only:
+        items = [i for i in items if i["used"]]
+    if unused_only:
+        items = [i for i in items if not i["used"]]
+    if search.strip():
+        q = search.strip().lower()
+        items = [i for i in items if q in i["key_preview"].lower() or q in (i["login"] or "").lower() or q in (i["used_by"] or "").lower()]
     items.sort(key=lambda x: x["created_at"], reverse=True)
     total = len(items)
     offset = max(0, offset)
@@ -235,3 +260,22 @@ async def api_admin_access_keys_reveal(request: Request, payload: Dict[str, Any]
         raise HTTPException(404, "密钥不存在")
     print(f"[AUDIT] 密钥已查看 admin={admin_login} key_preview={raw} ip={client_ip(request)}")
     return {"ok": True, "key": target_key}
+
+
+@router.post("/api/admin/access-keys/batch-delete")
+async def api_admin_access_keys_batch_delete(request: Request, payload: BatchDeletePayload):
+    """批量彻底删除密钥。入参 { keys: ["key1", "key2", ...] }"""
+    _require_admin(request)
+    db = _deps.ctx("db")
+    key_list = payload.keys
+    if not key_list:
+        raise HTTPException(400, "keys 列表为空")
+    if len(key_list) > 200:
+        raise HTTPException(400, "单次最多删除 200 个")
+    deleted = 0
+    for full_key in key_list:
+        entry = db.get_access_key(full_key)
+        if entry:
+            db.delete_access_key(full_key)
+            deleted += 1
+    return {"ok": True, "deleted": deleted}

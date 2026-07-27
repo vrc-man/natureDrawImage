@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { api, fmt, relTime } from './useAdminApi'
+import { dayStartTs, nextDayStartTs } from './dateRange'
+import { ADMIN_TOAST_ERROR, ADMIN_TOAST_RESULT } from './uiTimers'
 
 defineProps<{ visible: boolean }>()
 
@@ -29,10 +31,10 @@ async function loadGcLogs(reset = false) {
   try {
     let url = `/api/admin/gc/logs?limit=20&offset=${gcPage.value * 20}`
     if (gcDateFrom.value) {
-      url += '&min_time=' + encodeURIComponent(String(new Date(gcDateFrom.value).getTime() / 1000))
+      url += '&min_time=' + encodeURIComponent(String(dayStartTs(gcDateFrom.value)))
     }
     if (gcDateTo.value) {
-      url += '&max_time=' + encodeURIComponent(String(new Date(gcDateTo.value).setHours(23, 59, 59) / 1000))
+      url += '&max_time=' + encodeURIComponent(String(nextDayStartTs(gcDateTo.value)))
     }
     const d = await api('GET', url)
     gcLogs.value = d.items || []
@@ -76,12 +78,12 @@ async function runGc(backup: boolean) {
           gcResult.value = 'GC 完成！清理了: ' + JSON.stringify(d.cleaned || {})
           loadGcStats()
           loadGcLogs(true)
-          setTimeout(() => { if (gcResult.value.startsWith('GC 完成')) gcResult.value = '' }, 5000)
+          setTimeout(() => { if (gcResult.value.startsWith('GC 完成')) gcResult.value = '' }, ADMIN_TOAST_RESULT)
         } else if (d.status === 'error') {
           if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
           gcRunning.value = false
           gcResult.value = 'GC 出错: ' + (d.error || '未知错误')
-          setTimeout(() => { if (gcResult.value.startsWith('GC 出错')) gcResult.value = '' }, 8000)
+          setTimeout(() => { if (gcResult.value.startsWith('GC 出错')) gcResult.value = '' }, ADMIN_TOAST_ERROR)
         }
       } catch (e: any) {
         if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
@@ -173,7 +175,7 @@ async function runCleanEmptyDirs() {
   try {
     const d = await api('POST', '/api/admin/gc/clean-empty-dirs')
     cleanDirsResult.value = `清理完成：删除 ${d.removed ?? 0} 个空日期目录`
-    setTimeout(() => { if (cleanDirsResult.value.includes('清理完成')) cleanDirsResult.value = '' }, 5000)
+    setTimeout(() => { if (cleanDirsResult.value.includes('清理完成')) cleanDirsResult.value = '' }, ADMIN_TOAST_RESULT)
   } catch (e: any) {
     cleanDirsResult.value = '清理失败: ' + e.message
   } finally {
@@ -212,7 +214,7 @@ async function runHealthCheck() {
           healthRunning.value = false
           healthDetails.value = s
           healthResult.value = '检查完成'
-          setTimeout(() => { if (healthResult.value === '检查完成') healthResult.value = '' }, 5000)
+          setTimeout(() => { if (healthResult.value === '检查完成') healthResult.value = '' }, ADMIN_TOAST_RESULT)
         } else if (s.status === 'error') {
           if (healthPollTimer) { clearInterval(healthPollTimer); healthPollTimer = null }
           healthRunning.value = false
@@ -363,7 +365,7 @@ onUnmounted(() => {
         </div>
       </div>
       <div v-if="orphanScanDetails.originals_failed?.length">
-        <div class="font-semibold text-red-600 mb-1">✗ 删除失败 ({{ orphanScanDetails.originals_failed.length }}):</div>
+        <div class="font-semibold text-red-600 mb-1">✗ 备份/删除失败 ({{ orphanScanDetails.originals_failed.length }}):</div>
         <div v-for="f in orphanScanDetails.originals_failed" :key="f.path" class="text-[11px] text-red-600 pl-2">
           <span class="text-red-500">✗</span> {{ f.path }} — {{ f.reason }}
         </div>

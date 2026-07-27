@@ -193,12 +193,21 @@ def update_template(tid: int, data: Dict[str, Any]) -> Dict[str, Any]:
         return items[target]
 
 
+def _renumber(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """按当前顺序重新编号 sort_order 为 1,2,3,...（删项后自动补号）"""
+    out = sorted(items, key=lambda x: (int(x.get("sort_order", 0)), int(x.get("id", 0))))
+    for i, it in enumerate(out):
+        it["sort_order"] = i + 1
+    return out
+
+
 def delete_template(tid: int) -> None:
     with _lock:
         items = _load()
         new_items = [x for x in items if int(x.get("id", 0)) != tid]
         if len(new_items) == len(items):
             raise HTTPException(404, "模板不存在")
+        new_items = _renumber(new_items)
         _save_atomic(new_items)
 
 

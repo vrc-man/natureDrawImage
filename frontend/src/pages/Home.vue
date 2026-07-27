@@ -21,6 +21,7 @@ const userStore = useUserStore()
 const sound = useSound()
 const { lbOpen, lbState, current, open: openLb, close: closeLb, prev: prevLb, next: nextLb } = useLightbox()
 const needsAccessKey = computed(() => !userStore.isAdmin && !userStore.currentUser?.access_granted && userStore.isLoggedIn)
+const adminMaintenanceActive = computed(() => userStore.isAdmin && !!userStore.currentUser?.maintenance_enabled)
 
 // ===== Tab =====
 type TabKey = 'generate'|'gallery'|'featured'|'myworks'|'more'
@@ -100,6 +101,7 @@ const pendingForkPath = ref<string>('')
 
 // Run state
 const _isGenerating = ref(false)
+const _submittingRun = ref(false)
 const _finishing = ref(false)
 const _watchingMode = ref(false)
 const _myQueueRunning = ref(false)
@@ -124,9 +126,10 @@ let cooldownTimer: ReturnType<typeof setInterval> | null = null
 // WS
 let activeWS: WebSocket | null = null
 let statusWS: WebSocket | null = null
-let pollTimer: ReturnType<typeof setInterval> | null = null
+let pollTimer: ReturnType<typeof setTimeout> | null = null
 let gpuTimer: ReturnType<typeof setInterval> | null = null
-let notifyTimer: ReturnType<typeof setInterval> | null = null
+let notifyTimer: ReturnType<typeof setTimeout> | null = null
+let submitGuardTimer: ReturnType<typeof setTimeout> | null = null
 let authedServicesStarted = false
 
 // Notification state
@@ -135,7 +138,7 @@ const notifyUnreadCount = ref(0)
 
 // Settings modal
 const settingsOpen = ref(false)
-const settingsView = ref<'main'|'totp'|'password'>('main')
+const settingsView = ref<'main'|'appearance'|'totp'|'password'|'share'>('main')
 const soundNotify = ref(localStorage.getItem('soundNotify') === 'true')
 const doneNotify = ref(localStorage.getItem('doneNotify') !== 'false')
 const soundVol = ref(parseFloat(localStorage.getItem('soundVolume') || '0.7'))
@@ -150,14 +153,18 @@ const homeBgImageData = ref(localStorage.getItem('homeBgImageData') || '')
 const homeBgImageName = ref(localStorage.getItem('homeBgImageName') || '')
 const homeBgImageMode = ref<HomeBgMode>(savedHomeBgMode === 'tile' || savedHomeBgMode === 'stretch' ? savedHomeBgMode : 'stretch')
 const homeBgImageScale = ref(parseInt(localStorage.getItem('homeBgImageScale') || '100'))
+const homeBgImagePosX = ref(parseInt(localStorage.getItem('homeBgImagePosX') || '50'))
+const homeBgImagePosY = ref(parseInt(localStorage.getItem('homeBgImagePosY') || '50'))
 const homeBgError = ref('')
 const homeBackgroundStyle = computed(() => {
   if (!homeBgImageData.value) return {}
   const scaleSet = localStorage.getItem('homeBgImageScale') !== null
   const scale = Math.min(300, Math.max(10, Number.isFinite(homeBgImageScale.value) ? homeBgImageScale.value : 100))
+  const px = Math.min(100, Math.max(0, homeBgImagePosX.value)) + '%'
+  const py = Math.min(100, Math.max(0, homeBgImagePosY.value)) + '%'
   return homeBgImageMode.value === 'tile'
-    ? { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'repeat', backgroundSize: scaleSet ? `${scale}% auto` : 'auto', backgroundPosition: 'top left' }
-    : { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'no-repeat', backgroundSize: scaleSet ? `${scale}% auto` : '100% 100%', backgroundPosition: 'center center' }
+    ? { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'repeat', backgroundSize: scaleSet ? `${scale}% auto` : 'auto', backgroundPosition: `${px} ${py}` }
+    : { backgroundImage: `url(${homeBgImageData.value})`, backgroundRepeat: 'no-repeat', backgroundSize: scaleSet ? `${scale}% auto` : '100% 100%', backgroundPosition: `${px} ${py}` }
 })
 
 // Password change
@@ -171,6 +178,9 @@ const keyExpired = ref(false)
 const uiZoom = ref(parseFloat(localStorage.getItem('uiZoom') || '1'))
 const compactLayout = ref(localStorage.getItem('compactLayout') === 'true')
 const pickerThumbPercent = ref(parseInt(localStorage.getItem('pickerThumbPercent') || '25'))
+const cardBgOpacity = ref(parseInt(localStorage.getItem('cardBgOpacity') || '75'))
+const savedMyQueueIdlePollSec = parseInt(localStorage.getItem('myQueueIdlePollSec') || '10')
+const myQueueIdlePollSec = ref(Number.isFinite(savedMyQueueIdlePollSec) ? Math.min(60, Math.max(2, savedMyQueueIdlePollSec)) : 10)
 const pickerThumbSize = computed(() => Math.round(300 * pickerThumbPercent.value / 100))
 
 function setUiZoom(v: number) {
@@ -191,10 +201,30 @@ function setPickerThumbPercent(v: number) {
   document.documentElement.style.setProperty('--picker-thumb-size', `${thumb}px`)
   document.documentElement.style.setProperty('--picker-card-height', `${thumb + 8}px`)
 }
+function setCardBgOpacity(v: number) {
+  const next = Math.min(95, Math.max(40, Number.isFinite(v) ? v : 75))
+  cardBgOpacity.value = next
+  localStorage.setItem('cardBgOpacity', String(next))
+  document.documentElement.style.setProperty('--home-card-bg-opacity', String(next / 100))
+}
+function setMyQueueIdlePollSec(v: number) {
+  const next = Math.min(60, Math.max(2, Number.isFinite(v) ? Math.round(v) : 10))
+  myQueueIdlePollSec.value = next
+  localStorage.setItem('myQueueIdlePollSec', String(next))
+  if (_queuePollingActive && !_lastHasMyQueueTask) _scheduleNextQueuePoll(next * 1000)
+}
 function setHomeBgImageScale(v: number) {
   const next = Math.min(300, Math.max(10, Number.isFinite(v) ? v : 100))
   homeBgImageScale.value = next
   localStorage.setItem('homeBgImageScale', String(next))
+}
+function setHomeBgPosX(v: number) {
+  const next = Math.min(100, Math.max(0, Number.isFinite(v) ? v : 50))
+  homeBgImagePosX.value = next; localStorage.setItem('homeBgImagePosX', String(next))
+}
+function setHomeBgPosY(v: number) {
+  const next = Math.min(100, Math.max(0, Number.isFinite(v) ? v : 50))
+  homeBgImagePosY.value = next; localStorage.setItem('homeBgImagePosY', String(next))
 }
 
 // Resolution presets
@@ -266,10 +296,12 @@ onMounted(async () => {
   if (uiZoom.value !== 1) document.documentElement.style.zoom = String(uiZoom.value)
   if (compactLayout.value) document.documentElement.classList.add('compact')
   setPickerThumbPercent(pickerThumbPercent.value)
+  setCardBgOpacity(cardBgOpacity.value)
   // 检查密钥过期状态 + 初始化通知圆点
   if (userStore.currentUser?.key_status === 'expired') keyExpired.value = true
   if (userStore.currentUser?.unread_notifications) notifyUnreadCount.value = userStore.currentUser.unread_notifications
   if (userStore.currentUser?.my_queue_count) notifyQueueCount.value = userStore.currentUser.my_queue_count
+  document.addEventListener('visibilitychange', onQueueVisibilityChange)
   // Load forked workflow
   try {
     const fw = localStorage.getItem('forkedWorkflow')
@@ -298,10 +330,12 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onQueueVisibilityChange)
   stopPolling()
   if (statusWS) try { statusWS.close() } catch {}
   if (gpuTimer) clearInterval(gpuTimer)
-  if (notifyTimer) clearInterval(notifyTimer)
+  if (notifyTimer) clearTimeout(notifyTimer)
+  if (submitGuardTimer) clearTimeout(submitGuardTimer)
   if (cooldownTimer) clearInterval(cooldownTimer)
 })
 
@@ -439,8 +473,42 @@ async function loadLlmTemplates() {
 let _notifiedTaskIds = new Set<number>()
 let _hasRunningBefore = false
 let _doneNotified = false  // WS done/error 已通知过，防止 pollMyQueue 重复
-function startPolling() { pollTimer = setInterval(pollMyQueue, 1000) }
-function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null } }
+let _lastHasMyQueueTask = false
+let _queuePollingActive = false
+function _queuePollDelay() {
+  const idle = myQueueIdlePollSec.value * 1000
+  if (document.hidden) return _lastHasMyQueueTask ? 8000 : Math.max(30000, idle)
+  return _lastHasMyQueueTask ? 1500 : idle
+}
+function _clearQueuePollTimer() {
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null }
+}
+function _scheduleNextQueuePoll(delay = _queuePollDelay()) {
+  if (!_queuePollingActive) return
+  _clearQueuePollTimer()
+  pollTimer = setTimeout(async () => {
+    await pollMyQueue()
+    if (_queuePollingActive) _scheduleNextQueuePoll()
+  }, delay)
+}
+function startPolling() {
+  _queuePollingActive = true
+  _scheduleNextQueuePoll(0)
+}
+function stopPolling() {
+  _queuePollingActive = false
+  _clearQueuePollTimer()
+}
+function onQueueVisibilityChange() {
+  if (!authedServicesStarted) return
+  if (!document.hidden) {
+    // 从后台切回：重置轮询链，立即请求一次
+    stopPolling()
+    startPolling()
+  } else {
+    _scheduleNextQueuePoll()
+  }
+}
 
 async function pollMyQueue() {
   try {
@@ -450,6 +518,7 @@ async function pollMyQueue() {
     const waiting = items.filter((i: any) => i.status === 'waiting')
     const running = items.filter((i: any) => i.status === 'running')
     const hasMyTask = waiting.length || running.length
+    _lastHasMyQueueTask = !!hasMyTask
 
     const noActiveWS = !(activeWS && activeWS.readyState === WebSocket.OPEN)
     if (running.length) { _hasRunningBefore = true; _isGenerating.value = true }
@@ -458,8 +527,6 @@ async function pollMyQueue() {
       // 队列空+无WS → 有运行时任务记录则恢复（原版逻辑）
       if (_watchingMode.value || _hasRunningBefore) {
         _isGenerating.value = false
-        const btn = document.getElementById('btn-run') as HTMLButtonElement | null
-        if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
         if (!_doneNotified) {
           _doneNotified = true; _watchingMode.value = false; _hasRunningBefore = false; _finishing.value = true
           if (mode.value === 'img2img') uploadRef.value?.clearAll()
@@ -470,18 +537,11 @@ async function pollMyQueue() {
       }
     } else {
       _myQueueRunning.value = !!running.length
-      // 有任务时禁用按钮（原版逻辑：刷新页面后 _isGenerating 可能为 false 但任务仍在运行）
-      if (hasMyTask) {
-        const btn = document.getElementById('btn-run') as HTMLButtonElement | null
-        if (btn && !btn.disabled) btn.disabled = true
-      }
     }
 
     // WS 断开后轮询检测任务完成
     if (_watchingMode.value) {
       if (!running.length && !waiting.length) {
-        const btn = document.getElementById('btn-run') as HTMLButtonElement | null
-        if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
         if (!_finishing.value && !_doneNotified) {
           _watchingMode.value = false; _doneNotified = true
           const failedItem = items.find((i: any) => i.status === 'failed')
@@ -497,10 +557,6 @@ async function pollMyQueue() {
     }
     // 页面刷新后检测已完成/失败的任务
     const doneItems = items.filter((i: any) => i.status === 'done' || i.status === 'failed')
-    if (doneItems.length) {
-      const btn = document.getElementById('btn-run') as HTMLButtonElement | null
-      if (btn && btn.disabled) { btn.disabled = false; btn.textContent = '▶ 开始生成' }
-    }
     for (const item of doneItems) {
       if (!_notifiedTaskIds.has(item.id)) {
         _notifiedTaskIds.add(item.id)
@@ -538,7 +594,16 @@ function startGPUPoll() {
   const interval = parseInt(localStorage.getItem('gpuInterval') || '15') * 1000
   gpuTimer = setInterval(() => { api('GET', '/api/gpu').catch(() => {}) }, interval)
 }
-function startNotifyPoll() { notifyTimer = setInterval(pollNotifications, 2000) }
+function startNotifyPoll() {
+  const schedule = (delay = notifyQueueCount.value > 0 || notifyUnreadCount.value > 0 ? 5000 : 30000) => {
+    if (notifyTimer) clearTimeout(notifyTimer)
+    notifyTimer = setTimeout(async () => {
+      await pollNotifications()
+      schedule(document.hidden ? 60000 : (notifyQueueCount.value > 0 || notifyUnreadCount.value > 0 ? 5000 : 30000))
+    }, delay)
+  }
+  schedule(0)
+}
 
 function connectStatusWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -566,12 +631,16 @@ function prepareGen() {
   const direct = directPrompt.value.trim()
   const nl = nlPrompt.value.trim()
   const neg = negativePrompt.value.trim()
-  const selectedStyleName = localStorage.getItem('currentStyleName') || ''
+  const selectedStyleName = mode.value === 'txt2img' ? (localStorage.getItem('currentStyleName') || '') : ''
   let selectedCharNames: string[] = []
-  try { selectedCharNames = JSON.parse(localStorage.getItem('currentCharacterNames') || '[]') } catch {}
-  const style = localStorage.getItem('currentStyle') || ''
+  if (mode.value === 'txt2img') {
+    try { selectedCharNames = JSON.parse(localStorage.getItem('currentCharacterNames') || '[]') } catch {}
+  }
+  const style = mode.value === 'txt2img' ? (localStorage.getItem('currentStyle') || '') : ''
   let char = ''
-  try { char = JSON.parse(localStorage.getItem('currentCharacters') || '[]').join(', '); } catch {}
+  if (mode.value === 'txt2img') {
+    try { char = JSON.parse(localStorage.getItem('currentCharacters') || '[]').join(', '); } catch {}
+  }
   if (!direct && !nl) { showErrorToast('请输入提示词'); return null }
   // 检查分辨率是否在预设中，不在就自动用第一个
   if (!resolutions.value.some(r => r.w === width.value && r.h === height.value) && resolutions.value.length) {
@@ -589,7 +658,7 @@ function prepareGen() {
 }
 
 async function startRun() {
-  if (_isGenerating.value) return
+  if (_submittingRun.value) return
   const g = prepareGen()
   if (!g) return
   if (g.nl && !genNoticeAcked.value) {
@@ -612,7 +681,17 @@ function cancelGenNotice() {
   _isGenerating.value = false
 }
 
+function _startSubmitGuard() {
+  _submittingRun.value = true
+  if (submitGuardTimer) clearTimeout(submitGuardTimer)
+  submitGuardTimer = setTimeout(() => {
+    _submittingRun.value = false
+    submitGuardTimer = null
+  }, 2000)
+}
+
 async function actuallyStartRun(g: PendingGen) {
+  const hasExistingTask = _isGenerating.value || _watchingMode.value || _lastHasMyQueueTask || !!(activeWS && activeWS.readyState <= WebSocket.OPEN)
   _watchingMode.value = false
   _finishing.value = false
   _doneNotified = false
@@ -621,13 +700,23 @@ async function actuallyStartRun(g: PendingGen) {
   progressPct.value = 0
   resultImages.value = []
   logLines.value = []
+  _startSubmitGuard()
 
   let image1_name = '', image2_name = '', image3_name = ''
   if (mode.value === 'img2img' && uploadRef.value) {
     progressText.value = uploadRef.value.hasPendingUploads()
       ? '等待参考图上传...'
       : '参考图已就绪，正在提交任务...'
-    await uploadRef.value.waitAllUploads()
+    try {
+      await uploadRef.value.waitAllUploads()
+    } catch (e: any) {
+      showErrorToast('参考图上传失败: ' + (e.message || '未知错误'))
+      if (submitGuardTimer) { clearTimeout(submitGuardTimer); submitGuardTimer = null }
+      _submittingRun.value = false
+      _isGenerating.value = false
+      progressText.value = ''
+      return
+    }
     progressText.value = '参考图已上传，正在提交任务...'
     const names = uploadRef.value.getImageNames()
     image1_name = names[0] || ''; image2_name = names[1] || ''; image3_name = names[2] || ''
@@ -637,7 +726,8 @@ async function actuallyStartRun(g: PendingGen) {
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const ws = new WebSocket(`${proto}//${location.host}/ws/run`)
-  activeWS = ws
+  const isPrimaryRunWS = !hasExistingTask
+  if (isPrimaryRunWS) activeWS = ws
 
   ws.onopen = () => {
     const payload: any = {
@@ -651,8 +741,8 @@ async function actuallyStartRun(g: PendingGen) {
       llm_template_id: llmTemplateId.value ? Number(llmTemplateId.value) : null,
       width: g.w,
       height: g.h,
-      style_tags: g.style,
-      character_tags: g.char,
+      style_tags: mode.value === 'txt2img' ? g.style : '',
+      character_tags: mode.value === 'txt2img' ? g.char : '',
       img2img_use_preset: img2imgUsePreset.value,
       image1_name, image2_name, image3_name,
     }
@@ -660,16 +750,16 @@ async function actuallyStartRun(g: PendingGen) {
     ws.send(JSON.stringify(payload))
   }
   ws.onmessage = (e) => {
-    try { handleMsg(JSON.parse(e.data)) } catch {}
+    try { handleMsg(JSON.parse(e.data), ws) } catch {}
   }
   ws.onclose = () => {
-    activeWS = null
-    _watchingMode.value = true
+    if (isPrimaryRunWS && activeWS === ws) activeWS = null
+    if (isPrimaryRunWS) _watchingMode.value = true
     pollMyQueue()
   }
 }
 
-function handleMsg(m: any) {
+function handleMsg(m: any, sourceWS: WebSocket | null = activeWS) {
   if (m.type === 'log') { logLines.value.push(m.message) }
   else if (m.type === 'queued') {
     queueStatus.value = m.message || '排队中...'
@@ -723,10 +813,11 @@ function handleMsg(m: any) {
     finishRun(true)
   }
   else if (m.type === 'error') {
+    const isActiveSource = !sourceWS || sourceWS === activeWS
     logLines.value.push('❌ ' + m.message)
     llmText.value = ''
     sound.play('error')
-    progressText.value = '失败: ' + m.message
+    if (isActiveSource) progressText.value = '失败: ' + m.message
     sound.sendNotification('❌ ' + m.message)
     const el = document.createElement('div')
     el.className = 'toast-el bg-white/95 backdrop-blur border border-red-200 rounded-2xl shadow-xl px-5 py-4 text-sm sm:text-base text-red-700 cursor-pointer select-none'
@@ -734,9 +825,13 @@ function handleMsg(m: any) {
     el.onclick = () => { el.style.animation = 'toastOut 0.25s ease-in'; setTimeout(() => el.remove(), 250) }
     const tc = document.getElementById('toast-container')
     if (tc) tc.appendChild(el)
-    _pendingCooldown.value = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1
-    _doneNotified = true
-    finishRun()
+    if (isActiveSource) {
+      _pendingCooldown.value = typeof m.cooldown_remaining === 'number' ? m.cooldown_remaining : -1
+      _doneNotified = true
+      finishRun()
+    } else {
+      pollMyQueue()
+    }
   }
 }
 
@@ -751,6 +846,22 @@ function pushHistory(m: any) {
 function flashGreen() {
   notifyUnreadCount.value++
   setTimeout(() => { if (notifyUnreadCount.value > 0) notifyUnreadCount.value-- }, 2000)
+}
+
+function resetRunUiState() {
+  if (submitGuardTimer) { clearTimeout(submitGuardTimer); submitGuardTimer = null }
+  _submittingRun.value = false
+  _isGenerating.value = false
+  _finishing.value = false
+  _watchingMode.value = false
+  _myQueueRunning.value = false
+  progressText.value = ''
+  progressPct.value = 0
+  queueStatus.value = ''
+  llmText.value = ''
+  pollMyQueue()
+  if (authedServicesStarted) _scheduleNextQueuePoll(0)
+  showToast('已恢复前端按钮状态，后端任务不受影响')
 }
 
 function finishRun(clearUpload = false) {
@@ -920,6 +1031,101 @@ async function changePassword() {
   } catch (e: any) { cpStatus.value = e.message }
 }
 
+// ===== 分享链接管理 =====
+const shareLinks = ref<any[]>([])
+const shareLinksLoading = ref(false)
+const shareLinksError = ref('')
+const shareSelectMode = ref(false)
+const shareSelected = ref<Set<string>>(new Set())
+
+async function loadShareLinks() {
+  shareLinksLoading.value = true
+  shareLinksError.value = ''
+  try {
+    const d = await api<any>('GET', '/api/output/share/links')
+    shareLinks.value = d.items || []
+  } catch (e: any) { shareLinksError.value = e.message } finally { shareLinksLoading.value = false }
+}
+
+function shareToggleSelect(token: string) {
+  const s = new Set(shareSelected.value)
+  if (s.has(token)) s.delete(token); else s.add(token)
+  shareSelected.value = s
+}
+
+function shareToggleAll() {
+  const all = shareLinks.value.every(x => shareSelected.value.has(x.token))
+  shareSelected.value = all ? new Set() : new Set(shareLinks.value.map(x => x.token))
+}
+
+async function revokeShareLink(token: string) {
+  if (!confirm('确定撤销此分享链接？')) return
+  try {
+    await api('POST', '/api/output/share/revoke', { token })
+    shareLinks.value = shareLinks.value.filter(x => x.token !== token)
+    shareSelected.value.delete(token)
+  } catch (e: any) { alert('撤销失败: ' + e.message) }
+}
+
+async function revokeSelectedShares() {
+  const tokens = [...shareSelected.value]
+  if (!tokens.length) return
+  if (!confirm(`确定撤销选中的 ${tokens.length} 个分享链接？`)) return
+  for (const t of tokens) {
+    try { await api('POST', '/api/output/share/revoke', { token: t }) } catch {}
+  }
+  shareLinks.value = shareLinks.value.filter(x => !shareSelected.value.has(x.token))
+  shareSelected.value = new Set()
+}
+
+async function revokeAllShareLinks() {
+  if (!confirm('确定撤销所有分享链接？此操作不可恢复')) return
+  const tokens = shareLinks.value.map(x => x.token)
+  for (const t of tokens) {
+    try { await api('POST', '/api/output/share/revoke', { token: t }) } catch {}
+  }
+  shareLinks.value = []
+  shareSelected.value = new Set()
+}
+
+const shareExtToken = ref('')
+const shareExtOpen = ref(false)
+const shareExtDownloads = ref(0)
+const shareExtHours = ref(0)
+const shareExtStatus = ref('')
+
+function openShareExtend(token: string) {
+  shareExtToken.value = token
+  shareExtDownloads.value = 0
+  shareExtHours.value = 0
+  shareExtStatus.value = ''
+  shareExtOpen.value = true
+}
+
+async function doShareExtend() {
+  if (!shareExtDownloads.value && !shareExtHours.value) { shareExtStatus.value = '请设置续次数或续时间'; return }
+  shareExtStatus.value = '...'
+  try {
+    await api('POST', '/api/output/share/update', { token: shareExtToken.value, add_downloads: shareExtDownloads.value, add_hours: shareExtHours.value })
+    shareExtStatus.value = '✅ 已更新'
+    await loadShareLinks()
+    setTimeout(() => { if (shareExtOpen.value) shareExtOpen.value = false }, 1500)
+  } catch (e: any) { shareExtStatus.value = '❌ ' + e.message }
+}
+
+function shareRemainingTime(expires_at: number): string {
+  if (!expires_at) return '无限'
+  const left = expires_at - Date.now() / 1000
+  if (left <= 0) return '已过期'
+  if (left < 3600) return Math.ceil(left / 60) + ' 分钟'
+  if (left < 86400) return Math.round(left / 3600) + ' 小时'
+  return Math.round(left / 86400) + ' 天'
+}
+
+function copyShareLink(url: string) {
+  navigator.clipboard.writeText(location.origin + url).then(() => alert('链接已复制'))
+}
+
 // ===== Logout =====
 async function logout() {
   await apiRaw('/auth/logout', { method: 'POST', headers: {'Content-Type':'application/json'} })
@@ -991,8 +1197,13 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <!-- ============ GENERATE ============ -->
         <div v-if="activeTab === 'generate'" class="tab-page active p-4 sm:p-6">
           <div class="max-w-5xl mx-auto space-y-6">
+            <div v-if="adminMaintenanceActive" class="rounded-2xl border border-amber-200 bg-amber-50/90 px-4 py-3 text-xs text-amber-700 shadow-sm">
+              🛠️ 维护模式已开启：当前仅管理员可使用生图与管理功能，普通用户会看到维护页。
+              <span v-if="userStore.currentUser?.maintenance_message" class="ml-1 text-amber-600">{{ userStore.currentUser.maintenance_message }}</span>
+            </div>
+
             <!-- Access Key (only for non-admin, no key, logged-in) -->
-            <div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-8 text-center max-w-md mx-auto">
+            <div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-8 text-center max-w-md mx-auto">
               <p class="text-4xl mb-4">🔑</p>
               <p class="text-sm text-gray-500 mb-4">{{ keyExpired ? '您的密钥已过期，请输入新密钥或联系管理员获取' : '需要使用管理员分配的访问密钥才能使用生图服务' }}</p>
               <input v-model="accessKeyInput" @keydown.enter="submitKey" type="text" placeholder="输入访问密钥" class="w-full border border-pink-200 rounded-xl px-4 py-2.5 text-sm text-center mb-3 outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border" />
@@ -1011,22 +1222,22 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
               <!-- Mode switch -->
               <div class="flex gap-2">
-                <button class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all cursor-pointer border-0 active:scale-[0.98]" :class="mode==='txt2img'?'bg-gradient-to-r from-pink-400 to-rose-400 text-white shadow-lg shadow-pink-300/30':'bg-white/70 text-gray-400 border-2 border-pink-100 hover:border-pink-300 hover:text-gray-600'" @click="setMode('txt2img')">📝 文生图</button>
-                <button class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all cursor-pointer border-0 active:scale-[0.98]" :class="mode==='img2img'?'bg-gradient-to-r from-pink-400 to-rose-400 text-white shadow-lg shadow-pink-300/30':'bg-white/70 text-gray-400 border-2 border-pink-100 hover:border-pink-300 hover:text-gray-600'" @click="setMode('img2img')">🖼️ 图生图</button>
+                <button class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all cursor-pointer border-0 active:scale-[0.98]" :class="mode==='txt2img'?'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-lg shadow-pink-300/40':'bg-white/90 text-pink-700 border-2 border-pink-200 shadow-sm hover:bg-pink-50 hover:border-pink-300 hover:text-pink-800'" @click="setMode('txt2img')">📝 文生图</button>
+                <button class="flex-1 py-3 text-base font-semibold rounded-2xl transition-all cursor-pointer border-0 active:scale-[0.98]" :class="mode==='img2img'?'bg-gradient-to-r from-pink-500 to-rose-500 text-white shadow-lg shadow-pink-300/40':'bg-white/90 text-pink-700 border-2 border-pink-200 shadow-sm hover:bg-pink-50 hover:border-pink-300 hover:text-pink-800'" @click="setMode('img2img')">🖼️ 图生图</button>
               </div>
 
               <!-- Workflow + Char/Style side by side -->
               <div class="flex flex-col sm:flex-row gap-4 sm:gap-6">
-                <div class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+                <div class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
                   <WorkflowPicker :key="mode + ':' + currentWorkflowPath" :mode="mode" @select="onWorkflowSelect" />
                 </div>
-                <div v-if="mode!=='img2img'" class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+                <div v-if="mode!=='img2img'" class="flex-1 min-w-0 bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
                   <CharStylePicker />
                 </div>
               </div>
 
               <!-- Prompt form card -->
-              <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 space-y-5">
+              <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6 space-y-5">
                 <!-- Prompt grid -->
                 <div class="prompt-grid">
                   <div>
@@ -1081,7 +1292,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                   <div class="flex flex-wrap gap-1.5" id="res-presets">
                     <button v-for="r in resolutions" :key="r.w+'-'+r.h" @click="width=r.w;height=r.h" :title="r.w+'×'+r.h"
                       class="text-xs px-2 py-1 rounded-lg border transition-all cursor-pointer"
-                      :class="width===r.w&&height===r.h?'bg-pink-500 text-white border-pink-500':'bg-white text-gray-500 border-pink-100 hover:border-pink-300'">
+                      :class="width===r.w&&height===r.h?'bg-pink-500 text-white border-pink-500':'bg-white text-gray-500 border-pink-200 hover:border-pink-300'">
                       {{ r.label || r.w+'×'+r.h }}
                     </button>
                   </div>
@@ -1098,35 +1309,42 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 </div>
 
                 <!-- Run button -->
-                <button @click="startRun"
-                  class="w-full py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl font-semibold text-base shadow-lg shadow-pink-300/30 transition-all active:scale-[0.98] disabled:from-gray-200 disabled:to-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed border-0"
-                id="btn-run"
-                :class="{cooldown: cooldownSec > 0}"
-                :disabled="_isGenerating || needsAccessKey">
-                {{ _isGenerating ? '⏳ 生成中...' : cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : needsAccessKey ? '🔑 需要访问密钥' : '▶ 开始生成' }}
-              </button>
+                <div class="flex gap-2">
+                  <button @click="startRun"
+                    class="flex-1 py-3 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-2xl font-semibold text-base shadow-lg shadow-pink-300/30 transition-all active:scale-[0.98] disabled:from-gray-200 disabled:to-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed border-0"
+                    id="btn-run"
+                    :class="{cooldown: cooldownSec > 0}"
+                    :disabled="_submittingRun || needsAccessKey || cooldownSec > 0">
+                    {{ _submittingRun ? '⏳ 提交中...' : cooldownSec > 0 ? `⏳ 冷却中 ${cooldownSec}s` : needsAccessKey ? '🔑 需要访问密钥' : '▶ 开始生成' }}
+                  </button>
+                  <button @click="resetRunUiState"
+                    title="仅恢复前端按钮状态，不取消后端任务"
+                    class="shrink-0 px-4 py-3 rounded-2xl border border-pink-200 bg-white/80 text-xs text-gray-500 hover:text-pink-500 hover:border-pink-200 transition-all active:scale-[0.98]">
+                    恢复
+                  </button>
+                </div>
               </div>
 
               <!-- Progress card -->
-              <div v-if="progressText || _isGenerating || _watchingMode || llmText" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6 space-y-3">
+              <div v-if="progressText || _isGenerating || _watchingMode || llmText" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6 space-y-3">
                 <div v-if="queueStatus" id="queue-status" class="text-sm text-amber-600 text-center font-semibold">{{ queueStatus }}</div>
                 <div v-if="progressPct > 0" class="w-full bg-pink-100 rounded-full h-2.5 overflow-hidden">
                   <div id="progress-bar" class="h-2.5 rounded-full" :style="{width:progressPct+'%'}"></div>
                 </div>
                 <div id="progress-text" class="text-sm text-gray-500 text-center">{{ progressText }}</div>
-                <div v-if="llmText" class="text-xs bg-rose-50 border border-pink-100 p-3 rounded-xl max-h-36 overflow-y-auto whitespace-pre-wrap text-gray-700 leading-relaxed">{{ llmText }}</div>
+                <div v-if="llmText" class="text-xs bg-rose-50 border border-pink-200 p-3 rounded-xl max-h-36 overflow-y-auto whitespace-pre-wrap text-gray-700 leading-relaxed">{{ llmText }}</div>
               </div>
 
               <!-- Result images card -->
-              <div v-if="resultImages.length" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+              <div v-if="resultImages.length" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
                 <div class="text-base font-bold text-gray-700 mb-3">🖼️ 结果</div>
                 <div class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2 justify-items-center">
-                  <img v-for="(img, i) in resultImages" :key="i" :src="img.url" class="w-full rounded-xl shadow-sm border border-pink-100 cursor-pointer" @click="openLb(resultImages.map(r=>({url:r.url,title:r.filename,filename:r.filename,path:r.path})), i)" />
+                  <img v-for="(img, i) in resultImages" :key="i" :src="img.url" class="w-full rounded-xl shadow-sm border border-pink-200 cursor-pointer" @click="openLb(resultImages.map(r=>({url:r.url,title:r.filename,filename:r.filename,path:r.path})), i)" />
                 </div>
               </div>
 
               <!-- My Queue card -->
-              <div v-if="myQueueItems.length" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+              <div v-if="myQueueItems.length" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
                 <div class="flex items-center justify-between mb-1">
                   <span id="my-queue-status" class="text-xs text-gray-400">{{ myQueueItems.some((i:any)=>i.status==='running') ? '⚡ 正在生成' : myQueueItems.some((i:any)=>i.status==='waiting') ? '⏳ 排队中' : '✅ 空闲' }}</span>
                 </div>
@@ -1150,9 +1368,9 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <!-- ============ GALLERY ============ -->
         <div v-if="activeTab === 'gallery'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><GalleryGrid ref="galleryRef" /><div class="h-20"></div></div></div>
         <!-- ============ FEATURED ============ -->
-        <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-8 text-center text-sm text-gray-500">需要访问密钥后查看精选</div><FeaturedGrid v-else /><div class="h-20"></div></div></div>
+        <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-8 text-center text-sm text-gray-500">需要访问密钥后查看精选</div><FeaturedGrid v-else /><div class="h-20"></div></div></div>
         <!-- ============ MY WORKS ============ -->
-        <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-8 text-center text-sm text-gray-500">需要访问密钥后查看作品</div><MyWorksGrid v-else ref="myworksRef" /><div class="h-20"></div></div></div>
+        <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-8 text-center text-sm text-gray-500">需要访问密钥后查看作品</div><MyWorksGrid v-else ref="myworksRef" /><div class="h-20"></div></div></div>
         <!-- ============ MORE ============ -->
         <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-6">
           <h1 class="text-xl sm:text-2xl font-bold text-gray-800">⚙️ 更多</h1>
@@ -1164,7 +1382,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
           <!-- GPU -->
           <GPUBar />
           <!-- 常用链接 -->
-          <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+          <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
             <h2 class="text-base font-semibold mb-3 text-gray-700">🔗 常用链接</h2>
             <div class="flex flex-col gap-2 text-sm">
               <a href="https://2x.nz/posts/ai-wife" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">📖 新手教程：从零开始造老婆</a>
@@ -1173,7 +1391,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
             </div>
           </div>
           <!-- 免责声明 -->
-          <div class="bg-white/75 backdrop-blur-md border border-pink-100 rounded-3xl shadow-lg shadow-pink-100/30 p-5 sm:p-6">
+          <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
             <h2 class="text-base font-semibold mb-3 text-gray-700">免责声明</h2>
             <div class="text-sm text-gray-600 leading-relaxed space-y-2">
               <p>使用本站服务即表示您同意：</p>
@@ -1212,7 +1430,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
       <!-- ============ GEN NOTICE MODAL ============ -->
       <Teleport to="body">
         <div v-if="showGenNoticeModal" class="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm flex items-center justify-center p-4" @click.self="cancelGenNotice">
-          <div class="bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 max-w-md w-full p-5 max-h-[90vh] overflow-y-auto">
+          <div class="bg-white/95 backdrop-blur-xl border border-pink-200 rounded-3xl shadow-2xl shadow-pink-100/40 max-w-md w-full p-5 max-h-[90vh] overflow-y-auto">
             <h3 class="text-lg font-bold mb-3 text-red-500">⚠️ 生图前必读公告</h3>
             <div class="text-sm text-gray-700 leading-relaxed space-y-2 mb-4">
               <p>您了解并已知晓自己即将进行生图操作，<strong>您的 IP 将会被记录</strong>。</p>
@@ -1234,10 +1452,10 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
       <!-- ============ SETTINGS MODAL ============ -->
       <Teleport to="body">
         <div v-if="settingsOpen" class="fixed inset-0 z-[65] bg-black/30 backdrop-blur-sm flex items-start justify-center py-8">
-          <div class="mx-4 w-full sm:max-w-2xl bg-white/95 backdrop-blur-xl border border-pink-100 rounded-3xl shadow-2xl shadow-pink-100/40 max-h-[85vh] overflow-y-auto p-5" @click.stop>
+          <div class="mx-4 w-full sm:max-w-2xl bg-white/95 backdrop-blur-xl border border-pink-200 rounded-3xl shadow-2xl shadow-pink-100/40 max-h-[85vh] overflow-y-auto p-5" @click.stop>
             <!-- === MAIN SETTINGS === -->
             <template v-if="settingsView === 'main'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
                 <div class="flex items-center gap-3 min-w-0">
                   <div class="shrink-0">
                     <img v-if="userStore.currentUser?.avatar_url" :src="userStore.currentUser.avatar_url" class="w-10 h-10 rounded-full" />
@@ -1274,76 +1492,152 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                     <span class="shrink-0 w-8 text-right">{{ Math.round(soundVol*100) }}%</span>
                   </div>
                 </div>
-                <!-- UI 缩放 -->
-                <div class="px-3 py-2">
-                  <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
-                    <span>🔍 界面缩放</span>
-                    <span>{{ Math.round(uiZoom * 100) }}%</span>
+                <div class="px-3 py-2.5 rounded-xl hover:bg-pink-50 transition-all">
+                  <div class="flex items-center justify-between text-sm text-gray-600 mb-1">
+                    <span>⏱️ 空闲任务轮询</span>
+                    <span class="text-xs text-gray-500">{{ myQueueIdlePollSec }} 秒</span>
                   </div>
                   <div class="flex items-center gap-2">
-                    <input type="range" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @input="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
-                    <input type="number" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @change="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
-                    <span class="text-xs text-gray-400 shrink-0">%</span>
+                    <input aria-label="空闲任务轮询间隔" type="range" min="2" max="60" step="1" :value="myQueueIdlePollSec" @input="setMyQueueIdlePollSec(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                    <input aria-label="空闲任务轮询秒数" type="number" min="2" max="60" step="1" :value="myQueueIdlePollSec" @change="setMyQueueIdlePollSec(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                    <span class="text-xs text-gray-500 shrink-0">秒</span>
                   </div>
+                  <div class="text-[11px] text-gray-400 mt-1">仅当前浏览器生效；有任务时仍会自动加快刷新。</div>
                 </div>
-                <!-- 选择缩略图大小 -->
-                <div class="px-3 py-2">
-                  <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
-                    <span>🖼️ 选择缩略图大小</span>
-                    <span>{{ pickerThumbPercent }}% · {{ pickerThumbSize }}px</span>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <input type="range" min="20" max="100" step="5" :value="pickerThumbPercent" @input="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
-                    <input type="number" min="20" max="100" step="5" :value="pickerThumbPercent" @change="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
-                    <span class="text-xs text-gray-400 shrink-0">%</span>
-                  </div>
-                </div>
-                <!-- 最底层背景图片 -->
-                <div class="px-3 py-2 rounded-xl hover:bg-pink-50 transition-all">
-                  <div class="flex items-center justify-between text-xs text-gray-400 mb-2 gap-2">
-                    <span class="shrink-0">🖼️ 最底层背景图片</span>
-                    <span class="truncate text-right">{{ homeBgImageName || '未设置' }}</span>
-                  </div>
-                  <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500">
-                    <button @click="handleHomeBgUpload" class="text-pink-500 hover:underline cursor-pointer border-0 bg-transparent p-0">选择图片</button>
-                    <button @click="resetHomeBgImage" class="text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent p-0">清除</button>
-                    <label class="flex items-center gap-1 cursor-pointer select-none">
-                      <input type="radio" name="home-bg-mode" :checked="homeBgImageMode === 'tile'" @change="saveHomeBgMode('tile')" class="accent-pink-500" />
-                      平铺
-                    </label>
-                    <label class="flex items-center gap-1 cursor-pointer select-none">
-                      <input type="radio" name="home-bg-mode" :checked="homeBgImageMode === 'stretch'" @change="saveHomeBgMode('stretch')" class="accent-pink-500" />
-                      拉伸
-                    </label>
-                  </div>
-                  <div v-if="homeBgImageData" class="mt-2">
-                    <div class="flex items-center justify-between text-xs text-gray-400 mb-1">
-                      <span>背景图缩放</span>
-                      <span>{{ homeBgImageScale }}%</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                      <input type="range" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
-                      <input type="number" min="10" max="300" step="5" :value="homeBgImageScale" @change="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-100 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
-                      <span class="text-xs text-gray-400 shrink-0">%</span>
-                    </div>
-                  </div>
-                  <div class="text-[11px] text-gray-400 mt-1">图片仅保存在当前浏览器，不会上传服务器；大图会自动压缩到最大 2K 后保存</div>
-                  <div v-if="homeBgError" class="text-xs text-red-400 mt-1">{{ homeBgError }}</div>
-                </div>
-                <!-- 布局密度 -->
-                <label class="flex items-center justify-between px-3 py-2.5 rounded-xl hover:bg-pink-50 cursor-pointer transition-all select-none">
-                  <span class="text-sm text-gray-600">📏 紧凑布局</span>
-                  <input type="checkbox" :checked="compactLayout" @change="setCompactLayout(($event.target as HTMLInputElement).checked)" class="w-4 h-4 accent-pink-500 shrink-0" />
-                </label>
+                <button @click="settingsView='appearance'" class="w-full text-left flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-gray-600 transition-all cursor-pointer border-0 bg-transparent">
+                  <span class="min-w-0">
+                    <span class="block">🎛️ 显示与外观</span>
+                    <span class="block text-xs text-gray-500 mt-0.5">页面缩放、背景图片、缩略图、布局密度</span>
+                  </span>
+                  <span class="text-xs text-gray-500 shrink-0">缩放 {{ Math.round(uiZoom * 100) }}% · 卡片 {{ cardBgOpacity }}% ›</span>
+                </button>
+                <button @click="settingsView='share'; loadShareLinks()" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all cursor-pointer border-0 bg-transparent">🔗 分享管理</button>
                 <button v-if="userStore.currentUser?.is_email_user" @click="settingsView='totp'" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all cursor-pointer border-0 bg-transparent">🔐 两步验证</button>
                 <button v-if="userStore.currentUser?.is_email_user" @click="settingsView='password'" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-pink-50 text-sm text-pink-500 transition-all cursor-pointer border-0 bg-transparent">🔑 更改密码</button>
                 <button @click="logout" class="w-full text-left flex items-center gap-2 px-3 py-2.5 rounded-xl hover:bg-red-50 text-sm text-red-500 transition-all cursor-pointer border-0 bg-transparent">🚪 退出登录</button>
               </div>
             </template>
 
+            <!-- === APPEARANCE SETTINGS === -->
+            <template v-if="settingsView === 'appearance'">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
+                <div class="flex items-center gap-2 min-w-0">
+                  <button @click="settingsView='main'" aria-label="返回设置" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent shrink-0">&larr;</button>
+                  <h3 class="text-base font-bold text-gray-700 truncate">🎛️ 显示与外观</h3>
+                </div>
+                <button @click="closeSettings" aria-label="关闭设置" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent shrink-0">&times;</button>
+              </div>
+              <div class="pt-3 space-y-4">
+                <p class="text-xs text-gray-500 px-1">这些设置仅影响当前浏览器的显示偏好，不会上传服务器。</p>
+
+                <section class="space-y-2">
+                  <div class="text-xs font-semibold text-gray-500 px-1">页面显示</div>
+                  <div class="px-3 py-3 rounded-2xl border border-pink-200 bg-white/60">
+                    <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>🔍 页面缩放</span>
+                      <span>{{ Math.round(uiZoom * 100) }}%</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <input aria-label="页面缩放" type="range" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @input="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                      <input aria-label="页面缩放数值" type="number" min="50" max="130" step="5" :value="Math.round(uiZoom * 100)" @change="setUiZoom(parseInt(($event.target as HTMLInputElement).value)/100)" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                      <span class="text-xs text-gray-500 shrink-0">%</span>
+                    </div>
+                  </div>
+                  <label class="flex items-center justify-between px-3 py-3 rounded-2xl border border-pink-200 bg-white/60 hover:bg-pink-50 cursor-pointer transition-all select-none">
+                    <span>
+                      <span class="block text-sm text-gray-600">📏 紧凑布局</span>
+                      <span class="block text-xs text-gray-500 mt-0.5">减少卡片间距和输入区域留白</span>
+                    </span>
+                    <input type="checkbox" :checked="compactLayout" @change="setCompactLayout(($event.target as HTMLInputElement).checked)" class="w-4 h-4 accent-pink-500 shrink-0" />
+                  </label>
+                </section>
+
+                <section class="space-y-2">
+                  <div class="text-xs font-semibold text-gray-500 px-1">内容选择器</div>
+                  <div class="px-3 py-3 rounded-2xl border border-pink-200 bg-white/60">
+                    <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>🖼️ 工作流缩略图大小</span>
+                      <span>{{ pickerThumbPercent }}% · {{ pickerThumbSize }}px</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <input aria-label="工作流缩略图大小" type="range" min="20" max="100" step="5" :value="pickerThumbPercent" @input="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                      <input aria-label="工作流缩略图大小数值" type="number" min="20" max="100" step="5" :value="pickerThumbPercent" @change="setPickerThumbPercent(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                      <span class="text-xs text-gray-500 shrink-0">%</span>
+                    </div>
+                  </div>
+                </section>
+
+                <section class="space-y-2">
+                  <div class="text-xs font-semibold text-gray-500 px-1">卡片与背景</div>
+                  <div class="px-3 py-3 rounded-2xl border border-pink-200 bg-white/60">
+                    <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>🪟 卡片背景不透明度</span>
+                      <span>{{ cardBgOpacity }}%</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <input aria-label="卡片背景不透明度" type="range" min="40" max="95" step="5" :value="cardBgOpacity" @input="setCardBgOpacity(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                      <input aria-label="卡片背景不透明度数值" type="number" min="40" max="95" step="5" :value="cardBgOpacity" @change="setCardBgOpacity(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                      <span class="text-xs text-gray-500 shrink-0">%</span>
+                    </div>
+                    <div class="text-[11px] text-gray-500 mt-1">低不透明度更突出背景图；高不透明度提升文字可读性。</div>
+                  </div>
+
+                  <div class="px-3 py-3 rounded-2xl border border-pink-200 bg-white/60">
+                    <div class="flex items-center justify-between text-xs text-gray-500 mb-2 gap-2">
+                      <span class="shrink-0">🖼️ 页面背景图片</span>
+                      <span class="truncate text-right">{{ homeBgImageName || '未设置' }}</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                      <button @click="handleHomeBgUpload" class="text-pink-500 hover:underline cursor-pointer border-0 bg-transparent p-0">选择图片</button>
+                      <button @click="resetHomeBgImage" class="text-gray-500 hover:text-gray-600 cursor-pointer border-0 bg-transparent p-0">清除</button>
+                      <label class="flex items-center gap-1 cursor-pointer select-none">
+                        <input type="radio" name="home-bg-mode-appearance" :checked="homeBgImageMode === 'tile'" @change="saveHomeBgMode('tile')" class="accent-pink-500" />
+                        平铺
+                      </label>
+                      <label class="flex items-center gap-1 cursor-pointer select-none">
+                        <input type="radio" name="home-bg-mode-appearance" :checked="homeBgImageMode === 'stretch'" @change="saveHomeBgMode('stretch')" class="accent-pink-500" />
+                        拉伸
+                      </label>
+                    </div>
+                    <div v-if="homeBgImageData" class="mt-2 space-y-2">
+                      <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>背景图缩放</span>
+                        <span>{{ homeBgImageScale }}%</span>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <input aria-label="背景图缩放" type="range" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                        <input aria-label="背景图缩放数值" type="number" min="10" max="300" step="5" :value="homeBgImageScale" @input="setHomeBgImageScale(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                        <span class="text-xs text-gray-500 shrink-0">%</span>
+                      </div>
+                      <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>水平位置</span>
+                        <span>{{ homeBgImagePosX }}%</span>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <input aria-label="背景水平位置" type="range" min="0" max="100" step="5" :value="homeBgImagePosX" @input="setHomeBgPosX(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                        <input aria-label="背景水平位置数值" type="number" min="0" max="100" step="5" :value="homeBgImagePosX" @input="setHomeBgPosX(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                        <span class="text-xs text-gray-500 shrink-0">%</span>
+                      </div>
+                      <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+                        <span>垂直位置</span>
+                        <span>{{ homeBgImagePosY }}%</span>
+                      </div>
+                      <div class="flex items-center gap-2">
+                        <input aria-label="背景垂直位置" type="range" min="0" max="100" step="5" :value="homeBgImagePosY" @input="setHomeBgPosY(parseInt(($event.target as HTMLInputElement).value))" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+                        <input aria-label="背景垂直位置数值" type="number" min="0" max="100" step="5" :value="homeBgImagePosY" @input="setHomeBgPosY(parseInt(($event.target as HTMLInputElement).value))" class="w-16 border border-pink-200 rounded-lg px-2 py-1 text-xs text-gray-500 text-right outline-none focus:border-pink-400" />
+                        <span class="text-xs text-gray-500 shrink-0">%</span>
+                      </div>
+                    </div>
+                    <div class="text-[11px] text-gray-500 mt-1">图片仅保存在当前浏览器，不会上传服务器；大图会自动压缩到最大 2K 后保存。</div>
+                    <div v-if="homeBgError" class="text-xs text-red-400 mt-1">{{ homeBgError }}</div>
+                  </div>
+                </section>
+              </div>
+            </template>
+
             <!-- === TOTP SETTINGS === -->
             <template v-if="settingsView === 'totp'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
                 <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
                 <button @click="closeSettings" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
               </div>
@@ -1352,7 +1646,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
             <!-- === PASSWORD CHANGE === -->
             <template v-if="settingsView === 'password'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-100">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
                 <div class="flex items-center gap-2">
                   <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
                   <h3 class="text-base font-bold text-gray-700">🔑 更改密码</h3>
@@ -1367,9 +1661,83 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                 <span class="text-xs block text-center min-h-[18px]" :class="cpStatus.includes('✅')?'text-green-500':'text-red-400'">{{ cpStatus }}</span>
               </div>
             </template>
+
+            <!-- === SHARE MANAGEMENT === -->
+            <template v-if="settingsView === 'share'">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
+                <div class="flex items-center gap-2">
+                  <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
+                  <h3 class="text-base font-bold text-gray-700">🔗 分享管理</h3>
+                </div>
+                <button @click="closeSettings" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
+              </div>
+              <div class="space-y-2 pt-2">
+                <div class="flex items-center gap-2 mb-1">
+                  <button @click="loadShareLinks" :disabled="shareLinksLoading" class="text-xs px-2 py-1 rounded cursor-pointer border-0 bg-gray-100 text-gray-500 hover:bg-gray-200 disabled:opacity-50">🔄 刷新</button>
+                  <button v-if="shareLinks.length" @click="shareSelectMode = !shareSelectMode; if(!shareSelectMode) shareSelected = new Set()" class="text-xs px-2 py-1 rounded cursor-pointer border-0" :class="shareSelectMode ? 'bg-pink-100 text-pink-600' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'">☑ 编辑</button>
+                  <button v-if="shareLinks.length > 1" @click="revokeAllShareLinks" class="text-xs px-2 py-1 bg-red-100 text-red-500 rounded hover:bg-red-200 cursor-pointer border-0">撤销全部</button>
+                </div>
+                <div v-if="shareLinksLoading" class="text-center text-xs text-gray-400 py-4">加载中...</div>
+                <div v-else-if="shareLinksError" class="text-center text-xs text-red-400 py-4">{{ shareLinksError }}</div>
+                <div v-else-if="!shareLinks.length" class="text-center text-xs text-gray-400 py-4">暂无有效分享链接</div>
+                <div v-else>
+                  <div v-if="shareSelectMode && shareSelected.size" class="mb-2 flex items-center gap-2 px-3 py-1.5 bg-red-50 rounded-lg border border-red-200">
+                    <span class="text-xs text-red-600 flex-1">已选 {{ shareSelected.size }} 项</span>
+                    <button @click="revokeSelectedShares" class="text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 cursor-pointer border-0">批量撤销</button>
+                  </div>
+                  <div v-for="it in shareLinks" :key="it.token" class="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-gray-50 border border-gray-100">
+                    <div v-if="shareSelectMode" class="flex items-center h-5 shrink-0">
+                      <input type="checkbox" :checked="shareSelected.has(it.token)" @change="shareToggleSelect(it.token)" class="w-3.5 h-3.5 accent-pink-500 cursor-pointer" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                      <div class="text-xs text-gray-700 truncate" :title="it.path">{{ it.path.split('/').pop() }}</div>
+                      <div class="text-[10px] text-gray-400">
+                        {{ it.max_downloads ? it.downloads + '/' + it.max_downloads + ' 次' : '不限次' }}
+                        · 剩余 {{ shareRemainingTime(it.expires_at) }}
+                        · {{ it.created_login || '未知' }}
+                      </div>
+                    </div>
+                    <button @click="copyShareLink(it.url)" class="text-[10px] px-2 py-1 bg-pink-100 text-pink-600 rounded hover:bg-pink-200 cursor-pointer border-0 shrink-0">复制</button>
+                    <button v-if="!shareSelectMode" @click="openShareExtend(it.token)" class="text-[10px] px-2 py-1 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 cursor-pointer border-0 shrink-0">续</button>
+                    <button v-if="!shareSelectMode" @click="revokeShareLink(it.token)" class="text-[10px] px-2 py-1 bg-red-100 text-red-500 rounded hover:bg-red-200 cursor-pointer border-0 shrink-0">撤销</button>
+                  </div>
+                  <div v-if="shareSelectMode && shareLinks.length" class="mt-2 flex items-center gap-2 px-3 py-1.5 bg-gray-50 rounded-lg border border-gray-200">
+                    <label class="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
+                      <input type="checkbox" :checked="shareLinks.length > 0 && shareLinks.every(x => shareSelected.has(x.token))" @change="shareToggleAll" class="w-3.5 h-3.5 accent-pink-500 cursor-pointer" />
+                      全选/取消
+                    </label>
+                    <span class="text-xs text-gray-400 ml-auto">{{ shareSelected.size }}/{{ shareLinks.length }} 已选</span>
+                  </div>
+                </div>
+                <div class="text-[10px] text-gray-400 px-1 mt-2">分享链接存于内存，服务器重启后自动失效。已删除图片的链接会在访问时自动销毁。</div>
+              </div>
+
+            </template>
+
+            <!-- Extend Modal (在 settings 弹窗之外，避免 backdrop-filter 影响 fixed) -->
+            <Teleport to="body">
+              <div v-if="shareExtOpen" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4" @click.self="shareExtOpen=false">
+                <div class="bg-white rounded-2xl shadow-xl max-w-xs w-full p-4">
+                  <h4 class="text-sm font-bold text-gray-700 mb-3">📤 续期/续次数</h4>
+                  <label class="block text-xs text-gray-600 mb-2">
+                    增加下载次数
+                    <input v-model.number="shareExtDownloads" type="number" min="0" max="100" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 box-border" />
+                  </label>
+                  <label class="block text-xs text-gray-600 mb-3">
+                    增加有效期（小时）
+                    <input v-model.number="shareExtHours" type="number" min="0" max="720" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 box-border" />
+                  </label>
+                  <div v-if="shareExtStatus" class="mb-2 text-xs" :class="shareExtStatus.startsWith('✅')?'text-green-500':'text-red-400'">{{ shareExtStatus }}</div>
+                  <div class="flex gap-2">
+                    <button @click="shareExtOpen=false" class="flex-1 py-2 bg-gray-100 rounded-xl hover:bg-gray-200 text-xs text-gray-600 cursor-pointer border-0">取消</button>
+                    <button @click="doShareExtend" class="flex-1 py-2 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl hover:from-pink-300 hover:to-rose-300 text-xs font-semibold cursor-pointer border-0">确定</button>
+                  </div>
+                </div>
+              </div>
+            </Teleport>
           </div>
         </div>
-      </Teleport>
-    </div>
+    </Teleport>
+  </div>
   </div>
 </template>

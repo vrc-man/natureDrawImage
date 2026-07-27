@@ -19,6 +19,11 @@ from db.schema import get_db, config_get, config_set, config_get_section, db_loc
 _db = get_db  # 函数别名
 
 
+def _escape_like(s: str) -> str:
+    """转义 SQL LIKE 通配符 % 和 _，防止信息泄露/越权匹配。"""
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def backup_database(dst_path: str) -> None:
     """使用 SQLite 在线备份 API 生成事务一致快照，包含 WAL 中的最新数据。"""
     dst = sqlite3.connect(dst_path)
@@ -523,36 +528,44 @@ def load_gen_logs_raw():
     """Return all gen_logs rows as list of dicts (for fallback lookups)."""
     return [dict(r) for r in _db().execute("SELECT * FROM gen_logs ORDER BY created_at DESC").fetchall()]
 
-def count_gen_logs_today(login: str = "") -> int:
-    """今日（UTC）成功生图总数。可选 login 筛选。"""
-    sql = "SELECT COUNT(*) as c FROM gen_logs WHERE status='success' AND date(created_at,'unixepoch')=date('now')"
-    params: list = []
+def count_gen_logs_today(tz_offset: float = 0, login: str = "") -> int:
+    """今日成功生图总数。tz_offset 为浏览器时区偏移（小时），取本地今天的 epoch 范围。"""
+    now = _time_module.time()
+    today_start = now - ((now + tz_offset * 3600) % 86400)
+    today_end = today_start + 86400
+    sql = "SELECT COUNT(*) as c FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+    params: list = [today_start, today_end]
     if login:
         sql += " AND (login LIKE ? OR github_id LIKE ?)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     r = _db().execute(sql, params).fetchone()
     return r["c"] if r else 0
 
 
-def get_gen_logs_hourly_today(login: str = "") -> List[Dict]:
-    """今日（UTC）每小时的生图数量。可选 login 筛选。"""
-    sql = "SELECT strftime('%H',created_at,'unixepoch') as hour,COUNT(*) as count FROM gen_logs WHERE status='success' AND date(created_at,'unixepoch')=date('now')"
-    params: list = []
+def get_gen_logs_hourly_today(tz_offset: float = 0, login: str = "") -> List[Dict]:
+    """今日每小时生图数量。tz_offset 用于本地时区偏移。"""
+    now = _time_module.time()
+    today_start = now - ((now + tz_offset * 3600) % 86400)
+    today_end = today_start + 86400
+    sql = "SELECT CAST(strftime('%H',created_at+?,'unixepoch') AS INTEGER) as hour,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+    params: list = [tz_offset * 3600, today_start, today_end]
     if login:
         sql += " AND (login LIKE ? OR github_id LIKE ?)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     sql += " GROUP BY hour ORDER BY hour"
     rows = _db().execute(sql, params).fetchall()
     return [dict(r) for r in rows]
 
 
-def get_gen_logs_daily_7days(login: str = "") -> List[Dict]:
-    """最近7天（UTC）每日生图数量。可选 login 筛选。"""
-    sql = "SELECT date(created_at,'unixepoch') as day,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=unixepoch('now','-7 days')"
-    params: list = []
+def get_gen_logs_daily_7days(tz_offset: float = 0, login: str = "") -> List[Dict]:
+    """最近7天每日生图数量。tz_offset 用于本地时区偏移。"""
+    now = _time_module.time()
+    cutoff = now - 7 * 86400
+    sql = "SELECT date(created_at+?,'unixepoch') as day,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+    params: list = [tz_offset * 3600, cutoff, now]
     if login:
         sql += " AND (login LIKE ? OR github_id LIKE ?)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     sql += " GROUP BY day ORDER BY day"
     rows = _db().execute(sql, params).fetchall()
     return [dict(r) for r in rows]
@@ -564,21 +577,18 @@ def count_gen_logs_range(date_from: float, date_to: float, login: str = "") -> i
     params: list = [date_from, date_to]
     if login:
         sql += " AND (login LIKE ? OR github_id LIKE ?)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     r = _db().execute(sql, params).fetchone()
     return r["c"] if r else 0
 
 
 def get_gen_logs_hourly_range(date_from: float, date_to: float, login: str = "", tz_offset: float = 0) -> List[Dict]:
     """指定时间范围每小时的生图数量。可选 login/tz_offset 筛选。tz_offset 非0时按本地时区聚合。"""
-    if tz_offset:
-        sql = f"SELECT CAST(strftime('%H',created_at,'unixepoch','{int(tz_offset):+d} hours') AS INTEGER) as hour,SUM(count) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
-    else:
-        sql = "SELECT CAST(strftime('%H',created_at,'unixepoch') AS INTEGER) as hour,SUM(count) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
-    params: list = [date_from, date_to]
+    sql = "SELECT CAST(strftime('%H',created_at+?,'unixepoch') AS INTEGER) as hour,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+    params: list = [tz_offset * 3600, date_from, date_to]
     if login:
         sql += " AND (login LIKE ? OR github_id LIKE ?)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     sql += " GROUP BY hour ORDER BY hour"
     rows = _db().execute(sql, params).fetchall()
     return [dict(r) for r in rows]
@@ -586,14 +596,11 @@ def get_gen_logs_hourly_range(date_from: float, date_to: float, login: str = "",
 
 def get_gen_logs_daily_range(date_from: float, date_to: float, login: str = "", tz_offset: float = 0) -> List[Dict]:
     """指定时间范围每日生图数量。可选 login/tz_offset 筛选。tz_offset 非0时按本地时区聚合。"""
-    if tz_offset:
-        sql = f"SELECT date(created_at,'unixepoch','{int(tz_offset):+d} hours') as day,SUM(count) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
-    else:
-        sql = "SELECT date(created_at,'unixepoch') as day,SUM(count) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
-    params: list = [date_from, date_to]
+    sql = "SELECT date(created_at+?,'unixepoch') as day,COUNT(*) as count FROM gen_logs WHERE status='success' AND created_at>=? AND created_at<?"
+    params: list = [tz_offset * 3600, date_from, date_to]
     if login:
         sql += " AND (login LIKE ? OR github_id LIKE ?)"
-        params.extend([f"%{login}%", f"%{login}%"])
+        params.extend([f"%{_escape_like(login)}%", f"%{_escape_like(login)}%"])
     sql += " GROUP BY day ORDER BY day"
     rows = _db().execute(sql, params).fetchall()
     return [dict(r) for r in rows]
@@ -738,7 +745,7 @@ def get_gen_leaderboard(limit: int = 3, date_from: float = 0, date_to: float = 0
 
 
 def find_gen_log_by_file_path(file_path: str) -> Optional[Dict]:
-    rows = _db().execute("SELECT * FROM gen_logs WHERE file_paths LIKE ?", (f'%{file_path}%',)).fetchall()
+    rows = _db().execute("SELECT * FROM gen_logs WHERE file_paths LIKE ?", (f'%{_escape_like(file_path)}%',)).fetchall()
     for r in rows:
         try:
             fps = json.loads(r["file_paths"] or "[]")
@@ -805,10 +812,10 @@ def query_gen_logs(login: str = "", date_from: float = 0, date_to: float = 0,
     params = []
     if login:
         conditions.append("login LIKE ?")
-        params.append(f"%{login}%")
+        params.append(f"%{_escape_like(login)}%")
     if path:
         conditions.append("file_paths LIKE ?")
-        params.append(f"%{path}%")
+        params.append(f"%{_escape_like(path)}%")
     if date_from:
         conditions.append("created_at >= ?")
         params.append(date_from)
@@ -928,11 +935,11 @@ def query_deletion_log(search: str = "", date_from: float = 0, date_to: float = 
     params = []
     if search:
         conditions.append("(deleted_by_login LIKE ? OR creator_login LIKE ? OR path LIKE ?)")
-        s = f"%{search}%"
+        s = f"%{_escape_like(search)}%"
         params.extend([s, s, s])
     if path:
         conditions.append("path LIKE ?")
-        params.append(f"%{path}%")
+        params.append(f"%{_escape_like(path)}%")
     if date_from:
         conditions.append("deleted_at >= ?")
         params.append(date_from)

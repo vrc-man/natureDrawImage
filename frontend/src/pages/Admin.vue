@@ -26,6 +26,7 @@ import ImageSection from '@/components/admin/ImageSection.vue'
 import GcSection from '@/components/admin/GcSection.vue'
 import StatsSection from '@/components/admin/StatsSection.vue'
 import LeaderBoardSection from '@/components/admin/LeaderBoardSection.vue'
+import ShareSection from '@/components/admin/ShareSection.vue'
 
 const isAdmin = ref(false), loading = ref(true)
 const expanded = ref<Record<string, boolean>>({})
@@ -61,6 +62,7 @@ const groups: GroupDef[] = [
       { key: 'limits', title: '⚙️ 限流配置', comp: LimitsSection },
       { key: 'maint', title: '🔧 维护模式', comp: MaintSection },
       { key: 'chead', title: '📎 自定义 Head', comp: CheadSection },
+      { key: 'share', title: '🔗 分享链接管理', comp: ShareSection },
     ],
   },
   {

@@ -142,7 +142,7 @@ from db import operations as db
 # 在首次 PIL import 时生效；后续延迟导入共享同一模块级配置
 _PIL_MAX_PIXELS = 100_000_000  # 1亿像素
 
-# 信任的反代 IP（逗号分隔）。设为 "*" 信任所有（危险！），设为 "" 不信任任何代理
+# 信任的反代 IP（逗号分隔）。设为 "*" 时信任内网 IP（本地回环 + 10/172.16/192.168 段），设为 "" 不信任任何代理
 # 如果有 nginx/Cloudflare 反代，填反代 IP，否则 X-Forwarded-For 会被忽略
 TRUSTED_PROXY_IPS = os.environ.get("TRUSTED_PROXY_IPS", "127.0.0.1,::1")
 CONTACT_EMAIL = os.environ.get("CONTACT_EMAIL", "")
@@ -164,11 +164,7 @@ WORKFLOW_META_FILE = Path(__file__).parent / "workflow_meta.json"
 QUEUE_STATE_FILE = Path(__file__).parent / "queue_state.json"
 _creator_map_lock = asyncio.Lock()
 
-# ── 以下常量标记 TODO: migrate to db，当前仍由未迁移函数使用 ──
-USERS_FILE = Path(__file__).parent / "users.json"
-SESSIONS_FILE = Path(__file__).parent / "sessions.json"
-_users_lock = asyncio.Lock()
-_sessions_lock = asyncio.Lock()
+# ── 以下常量已全部迁移到 SQLite，.json 文件不再读写 ──
 USER_IMAGES_FILE = Path(__file__).parent / "user_images.json"
 _user_images_lock = asyncio.Lock()
 DELETED_IMAGES_FILE = Path(__file__).parent / "deleted_images.json"
@@ -205,8 +201,8 @@ async def _save_gen_log(github_id: str, _login: str, prompt: str, workflow: str,
     global _gen_logs_path_cache
     _gen_logs_path_cache = None
 
-async def _increment_key_usage(github_id: str):
-    """确认密钥使用（已由 _ws_verify_key 原子预扣，此处仅做耗尽日志记录）。"""
+async def _check_key_exhaustion(github_id: str):
+    """检查密钥是否已耗尽（实际递增由 _ws_verify_key 原子预扣完成，此处仅做耗尽日志记录）。"""
     async with _access_keys_lock:
         data = _load_access_keys()
         now = _time_module.time()
@@ -437,7 +433,7 @@ async def _ensure_user(user_data: dict) -> dict:
             await _release_user_access_bindings(github_id, as_admin=True)
         return dict(users[github_id])
 
-# ---------------- 管理员 / 封禁列表 / 精选 ----------------
+# ---------------- 管理员 / 封禁列表 / 精选（已迁移到 SQLite，.txt 文件不再使用） ----------------
 BANNED_IPS_FILE = Path(__file__).parent / "banned_ips.txt"
 FEATURED_FILE = Path(__file__).parent / "featured.txt"
 LIMITS_FILE = Path(__file__).parent / "limits.json"
@@ -498,6 +494,7 @@ DEFAULT_LIMITS = {
     "gpu_poll_interval_ms": 5000,
     "gpu_cache_ttl_ms": 5000,
     "gc_interval_hours": 0.5,
+    "backup_interval_hours": 0.5,
     "gc_orphan_scan": 1,
     "startup_orphan_scan": 1,
     "gc_clean_empty_dirs": 1,
@@ -521,7 +518,10 @@ def _load_limits() -> Dict[str, Any]:
                         if isinstance(v, list):
                             merged[k] = v
                     elif isinstance(v, (int, float)) and v >= 0:
-                        merged[k] = int(v)
+                        if isinstance(DEFAULT_LIMITS[k], float):
+                            merged[k] = float(v)
+                        else:
+                            merged[k] = int(v)
                 return merged
         except Exception:
             pass
@@ -1460,7 +1460,7 @@ async def _auth_middleware(request: Request, call_next):
         or path == "/favicon.ico"
         or path == "/privacy"
         or path == "/api/privacy-content"
-        or path.startswith("/api/output/file-dl")
+        or path.startswith("/api/output/share")
     )
 
     # CSRF 保护：对状态变更请求校验 Origin/Referer（需在公开路径 early return 之前）
@@ -2053,7 +2053,7 @@ async def _cleanup_stale_deleted_entries():
 
 
 async def _cleanup_stale_user_images():
-    """启动时清理 user_images 中磁盘文件已不存在的死记录。"""
+    """清理 user_images 中磁盘文件已不存在的死记录（启动时 + GC 定时执行）。"""
     try:
         output_dir = OUTPUT_DIR.resolve()
         def exists(rel: str) -> bool:
@@ -2302,6 +2302,9 @@ try:
         "load_users": _load_users,
         "get_user": _get_user_from_session,
         "client_ip": _client_ip_from_request,
+        "load_user_images": _load_user_images,
+        "read_featured": _read_featured,
+        "load_deleted_images": _load_deleted_images,
     })
 except Exception as _e:
     print(f"[features] 依赖注入失败（受影响模块将不可用，数据库不受影响）: {type(_e).__name__}: {_e}")
@@ -2557,14 +2560,15 @@ def _serve_image_maybe_webp(
     *,
     quality: int = 80,
     max_side: Optional[int] = None,
+    full: bool = False,
 ) -> Response:
-    """根据 Accept 头决定原图直传还是 webp 转码。"""
+    """根据 full 参数决定原图直传还是 webp 转码。full=True 返回原图，否则 webp 压缩。"""
     media = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(
         path.suffix.lower().lstrip("."), f"image/{path.suffix.lower().lstrip('.')}"
     )
-    # 已是 webp / gif / 不接受 webp，直传
+    # 已是 webp / gif / 要求原图，直传
     ext = path.suffix.lower()
-    if ext in (".webp", ".gif") or not _accepts_webp(request):
+    if ext in (".webp", ".gif") or full:
         return FileResponse(str(path), media_type=media,
             headers={"Cache-Control": "public, max-age=86400"})
     try:
@@ -2992,7 +2996,8 @@ _LLM_OUTPUT_RULE = (
     "Output format — you MUST output exactly two lines, nothing else:\n"
     "POSITIVE: tag1, tag2, tag3, ...\n"
     "NEGATIVE: tag1, tag2, tag3, ...\n"
-    "No explanation. No Chinese. No markdown. Only the two lines above."
+    "No explanation. No Chinese. No markdown. Only the two lines above.\n"
+    "IMPORTANT: Preserve ALL backslash-escaped characters (e.g. \\(, \\), \\[, \\]) in original tags exactly as-is."
 )
 
 _LLM_NEGATIVE_HINT = (
@@ -3170,6 +3175,11 @@ async def _llm_google(system: str, user: str, cfg: Dict[str, Any], on_chunk: Opt
             {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
         ],
     }
+    print(f"[LLM-DEBUG] ====== 发给 LLM 的完整请求 (Google 格式) ======")
+    print(f"[LLM-DEBUG] model={model}")
+    content_len = len(body["contents"][0]["parts"][0]["text"])
+    print(f"[LLM-DEBUG] content_len={content_len} chars, body={json.dumps(body, ensure_ascii=False, indent=2)[:12000]}")
+    print(f"[LLM-DEBUG] ======")
     thinking = cfg.get("google_thinking", "off")
     if thinking.startswith("level_"):
         body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": thinking[6:]}
@@ -3280,6 +3290,9 @@ async def _llm_google(system: str, user: str, cfg: Dict[str, Any], on_chunk: Opt
             best = max(tag_blocks, key=lambda c: c.count(","))
             if not full or best.count(",") > full.count(","):
                 full = best
+    print(f"[LLM-DEBUG] ====== LLM 原始返回 (Google) ======")
+    print(f"[LLM-DEBUG] {repr(full)}")
+    print(f"[LLM-DEBUG] ======")
     if not full:
         detail = "; ".join(_debug_info) if _debug_info else "无额外信息"
         thought_preview = "".join(thought_chunks)[:200] if thought_chunks else "(无)"
@@ -3307,6 +3320,12 @@ async def _llm_openai_compat(system: str, user: str, endpoint: str,
     }
     if model:
         body["model"] = model
+
+    print(f"[LLM-DEBUG] ====== 发给 LLM 的完整请求 (OpenAI 格式) ======")
+    print(f"[LLM-DEBUG] endpoint={endpoint} model={model or 'default'}")
+    content_len = len(body["messages"][0]["content"])
+    print(f"[LLM-DEBUG] content_len={content_len} chars, body={json.dumps(body, ensure_ascii=False, indent=2)[:12000]}")
+    print(f"[LLM-DEBUG] ======")
 
     chunks: List[str] = []
     client = await _get_http_client()
@@ -3350,6 +3369,9 @@ async def _llm_openai_compat(system: str, user: str, endpoint: str,
                 except Exception:
                     pass
     full = "".join(chunks).strip()
+    print(f"[LLM-DEBUG] ====== LLM 原始返回 ======")
+    print(f"[LLM-DEBUG] {repr(full)}")
+    print(f"[LLM-DEBUG] ======")
     if not full:
         raise RuntimeError("LLM 返回空内容")
     return full
@@ -3811,6 +3833,8 @@ async def api_whoami(request: Request):
             "cooldown_total": int(cooldown_sec),
             "unread_notifications": len(db.get_unread_notifications(str(user.get("github_id", "")))),
             "my_queue_count": sum(1 for qi in _task_queue if str(qi.get("github_id", "")) == str(user.get("github_id", ""))),
+            "maintenance_enabled": bool(_maintenance.get("enabled", False)),
+            "maintenance_message": _maintenance.get("message", ""),
         }
     return {"login": None, "is_admin": False, "logged_in": False, "access_granted": False}
 
@@ -4270,7 +4294,7 @@ async def api_style_thumbnail(request: Request, name: str):
 # ============== ComfyUI output 浏览（只读） ==============
 
 OUTPUT_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
-_DL_SECRET_KEY = (os.getenv("DL_SECRET_KEY") or hashlib.sha256(b"natureDrawImage_dl_2026").hexdigest())[:32]
+# 分享链接已迁至 features/share.py（外挂模块）
 
 
 def _is_safe_subpath(fp: Path, parent: Path) -> bool:
@@ -4448,81 +4472,9 @@ async def api_output_file(request: Request, path: str, full: int = 0, download: 
                 f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{_q(fname)}"
             )
         return FileResponse(str(p), media_type=media, headers=headers)  # 原图下载不缓存
-    resp = _serve_image_maybe_webp(request, p, quality=82, max_side=1600)
+    resp = _serve_image_maybe_webp(request, p, quality=82, max_side=1600, full=bool(full))
     resp.headers["Cache-Control"] = "public, max-age=2592000"  # 1600px 灯箱图缓存30天
     return resp
-
-
-@app.post("/api/output/signed-url")
-async def api_output_signed_url(request: Request):
-    """生成一个临时签名下载链接（10分钟有效），给 IDM 等多线程工具使用。"""
-    user = _get_user_from_session(request)
-    if not user:
-        raise HTTPException(401)
-    # 用户级别限流：20次/分钟
-    uid = str(user.get("github_id", ""))
-    ip = _client_ip_from_request(request)
-    limit_key = f"signed_url:{uid or ip}"
-    async with _translate_rate_lock:
-        bucket = _TRANSLATE_RATE.get(limit_key) or []
-        bucket = [t for t in bucket if _time_module.time() - t < 60]
-        if len(bucket) >= 20:
-            raise HTTPException(429, "请求过于频繁，请稍后再试")
-        bucket.append(_time_module.time())
-        _TRANSLATE_RATE[limit_key] = bucket
-    body = await request.body()
-    payload = json.loads(body) if body else {}
-    path = str(payload.get("path", "")).strip()
-    if not path:
-        raise HTTPException(400, "path required")
-    # 权限校验同 /api/output/file
-    if user.get("role") != "admin":
-        github_id = str(user.get("github_id", ""))
-        user_images = _load_user_images().get(github_id, [])
-        owned = {i.get("path", "").replace("\\", "/") for i in user_images}
-        if path.replace("\\", "/") not in owned:
-            featured = set(_read_featured())
-            if path.replace("\\", "/") not in featured:
-                raise HTTPException(404, "找不到图片？请核对正确地址后重试！")
-    deleted_paths: set = set()
-    for dpv in _load_deleted_images().values():
-        for dp in dpv:
-            deleted_paths.add(dp.replace("\\", "/"))
-    if path.replace("\\", "/") in deleted_paths:
-        raise HTTPException(404, "not found")
-    if not _validate_rel_path(path):
-        raise HTTPException(400, "无效路径")
-    p = _resolve_output_path(path)
-    if not p.is_file():
-        raise HTTPException(404, "not found")
-    if p.suffix.lower() not in OUTPUT_IMAGE_EXTS:
-        raise HTTPException(400, "not an image")
-    import time as _t, hmac as _hmac
-    expires = int(_t.time()) + 600
-    sig = _hmac.new(_DL_SECRET_KEY.encode(), f"{path}:{expires}:1".encode(), hashlib.sha256).hexdigest()[:16]
-    url = f"/api/output/file-dl?path={_urlparse.quote(path)}&exp={expires}&sig={sig}&full=1"
-    return {"url": url}
-
-
-@app.get("/api/output/file-dl")
-async def api_output_file_dl(path: str, exp: int, sig: str, full: int = 1):
-    """签名验证后直接返回文件，无需 cookie。"""
-    import time as _t, hmac as _hmac
-    if _t.time() > exp:
-        raise HTTPException(410, "链接已过期")
-    expected = _hmac.new(_DL_SECRET_KEY.encode(), f"{path}:{exp}:{full}".encode(), hashlib.sha256).hexdigest()[:16]
-    if not _hmac.compare_digest(sig, expected):
-        raise HTTPException(403, "签名无效")
-    if not _validate_rel_path(path):
-        raise HTTPException(400, "无效路径")
-    p = _resolve_output_path(path)
-    if not p.is_file():
-        raise HTTPException(404, "not found")
-    if p.suffix.lower() not in OUTPUT_IMAGE_EXTS:
-        raise HTTPException(400, "not an image")
-    ext = p.suffix.lower().lstrip(".")
-    media = {"jpg": "image/jpeg", "jpeg": "image/jpeg"}.get(ext, f"image/{ext}")
-    return FileResponse(str(p), media_type=media)  # 签名下载不缓存
 
 
 @app.get("/api/output/thumb")
@@ -5079,7 +5031,7 @@ async def api_interrupt(request: Request):
 
 @app.post("/api/admin/auth-elevate")
 async def api_admin_auth_elevate(request: Request, payload: Dict[str, Any]):
-    """管理员提权：输入二次密码获得敏感操作权限（有效期 15 分钟）。未配置 ADMIN_ELEVATION_PASSWORD 时总是成功。"""
+    """管理员提权：输入二次密码获得敏感操作权限（有效期 30 分钟）。未配置 ADMIN_ELEVATION_PASSWORD 时总是成功。"""
     if not getattr(request.state, "is_admin", False):
         raise HTTPException(403, "找不到页面？请核对正确地址后重试！")
     if not _ADMIN_ELEVATION_PW:
@@ -5555,8 +5507,7 @@ def _check_csrf(request: Request) -> bool:
         return ref_origin == site
     return False
 
-
-# ---------------- 管理员提权（敏感操作二次验证） ----------------
+# _share_links 已迁至 features/share.py（外挂模块）
 
 def _verify_elevation_password(password: str) -> bool:
     """验证管理员提权密码。未配置则返回 True（向后兼容）。"""
@@ -5578,7 +5529,7 @@ def _admin_elevation_state_key(token: str) -> str:
 
 
 def _is_admin_elevated(request: Request) -> bool:
-    """检查当前管理员 session 是否已提权（15 分钟内有效）。"""
+    """检查当前管理员 session 是否已提权（30 分钟内有效）。"""
     if not _ADMIN_ELEVATION_PW:
         return True  # 未配置时跳过
     token = request.cookies.get("session") or ""
@@ -5896,7 +5847,8 @@ async def _process_queue() -> None:
                     pass
             await _run_task(ws, RunRequest(**next_item["params"]),
                           client_ip=next_item.get("client_ip", "unknown"),
-                          github_id=str(next_item.get("github_id", "")))
+                          github_id=str(next_item.get("github_id", "")),
+                          queue_item=next_item)
         except WebSocketDisconnect:
             # 用户断连：任务继续以 headless 模式运行，不打断
             pass
@@ -5924,6 +5876,9 @@ async def _process_queue() -> None:
                 pass
             next_item["error_message"] = user_msg
             next_item["status"] = "failed"
+            if next_item.get("detached") or ws is None:
+                _add_user_notification(str(next_item.get("github_id", "")), f"你的后台生图任务失败：{user_msg}")
+                next_item["_notification_written"] = True
             try:
                 await emit(ws, {"type": "error", "message": user_msg, "error_message": user_msg})
             except Exception:
@@ -5952,10 +5907,15 @@ async def _process_queue() -> None:
                     await asyncio.wait_for(ws.close(), timeout=5)
                 except (Exception, asyncio.TimeoutError):
                     pass
-            # 记录 headless 完成的任务
-            if headless:
+            # 记录 headless / detached 完成的任务
+            if headless or next_item.get("detached"):
                 gid = str(next_item.get("github_id", ""))
                 if gid:
+                    if next_item.get("status") == "failed":
+                        if not next_item.get("_notification_written"):
+                            _add_user_notification(gid, f"你的后台生图任务失败：{next_item.get('error_message') or '生成失败'}")
+                    else:
+                        _add_user_notification(gid, "你的后台生图任务已完成，请到「我的」查看结果")
                     async with _headless_lock:
                         _headless_completed[gid] = {"time": _time.time()}
                         if len(_headless_completed) > 200:
@@ -6220,6 +6180,7 @@ async def ws_run(ws: WebSocket):
                     "created_at": _time.time(),
                     "claimed_key": claimed_key,  # 用于任务失败时回滚密钥次数
                     "reservation_ws_id": id(ws) if key_preconsumed else 0,
+                    "detached": False,
                 }
                 _task_queue.append(queue_item)
                 _save_queue_state()
@@ -6275,10 +6236,13 @@ async def ws_run(ws: WebSocket):
                     if qi.get("ws") is ws:
                         if qi["status"] == "waiting":
                             qi["ws"] = None  # 保留排队位置，用户可重连恢复
+                            qi["detached"] = True
                             _save_queue_state()
                             await _broadcast_queue()
                         elif qi["status"] == "running":
                             qi["ws"] = None  # 转为 headless，任务继续运行
+                            qi["detached"] = True
+                            _save_queue_state()
                         break
             # 递减 /ws/run 每 IP 连接数
             if client_ip:
@@ -6366,7 +6330,7 @@ async def _auto_select_img2img_workflow(image_count: int) -> Optional[str]:
     return candidates[0][0]
 
 
-async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown", github_id: str = ""):
+async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown", github_id: str = "", queue_item: Optional[Dict[str, Any]] = None):
     import time as _time
     path = req.workflow_path
     inline = req.inline_workflow
@@ -6410,7 +6374,7 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
     # 自动检测：是否洗图/高清放大/纯处理类工作流（按文件名关键词跳过提示词注入）
     _path_lower = path.lower() if path else ""
     _is_cleanup_workflow = bool(path and any(
-        kw in _path_lower for kw in ("洗图", "高清", "clean", "upscale", "放大", "重绘", "转真人")
+        kw in _path_lower for kw in ("洗图", "高清", "放大", "重绘", "转真人")
     ))
     # 自动检测：工作流是否自带 LLM（如洗图/反推类，不需要外部提示词注入）
     _has_internal_llm = any(
@@ -6418,7 +6382,10 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
         for n in (data if isinstance(data, dict) else {}).get("nodes", [])
     )
     if _is_cleanup_workflow or _has_internal_llm:
-        await emit(ws, {"type": "log", "message": "检测到工作流自带 LLM，跳过提示词注入，仅处理图片输入"})
+        if _has_internal_llm:
+            await emit(ws, {"type": "log", "message": "检测到工作流自带 LLM，跳过提示词注入，仅处理图片输入"})
+        else:
+            await emit(ws, {"type": "log", "message": "关键词匹配跳过提示词注入，仅处理图片输入"})
         neg_text = req.negative_prompt.strip()
         is_img2img = bool(req.image1_name or req.image2_name or req.image3_name)
         _skip_prompt_inject = True
@@ -6467,24 +6434,27 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
 
             direct_base = req.direct_prompt.strip()
             if req.rewrite and (direct_base or positive_prefix):
-                base = _join_positive_parts(positive_prefix, direct_base)
+                bt = []
+                if style_tags:
+                    bt.append(f"`{style_tags}`")
+                if character_tags:
+                    bt.append(f"`{character_tags}`")
+                if direct_base:
+                    bt.append(f"`{direct_base}`")
+                base = sep.join(bt)
+                print(f"[LLM-DEBUG] base (original_prompt)={repr(base)}")
+                await emit(ws, {"type": "log", "message": f"[debug] original_prompt={base}"})
                 llm_positive, llm_negative = await translate_prompt(
                     req.nl_prompt, original_prompt=base, negative_prompt=req.negative_prompt, on_chunk=_on_chunk,
                     mode=req.prompt_mode, template_id=req.llm_template_id,
                 )
                 sd_prompt = llm_positive
-            elif positive_prefix:
-                llm_positive, llm_negative = await translate_prompt(
-                    req.nl_prompt, original_prompt=positive_prefix, negative_prompt=req.negative_prompt, on_chunk=_on_chunk,
-                    mode=req.prompt_mode, template_id=req.llm_template_id,
-                )
-                sd_prompt = _join_positive_parts(direct_base, llm_positive)
             else:
                 llm_positive, llm_negative = await translate_prompt(
                     req.nl_prompt, negative_prompt=req.negative_prompt, on_chunk=_on_chunk,
                     mode=req.prompt_mode, template_id=req.llm_template_id,
                 )
-                sd_prompt = _join_positive_parts(direct_base, llm_positive)
+                sd_prompt = _join_positive_parts(positive_prefix, direct_base, llm_positive)
             await emit(ws, {"type": "llm_done", "text": llm_positive, "negative": llm_negative})
         except Exception as e:
             real_err = f"LLM {type(e).__name__}: {e}"
@@ -6634,6 +6604,9 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
 
     await emit(ws, {"type": "log", "message": "[3/4] 提交到 生图服务模块..."})
     prompt_id = await submit_prompt(prompt_dict)
+    if queue_item is not None:
+        queue_item.setdefault("params", {})["_prompt_id"] = prompt_id
+        _save_queue_state()
     await emit(ws, {"type": "log", "message": f"prompt_id={prompt_id[:8]}"})
     await emit(ws, {"type": "prompt_id", "prompt_id": prompt_id, "final_prompt": sd_prompt})
     _current_task_info.update({
@@ -6696,7 +6669,7 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             await emit(ws, {"type": "log", "message": f"[warn] 写映射失败: {e}"})
 
     await _save_gen_log(github_id, "", sd_prompt, path, len(images), "success", client_ip, negative_prompt=neg_text, file_paths=image_paths)
-    await _increment_key_usage(github_id)
+    await _check_key_exhaustion(github_id)
     for img in images:
         _rel = ((img.get("subfolder") or "") + "/" + img["filename"]).replace("\\", "/").lstrip("/")
         url = f"/api/output/file?path={_urlparse.quote(_rel, safe='')}"
@@ -7114,9 +7087,6 @@ async def api_my_images(request: Request, limit: int = 30, offset: int = 0):
             "time": it.get("time", 0),
         })
     return {"items": result, "total": total}
-
-
-    return True
 
 
 # SSRF 防护：只拦截危险地址（本地回环 + 云元数据端点），允许内网 LLM 服务

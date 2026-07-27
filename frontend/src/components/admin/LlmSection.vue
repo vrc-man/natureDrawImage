@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api } from './useAdminApi'
+import { ADMIN_TOAST_SHORT } from './uiTimers'
 
 defineProps<{ visible: boolean }>()
 
@@ -104,8 +105,9 @@ async function saveProfile() {
       body.custom_api_key = editProfile.value.custom_api_key
     }
     await api('POST', `/api/admin/llm/profiles/${encodeURIComponent(editProfile.value.name)}`, body)
-    status.value = '✓ 已保存'
-    setTimeout(() => status.value = '', 2000)
+    const msg = '✓ 已保存'
+    status.value = msg
+    setTimeout(() => { if (status.value === msg) status.value = '' }, ADMIN_TOAST_SHORT)
     showModal.value = false
     await loadProfiles()
   } catch (e: any) { alert('保存失败: ' + e.message) }
@@ -126,8 +128,9 @@ async function activateProfile(name: string) {
   try {
     await api('POST', `/api/admin/llm/profiles/${encodeURIComponent(name)}/activate`)
     activeName.value = name
-    status.value = `✓ 已切换至「${name}」`
-    setTimeout(() => status.value = '', 2000)
+    const msg = `✓ 已切换至「${name}」`
+    status.value = msg
+    setTimeout(() => { if (status.value === msg) status.value = '' }, ADMIN_TOAST_SHORT)
   } catch (e: any) { alert('切换失败: ' + e.message) }
 }
 

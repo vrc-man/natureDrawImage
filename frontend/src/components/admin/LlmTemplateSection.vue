@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { api, fmtShort } from './useAdminApi'
+import { ADMIN_TOAST_SHORT } from './uiTimers'
 
 interface LlmTemplate {
   id: number
@@ -22,6 +23,7 @@ const status = ref('')
 const showModal = ref(false)
 const editing = ref<LlmTemplate | null>(null)
 const form = ref<Partial<LlmTemplate>>({})
+const saving = ref(false)
 
 function emptyForm(): Partial<LlmTemplate> {
   return {
@@ -49,6 +51,8 @@ async function load() {
 function openNew() {
   editing.value = null
   form.value = emptyForm()
+  const mx = items.value.reduce((a, b) => Math.max(a, b.sort_order || 0), 0)
+  form.value.sort_order = mx + 1
   showModal.value = true
 }
 
@@ -65,8 +69,10 @@ function closeModal() {
 }
 
 async function save() {
+  if (saving.value) return
   if (!String(form.value.name || '').trim()) { alert('请输入模板名称'); return }
   if (!String(form.value.system_generate || '').trim()) { alert('请输入不改写规则'); return }
+  saving.value = true
   try {
     const body = {
       name: form.value.name || '',
@@ -85,9 +91,11 @@ async function save() {
     }
     closeModal()
     await load()
-    setTimeout(() => { if (status.value.startsWith('✓')) status.value = '' }, 2000)
+    setTimeout(() => { if (status.value.startsWith('✓')) status.value = '' }, ADMIN_TOAST_SHORT)
   } catch (e: any) {
     alert('保存失败: ' + e.message)
+  } finally {
+    saving.value = false
   }
 }
 
@@ -96,6 +104,32 @@ async function toggleEnabled(item: LlmTemplate) {
     await api('PUT', `/api/admin/features/llm-templates/${item.id}`, { enabled: !item.enabled })
     await load()
   } catch (e: any) { alert('切换失败: ' + e.message) }
+}
+
+async function moveUp(item: LlmTemplate) {
+  const idx = items.value.findIndex(x => x.id === item.id)
+  if (idx <= 0) return
+  const prev = items.value[idx - 1]
+  const a = prev.sort_order
+  const b = item.sort_order
+  try {
+    await api('PUT', `/api/admin/features/llm-templates/${item.id}`, { sort_order: a })
+    await api('PUT', `/api/admin/features/llm-templates/${prev.id}`, { sort_order: b })
+    await load()
+  } catch (e: any) { alert('上移失败: ' + e.message) }
+}
+
+async function moveDown(item: LlmTemplate) {
+  const idx = items.value.findIndex(x => x.id === item.id)
+  if (idx < 0 || idx >= items.value.length - 1) return
+  const next = items.value[idx + 1]
+  const a = next.sort_order
+  const b = item.sort_order
+  try {
+    await api('PUT', `/api/admin/features/llm-templates/${item.id}`, { sort_order: a })
+    await api('PUT', `/api/admin/features/llm-templates/${next.id}`, { sort_order: b })
+    await load()
+  } catch (e: any) { alert('下移失败: ' + e.message) }
 }
 
 async function del(item: LlmTemplate) {
@@ -135,7 +169,11 @@ onMounted(load)
             <div class="flex items-center gap-2 flex-wrap">
               <span class="font-semibold text-gray-800 truncate">{{ item.name }}</span>
               <span class="text-[10px] px-2 py-0.5 rounded-full" :class="item.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'">{{ item.enabled ? '启用' : '禁用' }}</span>
-              <span class="text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">排序 {{ item.sort_order || 0 }}</span>
+              <span class="flex items-center gap-0.5 text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">
+                排序 {{ item.sort_order || 0 }}
+                <button @click="moveUp(item)" title="上移" class="ml-1 w-4 h-4 flex items-center justify-center rounded hover:bg-blue-200 leading-none bg-transparent border-0 cursor-pointer p-0 text-blue-600">▲</button>
+                <button @click="moveDown(item)" title="下移" class="w-4 h-4 flex items-center justify-center rounded hover:bg-blue-200 leading-none bg-transparent border-0 cursor-pointer p-0 text-blue-600">▼</button>
+              </span>
             </div>
             <p v-if="item.description" class="text-xs text-gray-500 mt-1 whitespace-pre-wrap">{{ item.description }}</p>
             <div class="text-[11px] text-gray-400 mt-2">
@@ -194,7 +232,7 @@ onMounted(load)
 
         <div class="flex justify-end gap-2">
           <button @click="closeModal" class="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 border-0 cursor-pointer">取消</button>
-          <button @click="save" class="px-4 py-2 bg-pink-500 text-white rounded hover:bg-pink-600 border-0 cursor-pointer">保存</button>
+          <button @click="save" :disabled="saving" class="px-4 py-2 rounded border-0 cursor-pointer flex items-center gap-1.5" :class="saving ? 'bg-pink-300 text-white cursor-not-allowed' : 'bg-pink-500 text-white hover:bg-pink-600'"><span v-if="saving" class="inline-block w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>{{ saving ? '保存中...' : '保存' }}</button>
         </div>
       </div>
     </div>

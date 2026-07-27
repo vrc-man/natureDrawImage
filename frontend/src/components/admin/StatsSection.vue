@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import { api } from './useAdminApi'
+import { dayStartTs, nextDayStartTs } from './dateRange'
 import { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend } from 'chart.js'
 
 Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend)
@@ -50,11 +51,11 @@ function fill7d(labels: string[], data: number[]) {
 }
 
 function queryParams() {
-  let url = '/api/admin/stats/generation'
+  let url = '/api/admin/features/gen-stats/generation'
   const params: string[] = []
   params.push('tz_offset=' + (-new Date().getTimezoneOffset() / 60))
-  if (dateFrom.value) params.push('date_from=' + (new Date(dateFrom.value + 'T00:00:00').getTime() / 1000))
-  if (dateTo.value) params.push('date_to=' + (new Date(dateTo.value + 'T23:59:59').getTime() / 1000))
+  if (dateFrom.value) params.push('date_from=' + dayStartTs(dateFrom.value))
+  if (dateTo.value) params.push('date_to=' + nextDayStartTs(dateTo.value))
   if (searchLogin.value.trim()) params.push('login=' + encodeURIComponent(searchLogin.value.trim()))
   if (params.length) url += '?' + params.join('&')
   return url

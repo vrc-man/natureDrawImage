@@ -42,14 +42,12 @@ def _clear_cache():
 
 
 @router.get("")
-async def gen_leaderboard(request: Request, range: str = "today"):
+async def gen_leaderboard(request: Request, range: str = "today", tz_offset: float = 0):
     """生图排行榜。"""
     require_admin(request)
     now = time.time()
     date_from = 0.0
     date_to = 0.0
-    # 前端传的 tz_offset（默认东八区）
-    tz_offset = 8
 
     if range == "today":
         # 当天 0 点（本地时区）
@@ -64,6 +62,6 @@ async def gen_leaderboard(request: Request, range: str = "today"):
         date_to = now
     # all: date_from=0, date_to=0 表示全部
 
-    key = f"{range}:{int(date_from)}:{int(date_to)}"
+    key = f"{range}:{int(date_from)}:{int(date_to)}:tz{int(tz_offset)}"
     data = _get_cached(key, date_from, date_to, tz_offset)
     return {"range": range, **data}
