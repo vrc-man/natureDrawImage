@@ -432,6 +432,10 @@ async function onWorkflowSelect(path: string, name?: string) {
   currentWorkflowPath.value = path
   localStorage.setItem('currentWorkflow', path)
   if (name) localStorage.setItem('currentWorkflowName', name)
+  // 手动选工作流时自动取消 fork
+  if (forkedWorkflow.value) clearFork()
+  directPrompt.value = ''
+  negativePrompt.value = ''
   try {
     const r = await fetch(`/api/workflows/current?path=${encodeURIComponent(path)}&_t=${Date.now()}`)
     const d = await r.json()

@@ -7,6 +7,7 @@ const emit = defineEmits<{ select: [path: string, name: string] }>()
 const props = defineProps<{ mode: 'txt2img' | 'img2img' }>()
 
 const open = ref(false)
+const loading = ref(false)
 const selectedName = ref(displayWorkflowText(localStorage.getItem('currentWorkflowName') || ''))
 const allWorkflows = ref<WorkflowItem[]>([])
 const search = ref('')
@@ -37,12 +38,21 @@ const grouped = computed(() => {
 })
 
 async function loadAll() {
+  if (loading.value) return
+  loading.value = true
   try {
     const d = await loadWorkflows()
     allWorkflows.value = d.workflows || d.all || []
     txt2imgDir.value = d.txt2img_dir || ''
     img2imgDir.value = d.img2img_dir || ''
-  } catch {}
+  } catch {} finally { loading.value = false }
+}
+
+async function refreshAndReSelect() {
+  await loadAll()
+  const saved = localStorage.getItem('currentWorkflow')
+  const found = (workflows.value || allWorkflows.value).find(w => w.path === saved)
+  if (found) select(found)
 }
 
 onMounted(loadAll)
@@ -90,7 +100,7 @@ function _highlight(text: string, q: string) {
         <div class="flex items-center justify-between p-5 pb-3 border-b border-pink-100 shrink-0">
           <h3 class="text-lg font-bold text-gray-700">📋 选择工作流</h3>
           <div class="flex items-center gap-2">
-            <button @click="loadAll()" class="text-gray-400 hover:text-pink-500 text-sm cursor-pointer border-0 bg-transparent px-2 py-1 rounded-lg hover:bg-pink-50 transition-all" title="刷新列表">🔄</button>
+            <button @click="refreshAndReSelect" :disabled="loading" class="text-gray-400 hover:text-pink-500 text-sm cursor-pointer border-0 bg-transparent px-2 py-1 rounded-lg hover:bg-pink-50 transition-all disabled:opacity-40 disabled:cursor-not-allowed" :title="loading ? '刷新中...' : '刷新列表'"><span :class="loading ? 'inline-block animate-spin' : ''">{{ loading ? '⏳' : '🔄' }}</span></button>
             <button @click="open = false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">✕</button>
           </div>
         </div>
