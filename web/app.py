@@ -494,7 +494,8 @@ DEFAULT_LIMITS = {
     "gpu_poll_interval_ms": 5000,
     "gpu_cache_ttl_ms": 5000,
     "gc_interval_hours": 0.5,
-    "backup_interval_hours": 0.5,
+    "backup_interval_minutes": 30,
+    "backup_retention_count": 5,
     "gc_orphan_scan": 1,
     "startup_orphan_scan": 1,
     "gc_clean_empty_dirs": 1,
@@ -1913,10 +1914,11 @@ async def _backup_data_files():
             if src.is_file():
                 _shutil.copy2(src, backup_subdir / fname)
                 copied += 1
-        # 保留最近 5 个备份，删除旧备份
+        # 保留最近 N 个备份（可配置），删除旧备份
+        max_keep = max(1, int(_limits.get("backup_retention_count", 5)))
         existing = sorted([d for d in backups_dir.iterdir() if d.is_dir() and d.name.startswith("backup_")],
                           key=lambda d: d.name, reverse=True)
-        for old in existing[5:]:
+        for old in existing[max_keep:]:
             _shutil.rmtree(old, ignore_errors=True)
         # MySQL 热备（pymysql 直连导出）
         mysql_ok = False
@@ -1948,16 +1950,16 @@ async def _gc_loop():
 
 
 async def _backup_loop():
-    """后台备份循环，可配置间隔（默认 0.5 小时=30 分钟），独立于 GC。"""
+    """后台备份循环，可配置间隔（默认 30 分钟），独立于 GC。"""
     while True:
         try:
-            interval_h = float(_limits.get("backup_interval_hours", 0.5))
+            interval_min = float(_limits.get("backup_interval_minutes", 30))
         except (ValueError, TypeError):
-            interval_h = 0.5
-        if interval_h <= 0:
+            interval_min = 30
+        if interval_min <= 0:
             await asyncio.sleep(1800)
             continue
-        await asyncio.sleep(interval_h * 3600)
+        await asyncio.sleep(interval_min * 60)
         try:
             await _backup_data_files()
         except Exception:
@@ -7968,7 +7970,10 @@ async def api_admin_limits_set(request: Request, payload: Dict[str, Any]):
             if isinstance(v, list):
                 new_limits[k] = v
         elif isinstance(v, (int, float)) and v >= 0:
-            new_limits[k] = int(v)
+            if isinstance(DEFAULT_LIMITS[k], float):
+                new_limits[k] = float(v)
+            else:
+                new_limits[k] = int(v)
         else:
             raise HTTPException(400, f"{k} 必须为非负数")
     if not await _save_limits(new_limits):
