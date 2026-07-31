@@ -27,6 +27,7 @@ import GcSection from '@/components/admin/GcSection.vue'
 import StatsSection from '@/components/admin/StatsSection.vue'
 import LeaderBoardSection from '@/components/admin/LeaderBoardSection.vue'
 import ShareSection from '@/components/admin/ShareSection.vue'
+import AiChatSection from '@/components/admin/AiChatSection.vue'
 
 const isAdmin = ref(false), loading = ref(true)
 const expanded = ref<Record<string, boolean>>({})
@@ -59,6 +60,7 @@ const groups: GroupDef[] = [
     sections: [
       { key: 'llm', title: '🤖 LLM 配置', comp: LlmSection },
       { key: 'llm-templates', title: '🧩 LLM 提示词模板', comp: LlmTemplateSection },
+      { key: 'ai-chat', title: '💬 AI 聊天设置', comp: AiChatSection },
       { key: 'limits', title: '⚙️ 限流配置', comp: LimitsSection },
       { key: 'maint', title: '🔧 维护模式', comp: MaintSection },
       { key: 'chead', title: '📎 自定义 Head', comp: CheadSection },

@@ -2346,6 +2346,8 @@ try:
         "load_user_images": _load_user_images,
         "read_featured": _read_featured,
         "load_deleted_images": _load_deleted_images,
+        "llm_config": _llm_config,
+        "get_http_client": _get_http_client,
     })
 except Exception as _e:
     print(f"[features] 依赖注入失败（受影响模块将不可用，数据库不受影响）: {type(_e).__name__}: {_e}")

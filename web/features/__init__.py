@@ -51,6 +51,12 @@ def register_all(app) -> None:
     except Exception as e:
         print(f"[features] share 加载失败: {type(e).__name__}: {e}")
 
+    try:
+        from .ai_chat import router as ai_chat_router
+        routers.append(("ai-chat", ai_chat_router))
+    except Exception as e:
+        print(f"[features] ai_chat 加载失败: {type(e).__name__}: {e}")
+
     for name, r in routers:
         try:
             app.include_router(r)

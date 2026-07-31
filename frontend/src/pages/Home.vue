@@ -12,6 +12,7 @@ import MyWorksGrid from '@/components/MyWorksGrid.vue'
 import FeaturedGrid from '@/components/FeaturedGrid.vue'
 import GPUBar from '@/components/GPUBar.vue'
 import WorkflowPicker from '@/components/WorkflowPicker.vue'
+import AiChat from '@/components/AiChat.vue'
 import CharStylePicker from '@/components/CharStylePicker.vue'
 import Img2ImgUpload from '@/components/Img2ImgUpload.vue'
 import PresetManager from '@/components/PresetManager.vue'
@@ -55,6 +56,9 @@ watch(needsAccessKey, (needKey) => {
 
 const galleryRef = ref<InstanceType<typeof GalleryGrid> | null>(null)
 const myworksRef = ref<InstanceType<typeof MyWorksGrid> | null>(null)
+
+// 更多页折叠状态
+const moreCollapse = ref({ gpu: true, ai: true, links: false, disclaimer: false })
 
 // ===== State =====
 const onlineCount = ref(0)
@@ -1377,27 +1381,53 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-8 text-center text-sm text-gray-500">需要访问密钥后查看作品</div><MyWorksGrid v-else ref="myworksRef" /><div class="h-20"></div></div></div>
         <!-- ============ MORE ============ -->
         <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-6">
-          <h1 class="text-xl sm:text-2xl font-bold text-gray-800">⚙️ 更多</h1>
           <!-- 公告 -->
           <div v-if="annTitle" class="bg-pink-50 border border-pink-200 rounded-2xl p-4 text-sm text-pink-700">
             <div class="font-semibold">{{ annTitle }}</div>
             <div class="mt-1 text-xs whitespace-pre-wrap">{{ annContent }}</div>
           </div>
           <!-- GPU -->
-          <GPUBar />
+          <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40">
+            <div class="flex items-center justify-between px-5 py-4 cursor-pointer select-none" @click="moreCollapse.gpu = !moreCollapse.gpu">
+              <span class="text-base font-semibold text-gray-700">🎮 GPU 状态</span>
+              <span class="text-gray-400 text-sm transition-transform" :class="moreCollapse.gpu ? '' : 'rotate-180'">▾</span>
+            </div>
+            <div v-show="moreCollapse.gpu" class="px-5 pb-5">
+              <GPUBar :key="'gpu-' + moreCollapse.gpu" />
+            </div>
+          </div>
+          <!-- AI 助手 -->
+          <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40">
+            <div class="flex items-center justify-between px-5 py-4 cursor-pointer select-none" @click="moreCollapse.ai = !moreCollapse.ai">
+              <span class="text-base font-semibold text-gray-700">🤖 AI 助手</span>
+              <span class="text-gray-400 text-sm transition-transform" :class="moreCollapse.ai ? '' : 'rotate-180'">▾</span>
+            </div>
+            <div v-show="moreCollapse.ai" class="overflow-hidden" style="height:600px">
+              <AiChat />
+            </div>
+          </div>
           <!-- 常用链接 -->
-          <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
-            <h2 class="text-base font-semibold mb-3 text-gray-700">🔗 常用链接</h2>
-            <div class="flex flex-col gap-2 text-sm">
-              <a href="https://2x.nz/posts/ai-wife" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">📖 新手教程：从零开始造老婆</a>
-              <a href="https://www.downloadmost.com/NoobAI-XL/danbooru-artist/" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">🎨 danbooru-artist 画师库</a>
-              <a href="https://www.downloadmost.com/NoobAI-XL/danbooru-character/" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">👤 danbooru-character 角色库</a>
+          <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40">
+            <div class="flex items-center justify-between px-5 py-4 cursor-pointer select-none" @click="moreCollapse.links = !moreCollapse.links">
+              <span class="text-base font-semibold text-gray-700">🔗 常用链接</span>
+              <span class="text-gray-400 text-sm transition-transform" :class="moreCollapse.links ? '' : 'rotate-180'">▾</span>
+            </div>
+            <div v-show="moreCollapse.links" class="px-5 pb-5">
+              <div class="flex flex-col gap-2 text-sm">
+                <a href="https://2x.nz/posts/ai-wife" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">📖 新手教程：从零开始造老婆</a>
+                <a href="https://www.downloadmost.com/NoobAI-XL/danbooru-artist/" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">🎨 danbooru-artist 画师库</a>
+                <a href="https://www.downloadmost.com/NoobAI-XL/danbooru-character/" target="_blank" rel="noopener" class="text-pink-500 hover:text-pink-600 hover:underline transition-colors">👤 danbooru-character 角色库</a>
+              </div>
             </div>
           </div>
           <!-- 免责声明 -->
-          <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6">
-            <h2 class="text-base font-semibold mb-3 text-gray-700">免责声明</h2>
-            <div class="text-sm text-gray-600 leading-relaxed space-y-2">
+          <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40">
+            <div class="flex items-center justify-between px-5 py-4 cursor-pointer select-none" @click="moreCollapse.disclaimer = !moreCollapse.disclaimer">
+              <span class="text-base font-semibold text-gray-700">免责声明</span>
+              <span class="text-gray-400 text-sm transition-transform" :class="moreCollapse.disclaimer ? '' : 'rotate-180'">▾</span>
+            </div>
+            <div v-show="moreCollapse.disclaimer" class="px-5 pb-5">
+              <div class="text-sm text-gray-600 leading-relaxed space-y-2">
               <p>使用本站服务即表示您同意：</p>
               <ul class="list-disc list-inside space-y-1">
                 <li>本站通过 GitHub OAuth 或邮箱注册登录，<strong>仅获取您的用户名、用户ID及邮箱信息</strong>，仅用于账户识别与违规追溯，不用于其他用途</li>
@@ -1412,6 +1442,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
               </ul>
               <p class="text-xs text-gray-500 mt-2">完整条款请查看 <a href="/privacy" target="_blank" class="text-pink-500 hover:text-pink-600 underline">用户协议与隐私政策</a></p>
             </div>
+          </div>
           </div>
           <!-- 来源声明 -->
           <div class="text-center text-xs text-gray-400 py-2">
