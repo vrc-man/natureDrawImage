@@ -13,6 +13,7 @@ import FeaturedGrid from '@/components/FeaturedGrid.vue'
 import GPUBar from '@/components/GPUBar.vue'
 import WorkflowPicker from '@/components/WorkflowPicker.vue'
 import AiChat from '@/components/AiChat.vue'
+import PromptExtractor from '@/components/PromptExtractor.vue'
 import CharStylePicker from '@/components/CharStylePicker.vue'
 import Img2ImgUpload from '@/components/Img2ImgUpload.vue'
 import PresetManager from '@/components/PresetManager.vue'
@@ -25,7 +26,7 @@ const needsAccessKey = computed(() => !userStore.isAdmin && !userStore.currentUs
 const adminMaintenanceActive = computed(() => userStore.isAdmin && !!userStore.currentUser?.maintenance_enabled)
 
 // ===== Tab =====
-type TabKey = 'generate'|'gallery'|'featured'|'myworks'|'more'
+type TabKey = 'generate'|'gallery'|'featured'|'myworks'|'ai'|'more'
 const activeTab = ref<TabKey>('generate')
 const tabLoaded = ref<Record<string, boolean>>({})
 const tabs = computed(() => {
@@ -33,6 +34,7 @@ const tabs = computed(() => {
     { key: 'generate', icon: '🎨', label: '生图' },
     { key: 'featured', icon: '✨', label: '精选' },
     { key: 'myworks', icon: '👤', label: '我的' },
+    { key: 'ai', icon: '🤖', label: 'AI' },
     { key: 'more', icon: '⚙️', label: '更多' },
   ]
   if (userStore.isAdmin) all.splice(1, 0, { key: 'gallery', icon: '🖼️', label: '画廊' })
@@ -47,6 +49,7 @@ watch(activeTab, (t) => {
   if (t === 'gallery') { nextTick(() => galleryRef.value?.load(true)) }
   if (t === 'myworks' && !needsAccessKey.value) { nextTick(() => myworksRef.value?.load(true)) }
   if (t === 'featured' && !needsAccessKey.value) tabLoaded.value.featured = true
+  if (t === 'ai') tabLoaded.value['ai'] = true
   if (t === 'more') tabLoaded.value['more'] = true
 })
 
@@ -58,7 +61,7 @@ const galleryRef = ref<InstanceType<typeof GalleryGrid> | null>(null)
 const myworksRef = ref<InstanceType<typeof MyWorksGrid> | null>(null)
 
 // 更多页折叠状态
-const moreCollapse = ref({ gpu: true, ai: true, links: false, disclaimer: false })
+const moreCollapse = ref({ gpu: true, extractor: false, links: false, disclaimer: false })
 
 // ===== State =====
 const onlineCount = ref(0)
@@ -1379,6 +1382,8 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <div v-if="activeTab === 'featured'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-8 text-center text-sm text-gray-500">需要访问密钥后查看精选</div><FeaturedGrid v-else /><div class="h-20"></div></div></div>
         <!-- ============ MY WORKS ============ -->
         <div v-if="activeTab === 'myworks'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto"><div v-if="needsAccessKey" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-8 text-center text-sm text-gray-500">需要访问密钥后查看作品</div><MyWorksGrid v-else ref="myworksRef" /><div class="h-20"></div></div></div>
+        <!-- ============ AI 助手 ============ -->
+        <div v-if="activeTab === 'ai'" class="tab-page active p-0 sm:p-0" style="overflow:hidden"><div class="h-full"><AiChat v-if="tabLoaded['ai']" /></div></div>
         <!-- ============ MORE ============ -->
         <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-6">
           <!-- 公告 -->
@@ -1396,14 +1401,14 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
               <GPUBar :key="'gpu-' + moreCollapse.gpu" />
             </div>
           </div>
-          <!-- AI 助手 -->
+          <!-- 提示词提取 -->
           <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40">
-            <div class="flex items-center justify-between px-5 py-4 cursor-pointer select-none" @click="moreCollapse.ai = !moreCollapse.ai">
-              <span class="text-base font-semibold text-gray-700">🤖 AI 助手</span>
-              <span class="text-gray-400 text-sm transition-transform" :class="moreCollapse.ai ? '' : 'rotate-180'">▾</span>
+            <div class="flex items-center justify-between px-5 py-4 cursor-pointer select-none" @click="moreCollapse.extractor = !moreCollapse.extractor">
+              <span class="text-base font-semibold text-gray-700">🧩 提示词提取</span>
+              <span class="text-gray-400 text-sm transition-transform" :class="moreCollapse.extractor ? '' : 'rotate-180'">▾</span>
             </div>
-            <div v-show="moreCollapse.ai" class="overflow-hidden" style="height:600px">
-              <AiChat />
+            <div v-show="moreCollapse.extractor" class="px-5 pb-5">
+              <PromptExtractor />
             </div>
           </div>
           <!-- 常用链接 -->
@@ -1490,7 +1495,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
           <div class="mx-4 w-full sm:max-w-2xl bg-white/95 backdrop-blur-xl border border-pink-200 rounded-3xl shadow-2xl shadow-pink-100/40 max-h-[85vh] overflow-y-auto p-5" @click.stop>
             <!-- === MAIN SETTINGS === -->
             <template v-if="settingsView === 'main'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200 sticky top-0 bg-white/95 backdrop-blur z-10">
                 <div class="flex items-center gap-3 min-w-0">
                   <div class="shrink-0">
                     <img v-if="userStore.currentUser?.avatar_url" :src="userStore.currentUser.avatar_url" class="w-10 h-10 rounded-full" />
@@ -1555,7 +1560,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
             <!-- === APPEARANCE SETTINGS === -->
             <template v-if="settingsView === 'appearance'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200 sticky top-0 bg-white/95 backdrop-blur z-10">
                 <div class="flex items-center gap-2 min-w-0">
                   <button @click="settingsView='main'" aria-label="返回设置" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent shrink-0">&larr;</button>
                   <h3 class="text-base font-bold text-gray-700 truncate">🎛️ 显示与外观</h3>
@@ -1672,7 +1677,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
             <!-- === TOTP SETTINGS === -->
             <template v-if="settingsView === 'totp'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200 sticky top-0 bg-white/95 backdrop-blur z-10">
                 <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
                 <button @click="closeSettings" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
               </div>
@@ -1681,7 +1686,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
             <!-- === PASSWORD CHANGE === -->
             <template v-if="settingsView === 'password'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200 sticky top-0 bg-white/95 backdrop-blur z-10">
                 <div class="flex items-center gap-2">
                   <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
                   <h3 class="text-base font-bold text-gray-700">🔑 更改密码</h3>
@@ -1699,7 +1704,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
             <!-- === SHARE MANAGEMENT === -->
             <template v-if="settingsView === 'share'">
-              <div class="flex items-center justify-between pb-3 border-b border-pink-200">
+              <div class="flex items-center justify-between pb-3 border-b border-pink-200 sticky top-0 bg-white/95 backdrop-blur z-10">
                 <div class="flex items-center gap-2">
                   <button @click="settingsView='main'" class="text-lg text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">&larr;</button>
                   <h3 class="text-base font-bold text-gray-700">🔗 分享管理</h3>

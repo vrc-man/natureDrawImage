@@ -149,7 +149,7 @@ def _get_active_llm(cfg: dict) -> Optional[dict]:
     return None
 
 
-def _llm_request_info(messages: List[dict], temperature: float, max_tokens: int) -> tuple:
+def _llm_request_info(messages: List[dict], temperature: float, max_tokens: int, extra: dict | None = None) -> tuple:
     """读取 ai_chat.json 配置，返回 (url, headers, body)。未配置抛异常。"""
     with _lock:
         aichat_cfg = _load()
@@ -178,14 +178,19 @@ def _llm_request_info(messages: List[dict], temperature: float, max_tokens: int)
         "temperature": temperature,
         "max_tokens": max_tokens if 0 < max_tokens <= 50000 else llm_max_tokens,
     }
+    # 采样参数透传（top_p/top_k/frequency_penalty/presence_penalty/min_p）
+    if extra:
+        for k, v in extra.items():
+            if v is not None:
+                body[k] = v
     if llm_model:
         body["model"] = llm_model
     return url, headers, body
 
 
-async def _call_llm(messages: List[dict], temperature: float, max_tokens: int = 0) -> str:
+async def _call_llm(messages: List[dict], temperature: float, max_tokens: int = 0, extra: dict | None = None) -> str:
     """调用 LLM（OpenAI 兼容格式），支持多模态 content 数组。非流式返回完整文本。"""
-    url, headers, body = _llm_request_info(messages, temperature, max_tokens)
+    url, headers, body = _llm_request_info(messages, temperature, max_tokens, extra)
     body["stream"] = False
     client = await ctx("get_http_client")()
     r = await client.post(url, json=body, headers=headers, timeout=120)
@@ -197,9 +202,9 @@ async def _call_llm(messages: List[dict], temperature: float, max_tokens: int = 
     return content.strip()
 
 
-async def _call_llm_stream(messages: List[dict], temperature: float, max_tokens: int = 0):
+async def _call_llm_stream(messages: List[dict], temperature: float, max_tokens: int = 0, extra: dict | None = None):
     """流式调用 LLM，逐块 yield (kind, text)，kind 为 'reasoning' 或 'content'。"""
-    url, headers, body = _llm_request_info(messages, temperature, max_tokens)
+    url, headers, body = _llm_request_info(messages, temperature, max_tokens, extra)
     body["stream"] = True
     client = await ctx("get_http_client")()
     async with client.stream("POST", url, json=body, headers=headers, timeout=120) as r:
@@ -315,12 +320,20 @@ def _html_to_text(html: str) -> str:
     return html.strip()
 
 
-async def _fetch_webpage(url: str, max_chars: int = 6000, force_render: bool = False) -> dict:
+async def _fetch_webpage(url: str, max_chars: int | None = None, force_render: bool = False) -> dict:
     """抓取网页并提取文本。返回 {url, title, text}。
 
     优先 httpx 快抓；force_render=True 或提取文本过短（JS 渲染页）时，
     用无头浏览器（Playwright）渲染后提取完整内容。
+    max_chars 为 None 时读取后台配置 web_fetch_max_chars（默认 6000）。
     """
+    if max_chars is None:
+        with _lock:
+            _c = _load()
+        try:
+            max_chars = int(_c.get("web_fetch_max_chars", 6000) or 6000)
+        except (TypeError, ValueError):
+            max_chars = 6000
     safe_url = _validate_public_url(url)
     client = await ctx("get_http_client")()
     html = ""
@@ -419,6 +432,10 @@ async def _web_gather(query: str, max_pages: int = 3, rewrite: bool = True) -> d
     with _lock:
         cfg_data = _load()
     searxng_url = str(cfg_data.get("searxng_url", "")).strip().rstrip("/")
+    try:
+        grab_max = int(cfg_data.get("web_fetch_max_chars", 6000) or 6000)
+    except (TypeError, ValueError):
+        grab_max = 6000
     if not searxng_url or not cfg_data.get("web_search_enabled"):
         return {"query": query, "sources": [], "text": ""}
 
@@ -473,7 +490,7 @@ async def _web_gather(query: str, max_pages: int = 3, rewrite: bool = True) -> d
             )
             if r.status_code >= 400:
                 return
-            t = _html_to_text(r.text)[:3000]
+            t = _html_to_text(r.text)[:grab_max]
             if t:
                 texts[idx] = t
         except Exception:
@@ -521,11 +538,22 @@ async def api_ai_chat_send(request: Request):
     do_search = bool(body.get("search", False))
     max_tokens = int(body.get("max_tokens", 0) or 0)
     history = body.get("history") or []
+    user_stream = body.get("stream")  # 前端用户自定义，None=用管理员默认
+    # 采样参数
+    sampling: dict = {}
+    for k, default in (("top_p", 1.0), ("top_k", 0), ("frequency_penalty", 0.0),
+                       ("presence_penalty", 0.0), ("min_p", 0.0)):
+        v = body.get(k)
+        if v is not None:
+            try:
+                sampling[k] = float(v)
+            except (TypeError, ValueError):
+                pass
 
     if not token:
         raise HTTPException(400, "token required")
-    if not message:
-        raise HTTPException(400, "message required")
+    if not message and not image:
+        raise HTTPException(400, "message or image required")
 
     # 校验 token 并扣减
     entry = _verify_token(token)
@@ -544,8 +572,15 @@ async def api_ai_chat_send(request: Request):
         search_max_pages = int(cfg_data.get("web_search_max_pages", 3) or 3)
         search_rewrite = bool(cfg_data.get("web_search_query_rewrite", True))
 
+    # 前端用户自定义流式开关：传入则覆盖管理员默认
+    if user_stream is not None:
+        llm_stream = bool(user_stream)
+
     # 用户自定义覆盖
-    if not user_prompt:
+    # 显式传了 system_prompt（含空字符串）→ 用传的值；没传 → 用后台默认
+    if "system_prompt" in body:
+        user_prompt = str(body.get("system_prompt", "")).strip()
+    else:
         user_prompt = sys_prompt
     if temperature <= 0:
         temperature = sys_temp
@@ -562,15 +597,17 @@ async def api_ai_chat_send(request: Request):
         content_parts: list = []
         if search_text:
             content_parts.append({"type": "text", "text": search_text})
-        else:
+        elif message:
             content_parts.append({"type": "text", "text": message})
         if image:
             content_parts.append({"type": "image_url", "image_url": {"url": image}})
 
-        messages: list = [{"role": "system", "content": user_prompt}]
-        # 插入历史上下文（仅 user/assistant 文本，避免污染；限量 50 条）
+        messages: list = []
+        if user_prompt:
+            messages.append({"role": "system", "content": user_prompt})
+        # 插入历史上下文（仅 user/assistant 文本，避免污染；限量 200 条）
         if isinstance(history, list):
-            for h in history[:50]:
+            for h in history[:200]:
                 if not isinstance(h, dict):
                     continue
                 role = h.get("role")
@@ -593,7 +630,7 @@ async def api_ai_chat_send(request: Request):
             async def _gen():
                 got_content = False
                 try:
-                    async for kind, delta in _call_llm_stream(messages, temperature, max_tokens):
+                    async for kind, delta in _call_llm_stream(messages, temperature, max_tokens, sampling):
                         got_content = True
                         yield f"data: {json.dumps({'delta': delta, 'kind': kind}, ensure_ascii=False)}\n\n"
                     if not got_content:
@@ -622,7 +659,7 @@ async def api_ai_chat_send(request: Request):
                     yield f"data: {json.dumps({'error': f'{type(e).__name__}: {e}'}, ensure_ascii=False)}\n\n"
             return StreamingResponse(_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-        reply = await _call_llm(messages, temperature, max_tokens)
+        reply = await _call_llm(messages, temperature, max_tokens, sampling)
         if not reply:
             # LLM 返回空内容，退还次数
             with _lock:
@@ -977,6 +1014,7 @@ async def admin_get_config(request: Request):
         "llm_stream": data.get("llm_stream", True),
         "web_search_max_pages": data.get("web_search_max_pages", 3),
         "web_search_query_rewrite": data.get("web_search_query_rewrite", True),
+        "web_fetch_max_chars": data.get("web_fetch_max_chars", 6000),
     }
 
 
@@ -1035,5 +1073,7 @@ async def admin_set_config(request: Request):
             data["web_search_max_pages"] = max(0, min(5, int(body["web_search_max_pages"])))
         if "web_search_query_rewrite" in body:
             data["web_search_query_rewrite"] = bool(body["web_search_query_rewrite"])
+        if "web_fetch_max_chars" in body:
+            data["web_fetch_max_chars"] = max(1000, min(50000, int(body["web_fetch_max_chars"])))
         _save_atomic(data)
     return {"ok": True}

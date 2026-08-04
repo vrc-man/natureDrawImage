@@ -11,6 +11,7 @@ const searxngKey = ref('')
 const webSearchEnabled = ref(false)
 const searchMaxPages = ref(3)
 const searchRewrite = ref(true)
+const webFetchMaxChars = ref(6000)
 const searchTestStatus = ref('')
 const searchTesting = ref(false)
 const llms = ref<any[]>([])
@@ -35,6 +36,7 @@ async function loadCfg() {
     webSearchEnabled.value = !!d.web_search_enabled
     searchMaxPages.value = d.web_search_max_pages ?? 3
     searchRewrite.value = !!d.web_search_query_rewrite
+    webFetchMaxChars.value = d.web_fetch_max_chars ?? 6000
     llms.value = (d.llms || []).map((l: any) => ({ ...l, editing: false, modelList: [], probing: false, testStatus: '', testing: false }))
     activeLlmId.value = d.active_llm_id || (llms.value[0]?.id || '')
   } catch (e: any) { cfgStatus.value = '加载失败: ' + e.message }
@@ -102,6 +104,7 @@ async function saveCfg() {
       web_search_enabled: webSearchEnabled.value,
       web_search_max_pages: searchMaxPages.value,
       web_search_query_rewrite: searchRewrite.value,
+      web_fetch_max_chars: webFetchMaxChars.value,
       llms: llms.value,
       active_llm_id: activeLlmId.value,
     })
@@ -257,6 +260,11 @@ onMounted(() => { loadCfg(); loadTokens() })
         <button @click="searchRewrite=!searchRewrite" class="relative w-10 h-5 rounded-full transition-colors cursor-pointer border-0" :class="searchRewrite?'bg-pink-500':'bg-gray-300'">
           <span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all" :class="searchRewrite?'left-5.5':'left-0.5'"></span>
         </button>
+      </label>
+      <label class="block text-xs text-gray-600 mb-2">
+        抓取网页字数上限：{{ webFetchMaxChars.toLocaleString() }}
+        <input v-model.number="webFetchMaxChars" type="range" min="1000" max="50000" step="1000" class="mt-1 w-full accent-pink-500 h-1 cursor-pointer" />
+        <span class="text-gray-400">越大看到内容越多，但消耗 token 越多</span>
       </label>
       <p class="text-[11px] text-gray-400 mb-2">仅「额度模式」用户可使用联网搜索；用户自定义 Key 模式不可用。答案会附带来源链接。</p>
       <button @click="saveCfg" :disabled="cfgLoading" class="px-4 py-2 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl hover:from-pink-300 hover:to-rose-300 text-xs font-semibold cursor-pointer border-0 disabled:opacity-50" :class="cfgLoading?'cursor-not-allowed':''">

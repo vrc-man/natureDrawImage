@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick, watch } from 'vue'
 import { api } from '@/api/client'
+import AiPromptPresets from '@/components/AiPromptPresets.vue'
 
 // 模式: 'own' = 用自己的 API Key, 'token' = 用服务器额度
 type Mode = 'own' | 'token'
@@ -13,6 +14,10 @@ const defaultPrompt = ref('')
 const defaultTemp = ref(0.7)
 const ownPrompt = ref(localStorage.getItem('aiChatSysPrompt') || '')
 const ownTemp = ref(parseFloat(localStorage.getItem('aiChatTemp') || '0.7'))
+// 系统提示词预设（独立弹窗组件 AiPromptPresets）
+const promptPresetsRef = ref<InstanceType<typeof AiPromptPresets> | null>(null)
+function openPromptPresets() { promptPresetsRef.value?.openList() }
+function applyPromptPreset(text: string) { ownPrompt.value = text }
 
 async function loadDefaultPrompt() {
   try {
@@ -44,11 +49,36 @@ const imagePreview = ref('')
 // 设置面板
 const showSettings = ref(false)
 const settingMode = ref<Mode>('own')
+const fullscreen = ref(false)
 const modelList = ref<string[]>([])
 const modelLoading = ref(false)
 const testStatus = ref('')
 const testLoading = ref(false)
 const ownTopP = ref(parseFloat(localStorage.getItem('aiChatTopP') || '1'))
+const ownTopK = ref(parseInt(localStorage.getItem('aiChatTopK') || '0'))
+const ownFreqPen = ref(parseFloat(localStorage.getItem('aiChatFreqPen') || '0'))
+const ownPresPen = ref(parseFloat(localStorage.getItem('aiChatPresPen') || '0'))
+const ownMinP = ref(parseFloat(localStorage.getItem('aiChatMinP') || '0'))
+// 采样推荐预设（Qwen 官方）
+const SAMPLING_PRESETS = {
+  thinking: { temp: 0.6, topP: 0.95, topK: 20, minP: 0 },
+  nonThinking: { temp: 0.7, topP: 0.8, topK: 20, minP: 0 },
+}
+function applySamplingPreset(key: 'thinking' | 'nonThinking') {
+  const p = SAMPLING_PRESETS[key]
+  ownTemp.value = p.temp
+  ownTopP.value = p.topP
+  ownTopK.value = p.topK
+  ownMinP.value = p.minP
+}
+function resetSampling() {
+  ownTemp.value = 0.7
+  ownTopP.value = 1
+  ownTopK.value = 0
+  ownFreqPen.value = 0
+  ownPresPen.value = 0
+  ownMinP.value = 0
+}
 const ownMaxTokens = ref(parseInt(localStorage.getItem('aiChatMaxTokens') || '4096'))
 const ownContextLimit = ref(parseInt(localStorage.getItem('aiChatContextLimit') || '0'))
 const msgEditMode = ref(false)
@@ -59,6 +89,10 @@ function toggleWebSearch() { webSearch.value = !webSearch.value; localStorage.se
 
 const showReasoning = ref(localStorage.getItem('aiChatShowReasoning') === '1')
 function toggleShowReasoning() { showReasoning.value = !showReasoning.value; localStorage.setItem('aiChatShowReasoning', showReasoning.value ? '1' : '0') }
+
+// 流式输出（用户可自定义，默认开）
+const userStream = ref(localStorage.getItem('aiChatStream') !== '0')
+function toggleUserStream() { userStream.value = !userStream.value; localStorage.setItem('aiChatStream', userStream.value ? '1' : '0') }
 
 // 主题
 type ThemeKey = 'pink' | 'blue' | 'purple' | 'green'
@@ -114,6 +148,7 @@ function switchSession(id: string) {
   currentSessionId.value = id
   messages.value = JSON.parse(JSON.stringify(s.messages))
   showSessions.value = false
+  scrollBottom()
 }
 
 function doDeleteSession(id: string) {
@@ -253,6 +288,10 @@ function saveSettings() {
   localStorage.setItem('aiChatSysPrompt', ownPrompt.value)
   localStorage.setItem('aiChatTemp', String(ownTemp.value))
   localStorage.setItem('aiChatTopP', String(ownTopP.value))
+  localStorage.setItem('aiChatTopK', String(ownTopK.value))
+  localStorage.setItem('aiChatFreqPen', String(ownFreqPen.value))
+  localStorage.setItem('aiChatPresPen', String(ownPresPen.value))
+  localStorage.setItem('aiChatMinP', String(ownMinP.value))
   localStorage.setItem('aiChatContextLimit', String(ownContextLimit.value))
   localStorage.setItem('aiChatMaxTokens', String(ownMaxTokens.value))
   localStorage.setItem('aiChatToken', token.value)
@@ -344,14 +383,23 @@ async function send() {
   scrollBottom()
 
   try {
-    // 联网开关关闭：完全不联网（不搜索、不抓 URL）
-    // 联网开关开启：消息含 URL 走抓取总结；不含 URL 走搜索
-    const hasUrl = /https?:\/\//.test(text)
-    const llmText = webSearch.value ? (hasUrl ? await enrichWithPage(text) : text) : text
-    if (mode.value === 'own') {
-      await sendOwn(llmText, imgData)
+    // 纯图片（无文字）：直接发送，不联网不抓取
+    if (!text) {
+      if (mode.value === 'own') {
+        await sendOwn(text, imgData)
+      } else {
+        await sendToken(text, imgData, false)
+      }
     } else {
-      await sendToken(llmText, imgData, hasUrl)
+      // 联网开关关闭：完全不联网（不搜索、不抓 URL）
+      // 联网开关开启：消息含 URL 走抓取总结；不含 URL 走搜索
+      const hasUrl = /https?:\/\//.test(text)
+      const llmText = webSearch.value ? (hasUrl ? await enrichWithPage(text) : text) : text
+      if (mode.value === 'own') {
+        await sendOwn(llmText, imgData)
+      } else {
+        await sendToken(llmText, imgData, hasUrl)
+      }
     }
   } catch (e: any) {
     messages.value.push({ role: 'assistant', text: '❌ 错误: ' + (e.message || '未知') })
@@ -399,8 +447,9 @@ async function sendOwn(text: string, img: string) {
       msgs.push({ role: m.role, content: m.text })
     }
   }
-  // 当前消息
-  const curContent: any[] = [{ type: 'text', text }]
+  // 当前消息（纯图片时无 text 块）
+  const curContent: any[] = []
+  if (text) curContent.push({ type: 'text', text })
   if (img) curContent.push({ type: 'image_url', image_url: { url: img } })
   msgs.push({ role: 'user', content: curContent })
 
@@ -414,6 +463,10 @@ async function sendOwn(text: string, img: string) {
       messages: msgs,
       temperature: ownTemp.value,
       top_p: ownTopP.value,
+      top_k: ownTopK.value,
+      frequency_penalty: ownFreqPen.value,
+      presence_penalty: ownPresPen.value,
+      min_p: ownMinP.value,
       max_tokens: Math.min(50000, Math.max(1, ownMaxTokens.value || 4096)),
       stream: true,
     },
@@ -464,16 +517,21 @@ async function sendOwn(text: string, img: string) {
 
 async function sendToken(text: string, img: string, hasUrl: boolean = false) {
   const body: any = { token: token.value, message: text }
-  if (ownPrompt.value) body.system_prompt = ownPrompt.value
+  body.system_prompt = ownPrompt.value
   if (ownTemp.value > 0) body.temperature = ownTemp.value
   if (img) body.image = img
   // 消息含 URL 时已前端抓取内容，不再走后端搜索，避免重复
   if (webSearch.value && !hasUrl) body.search = true
   body.max_tokens = 50000
-  // 每次发送最近 20 条对话历史（=10 轮，排除最后一条空的 assistant 占位）
-  const historyMsgs = messages.value.slice(-21)
-  if (historyMsgs.length > 1) {
-    body.history = historyMsgs.slice(0, -1).map((m: any) => ({
+  body.stream = userStream.value
+  body.top_p = ownTopP.value
+  body.top_k = ownTopK.value
+  body.frequency_penalty = ownFreqPen.value
+  body.presence_penalty = ownPresPen.value
+  body.min_p = ownMinP.value
+  // 发送全部对话历史（排除最后一条空的 assistant 占位），用户自行总结后新开会话
+  if (messages.value.length > 1) {
+    body.history = messages.value.slice(0, -1).map((m: any) => ({
       role: m.role,
       text: m.text,
       image: m.image || '',
@@ -561,9 +619,46 @@ watch(messages, () => { estimatedTokens.value = chatTokens() }, { deep: true })
 watch(ownPrompt, () => { estimatedTokens.value = chatTokens() })
 
 function scrollBottom() { nextTick(() => { const el = document.querySelector('.chat-msgs'); if (el) el.scrollTop = el.scrollHeight }) }
+function scrollTop() { nextTick(() => { const el = document.querySelector('.chat-msgs'); if (el) el.scrollTop = 0 }) }
 
 function deleteMessage(i: number) { messages.value.splice(i, 1); autoSaveSession() }
 function copyMessage(text: string) { navigator.clipboard.writeText(text).then(() => {}).catch(() => {}) }
+
+// 编辑模式批量删除：勾选 + Shift 区间选择
+const selectedMsgs = ref<Set<number>>(new Set())
+const lastSelIndex = ref(-1)
+function toggleSelectMsg(i: number, event?: any) {
+  const s = new Set(selectedMsgs.value)
+  if (event?.shiftKey && lastSelIndex.value >= 0 && lastSelIndex.value !== i) {
+    const a = Math.min(lastSelIndex.value, i)
+    const b = Math.max(lastSelIndex.value, i)
+    for (let k = a; k <= b; k++) s.add(k)
+  } else if (s.has(i)) {
+    s.delete(i)
+  } else {
+    s.add(i)
+  }
+  selectedMsgs.value = s
+  lastSelIndex.value = i
+}
+function selectAllMsgs() {
+  selectedMsgs.value = new Set(messages.value.map((_, i) => i))
+  lastSelIndex.value = -1
+}
+function clearSelectedMsgs() {
+  selectedMsgs.value = new Set()
+  lastSelIndex.value = -1
+}
+function deleteSelectedMsgs() {
+  const idxs = [...selectedMsgs.value].sort((a, b) => b - a)
+  if (!idxs.length) return
+  const count = idxs.length
+  for (const i of idxs) messages.value.splice(i, 1)
+  selectedMsgs.value = new Set()
+  lastSelIndex.value = -1
+  autoSaveSession()
+  alert(`已删除 ${count} 条消息`)
+}
 function exportSession(messages: any[], name: string) {
   const blob = new Blob([JSON.stringify(messages, null, 2)], { type: 'application/json' })
   const a = document.createElement('a')
@@ -600,11 +695,12 @@ onMounted(async () => {
   }
   if (!currentSessionId.value) newSession()
   if (mode.value === 'token') loadProfile()
+  scrollBottom()
 })
 </script>
 
 <template>
-  <div class="flex flex-col h-full" :style="chatBgColor ? {backgroundColor: chatBgColor} : {}">
+  <div class="flex flex-col h-full" :class="fullscreen ? 'fixed inset-0 z-[100]' : ''" :style="chatBgColor ? {backgroundColor: chatBgColor} : {}">
     <!-- 顶部栏 -->
     <div class="flex items-center justify-between px-3 py-2 border-b border-pink-100 shrink-0 bg-white/80 backdrop-blur">
       <div class="flex items-center gap-2 min-w-0 flex-1">
@@ -614,9 +710,12 @@ onMounted(async () => {
         <button @click="switchMode(mode==='own'?'token':'own')" class="shrink-0 text-[10px] px-2 py-1 rounded-lg cursor-pointer border-0" :class="mode==='own'?'bg-blue-50 text-blue-600 hover:bg-blue-100':'bg-green-50 text-green-600 hover:bg-green-100'" title="切换模式：自用 Key / 服务器额度">{{ mode==='own' ? '切额度' : '切自用' }}</button>
       </div>
       <div class="flex items-center gap-1 shrink-0">
+        <button @click="fullscreen=!fullscreen" class="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer border-0 dark:text-gray-300" :title="fullscreen?'退出全屏':'全屏'">{{ fullscreen ? '🗕' : '⛶' }}</button>
         <button @click="newChat" class="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer border-0 dark:text-gray-300" title="新会话">📝</button>
         <button @click="exportChat" class="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer border-0 dark:text-gray-300" title="导出对话">⬇️</button>
-        <button @click="msgEditMode = !msgEditMode" class="text-xs px-2 py-1 rounded cursor-pointer border-0" :class="msgEditMode?'bg-pink-500 text-white':'bg-gray-100 dark:bg-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'" title="编辑消息">{{ msgEditMode ? '✕完成' : '✎编辑' }}</button>
+        <button @click="msgEditMode = !msgEditMode; if (!msgEditMode) clearSelectedMsgs()" class="text-xs px-2 py-1 rounded cursor-pointer border-0" :class="msgEditMode?'bg-pink-500 text-white':'bg-gray-100 dark:bg-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'" title="编辑消息">{{ msgEditMode ? '✕完成' : '✎编辑' }}</button>
+        <button @click="scrollTop" class="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer border-0 dark:text-gray-300" title="回到最顶">⏫</button>
+        <button @click="scrollBottom" class="text-xs px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer border-0 dark:text-gray-300" title="跳到最新">⏬</button>
         <button @click="openSettings" class="text-xs px-2 py-1 rounded cursor-pointer border-0 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600">⚙️</button>
       </div>
     </div>
@@ -657,16 +756,19 @@ onMounted(async () => {
         <p class="mt-1">支持上传图片进行反推/改写</p>
       </div>
       <div v-for="(msg, i) in messages" :key="i" class="flex flex-col" :class="msg.role==='user'?'items-end':'items-start'">
-        <div class="max-w-[85%] rounded-2xl px-3 py-2 text-sm overflow-hidden" :style="msg.role==='user'?{backgroundColor:userBubbleColor,color:userBubbleTextColor}:{backgroundColor:aiBubbleColor,color:aiBubbleTextColor}" :class="msg.role==='user'?'rounded-br-md':'rounded-bl-md'">
-          <img v-if="msg.image" :src="msg.image" class="max-w-[200px] max-h-[200px] rounded-lg mb-1" />
-          <div v-if="msg.role==='assistant' && showReasoning && msg.reasoning" class="mb-2 text-xs italic whitespace-pre-wrap break-words border-l-2 pl-2" style="border-color:currentColor;opacity:0.6;overflow-wrap:anywhere;min-width:0">{{ msg.reasoning }}</div>
-          <div class="whitespace-pre-wrap break-words" style="overflow-wrap:anywhere;min-width:0">{{ msg.text }}</div>
-          <div v-if="msg.role==='assistant' && msg.sources && msg.sources.length" class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
-            <div class="text-[10px] text-gray-400 mb-1">来源：</div>
-            <div v-for="(s, si) in msg.sources.slice(0, 5)" :key="si" class="flex items-center gap-1 text-[11px] leading-tight">
-              <span class="text-gray-400">·</span>
-              <a v-if="s.url" :href="s.url" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline truncate cursor-pointer" :title="s.url">{{ s.title || s.url }}</a>
-              <span v-else class="text-gray-600 dark:text-gray-300 truncate">{{ s.title || '' }}</span>
+        <div class="flex items-center gap-1.5 w-full" :class="msg.role==='user'?'justify-end':'justify-start'">
+          <input v-if="msgEditMode" type="checkbox" :checked="selectedMsgs.has(i)" @change="toggleSelectMsg(i)" @click.stop class="w-4 h-4 accent-pink-500 cursor-pointer shrink-0" :class="msg.role==='user'?'order-last':''" />
+          <div class="max-w-[85%] rounded-2xl px-3 py-2 text-sm overflow-hidden cursor-default" :style="msg.role==='user'?{backgroundColor:userBubbleColor,color:userBubbleTextColor}:{backgroundColor:aiBubbleColor,color:aiBubbleTextColor}" :class="[msg.role==='user'?'rounded-br-md':'rounded-bl-md', msgEditMode && selectedMsgs.has(i) ? 'ring-2 ring-pink-400' : '']" @click="msgEditMode && toggleSelectMsg(i)">
+            <img v-if="msg.image" :src="msg.image" class="max-w-[200px] max-h-[200px] rounded-lg mb-1" />
+            <div v-if="msg.role==='assistant' && showReasoning && msg.reasoning" class="mb-2 text-xs italic whitespace-pre-wrap break-words border-l-2 pl-2" style="border-color:currentColor;opacity:0.6;overflow-wrap:anywhere;min-width:0">{{ msg.reasoning }}</div>
+            <div class="whitespace-pre-wrap break-words" style="overflow-wrap:anywhere;min-width:0">{{ msg.text }}</div>
+            <div v-if="msg.role==='assistant' && msg.sources && msg.sources.length" class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
+              <div class="text-[10px] text-gray-400 mb-1">来源：</div>
+              <div v-for="(s, si) in msg.sources.slice(0, 5)" :key="si" class="flex items-center gap-1 text-[11px] leading-tight">
+                <span class="text-gray-400">·</span>
+                <a v-if="s.url" :href="s.url" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:underline truncate cursor-pointer" :title="s.url">{{ s.title || s.url }}</a>
+                <span v-else class="text-gray-600 dark:text-gray-300 truncate">{{ s.title || '' }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -674,6 +776,19 @@ onMounted(async () => {
           <button @click="copyMessage(msg.text)" class="text-[9px] px-1.5 py-0.5 rounded bg-pink-100 dark:bg-pink-900 text-pink-600 dark:text-pink-300 hover:bg-pink-200 cursor-pointer border-0" title="复制">📋 复制</button>
           <button @click="deleteMessage(i)" class="text-[9px] px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900 text-red-500 dark:text-red-300 hover:bg-red-200 cursor-pointer border-0" title="删除">✕ 删除</button>
         </div>
+      </div>
+
+      <!-- 批量删除工具栏 -->
+      <div v-if="msgEditMode" class="sticky bottom-0 pt-2">
+        <div class="flex items-center justify-between gap-2 px-3 py-2 bg-white/95 dark:bg-gray-800/95 backdrop-blur rounded-xl border border-pink-200 dark:border-gray-600 shadow-lg">
+          <div class="flex items-center gap-1 text-[11px] text-gray-600 dark:text-gray-300">
+            <button @click="selectAllMsgs" class="px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer border-0">全选</button>
+            <button @click="clearSelectedMsgs" class="px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer border-0" :disabled="!selectedMsgs.size">取消</button>
+            <span class="ml-1 text-gray-400">{{ selectedMsgs.size }} 已选</span>
+          </div>
+          <button @click="deleteSelectedMsgs" :disabled="!selectedMsgs.size" class="px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer border-0" :class="selectedMsgs.size?'bg-red-500 text-white hover:bg-red-600':'bg-gray-200 text-gray-400 cursor-not-allowed'">🗑 删除选中 ({{ selectedMsgs.size }})</button>
+        </div>
+        <p class="text-[10px] text-gray-400 text-center mt-1">点气泡勾选 · Shift+点击 = 区间选择</p>
       </div>
     </div>
 
@@ -692,13 +807,13 @@ onMounted(async () => {
         <span>🔍 联网</span>
       </button>
     </div>
-    <div class="flex items-end gap-2 p-3 border-t border-pink-100 dark:border-gray-600 bg-white dark:bg-gray-800 shrink-0">
-      <label class="shrink-0 cursor-pointer">
+    <div class="flex items-stretch gap-2 p-3 border-t border-pink-100 dark:border-gray-600 bg-white dark:bg-gray-800 shrink-0">
+      <label class="shrink-0 cursor-pointer flex items-center justify-center">
         <input type="file" accept="image/*" class="hidden" @change="onImageSelected" />
-        <span class="text-lg text-gray-400 dark:text-gray-500 hover:text-pink-500">📷</span>
+        <span class="text-2xl leading-none text-gray-400 dark:text-gray-500 hover:text-pink-500">📷</span>
       </label>
       <textarea v-model="inputText" rows="2" class="flex-1 border border-pink-200 dark:border-gray-500 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 resize-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500" placeholder="输入消息..." @keydown.enter.ctrl="send"></textarea>
-      <button @click="send" :disabled="sending || (!inputText.trim() && !imageBase64)" class="shrink-0 px-4 py-2 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl text-sm font-semibold hover:from-pink-300 hover:to-rose-300 disabled:opacity-40 cursor-pointer border-0 flex items-center gap-1">
+      <button @click="send" :disabled="sending || (!inputText.trim() && !imageBase64)" class="shrink-0 px-4 rounded-xl bg-gradient-to-r from-pink-400 to-rose-400 text-white text-sm font-semibold hover:from-pink-300 hover:to-rose-300 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer border-0 flex items-center justify-center gap-1">
         <span v-if="sending" class="inline-block w-3.5 h-3.5 border-2 border-white/40 border-t-white rounded-full animate-spin"></span>
         {{ sending ? '...' : '发送' }}
       </button>
@@ -729,11 +844,12 @@ onMounted(async () => {
 
     <!-- 设置弹窗 -->
     <div v-if="showSettings" class="fixed inset-0 z-[70] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
-      <div class="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5 max-h-[80vh] overflow-y-auto">
-        <div class="flex items-center justify-between mb-3">
+      <div class="bg-white rounded-2xl shadow-xl max-w-sm w-full max-h-[80vh] flex flex-col overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-3 shrink-0 bg-white border-b border-gray-100">
           <h3 class="text-base font-bold text-gray-700">⚙️ AI 助手设置</h3>
           <button @click="showSettings=false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
         </div>
+        <div class="flex-1 overflow-y-auto px-5 py-4">
 
         <!-- 模式选择 -->
         <div class="flex gap-2 mb-3">
@@ -782,8 +898,11 @@ onMounted(async () => {
         </template>
 
         <label class="block text-xs text-gray-600 mb-2">
-          系统提示词
-          <textarea v-model="ownPrompt" rows="4" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 box-border resize-y font-mono text-[11px]" placeholder="可在此自定义系统提示词，或点击下方加载后台默认"></textarea>
+          <div class="flex items-center justify-between mb-1">
+            <span>系统提示词</span>
+            <button @click="openPromptPresets" class="text-[10px] px-2 py-1 rounded-lg cursor-pointer border-0 bg-pink-100 dark:bg-pink-900 text-pink-600 dark:text-pink-300 hover:bg-pink-200">📝 管理预设</button>
+          </div>
+          <textarea id="aiChatSysPromptTa" v-model="ownPrompt" rows="4" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 box-border resize-y font-mono text-[11px]" placeholder="可在此自定义系统提示词，或点击下方加载后台默认"></textarea>
           <button @click="loadDefaultPrompt" class="mt-1 text-[10px] text-pink-500 hover:text-pink-600 cursor-pointer border-0 bg-transparent">📥 读取后台默认</button>
         </label>
         <label class="block text-xs text-gray-600 mb-2">
@@ -801,6 +920,39 @@ onMounted(async () => {
           </div>
         </label>
         <label class="block text-xs text-gray-600 mb-2">
+          top_k (0-200，0=不限制)
+          <div class="flex items-center gap-2">
+            <input v-model.number="ownTopK" type="range" min="0" max="200" step="1" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+            <span class="text-sm text-gray-600 w-8 text-right">{{ ownTopK }}</span>
+          </div>
+        </label>
+        <label class="block text-xs text-gray-600 mb-2">
+          重复惩罚 frequency_penalty (-2~2)
+          <div class="flex items-center gap-2">
+            <input v-model.number="ownFreqPen" type="range" min="-2" max="2" step="0.1" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+            <span class="text-sm text-gray-600 w-10 text-right">{{ ownFreqPen.toFixed(1) }}</span>
+          </div>
+        </label>
+        <label class="block text-xs text-gray-600 mb-2">
+          存在惩罚 presence_penalty (-2~2)
+          <div class="flex items-center gap-2">
+            <input v-model.number="ownPresPen" type="range" min="-2" max="2" step="0.1" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+            <span class="text-sm text-gray-600 w-10 text-right">{{ ownPresPen.toFixed(1) }}</span>
+          </div>
+        </label>
+        <label class="block text-xs text-gray-600 mb-2">
+          min_p (0-1，0=不限制)
+          <div class="flex items-center gap-2">
+            <input v-model.number="ownMinP" type="range" min="0" max="1" step="0.05" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+            <span class="text-sm text-gray-600 w-8 text-right">{{ ownMinP }}</span>
+          </div>
+        </label>
+        <div class="flex gap-1.5 mb-2 flex-wrap">
+          <button @click="applySamplingPreset('thinking')" class="px-2 py-1 text-[10px] rounded-lg cursor-pointer border-0 bg-blue-100 text-blue-600 hover:bg-blue-200">🧠 思考模式推荐 (0.6/0.95/20)</button>
+          <button @click="applySamplingPreset('nonThinking')" class="px-2 py-1 text-[10px] rounded-lg cursor-pointer border-0 bg-purple-100 text-purple-600 hover:bg-purple-200">⚡ 非思考推荐 (0.7/0.8/20)</button>
+          <button @click="resetSampling" class="px-2 py-1 text-[10px] rounded-lg cursor-pointer border-0 bg-gray-100 text-gray-500 hover:bg-gray-200">↺ 恢复默认</button>
+        </div>
+        <label class="block text-xs text-gray-600 mb-2">
           最大输出 tokens（1-50000）
           <div class="flex items-center gap-2">
             <input v-model.number="ownMaxTokens" type="range" min="1" max="50000" step="128" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
@@ -817,6 +969,12 @@ onMounted(async () => {
           <span>🧠 显示思考过程</span>
           <button @click="toggleShowReasoning" class="relative w-10 h-5 rounded-full transition-colors cursor-pointer border-0" :class="showReasoning?'bg-pink-500':'bg-gray-300 dark:bg-gray-600'">
             <span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all" :class="showReasoning?'left-5.5':'left-0.5'"></span>
+          </button>
+        </label>
+        <label class="flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-400 mb-2">
+          <span>⚡ 流式输出 <span class="text-gray-400">（关=更稳定，长回答不中断）</span></span>
+          <button @click="toggleUserStream" class="relative w-10 h-5 rounded-full transition-colors cursor-pointer border-0" :class="userStream?'bg-pink-500':'bg-gray-300 dark:bg-gray-600'">
+            <span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all" :class="userStream?'left-5.5':'left-0.5'"></span>
           </button>
         </label>
         <hr class="my-3 border-gray-200 dark:border-gray-600" />
@@ -860,7 +1018,11 @@ onMounted(async () => {
           <button @click="showSettings=false" class="flex-1 py-2 bg-gray-100 dark:bg-gray-700 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 text-sm text-gray-600 dark:text-gray-300 cursor-pointer border-0">取消</button>
           <button @click="saveSettings" class="flex-1 py-2 rounded-xl text-sm font-semibold cursor-pointer border-0 text-white" :style="{backgroundColor:themeKey==='pink'?'#ec4899':themeKey==='blue'?'#3b82f6':themeKey==='purple'?'#8b5cf6':'#10b981'}">保存</button>
         </div>
+        </div>
       </div>
     </div>
+
+    <!-- 系统提示词预设弹窗 -->
+    <AiPromptPresets ref="promptPresetsRef" :on-fill="applyPromptPreset" />
   </div>
 </template>
