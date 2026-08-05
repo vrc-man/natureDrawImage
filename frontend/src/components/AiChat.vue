@@ -45,6 +45,9 @@ const inputText = ref('')
 const sending = ref(false)
 const imageBase64 = ref('')
 const imagePreview = ref('')
+const viewImage = ref('')
+const pendingQuestion = ref<{ question: string; options: string[] } | null>(null)
+const questionAnswer = ref('')
 
 // 设置面板
 const showSettings = ref(false)
@@ -103,6 +106,7 @@ const aiBubbleColor = ref(localStorage.getItem('aiChatAiColor') || '#f3f4f6')
 const aiBubbleTextColor = ref(localStorage.getItem('aiChatAiTextColor') || '#374151')
 const chatBgColor = ref(localStorage.getItem('aiChatBgColor') || '')
 const cardBgColor = ref(localStorage.getItem('aiChatCardColor') || '')
+const bubbleFontSize = ref(parseInt(localStorage.getItem('aiChatBubbleFontSize') || '14'))
 const confirmDeleteId = ref('')
 const confirmDeleteInput = ref('')
 const confirmDeleteMode = ref<'session' | 'all'>('session')
@@ -302,6 +306,7 @@ function saveSettings() {
   localStorage.setItem('aiChatAiTextColor', aiBubbleTextColor.value)
   localStorage.setItem('aiChatBgColor', chatBgColor.value)
   localStorage.setItem('aiChatCardColor', cardBgColor.value)
+  localStorage.setItem('aiChatBubbleFontSize', String(bubbleFontSize.value))
   if (mode.value === 'token') loadProfile()
   showSettings.value = false
 }
@@ -365,6 +370,27 @@ async function onImageSelected(e: Event) {
   }
 }
 function removeImage() { imageBase64.value = ''; imagePreview.value = '' }
+
+// 回答 AI 的反问，继续多轮对话
+async function answerQuestion(ans: string) {
+  const a = (ans || questionAnswer.value || '').trim()
+  if (!a || !pendingQuestion.value) return
+  pendingQuestion.value = null
+  questionAnswer.value = ''
+  const userMsg: any = { role: 'user', text: a }
+  messages.value.push(userMsg)
+  sending.value = true
+  scrollBottom()
+  try {
+    if (mode.value === 'own') {
+      await sendOwn(a, '')
+    } else {
+      await sendToken(a, '', false)
+    }
+  } catch (e: any) {
+    messages.value.push({ role: 'assistant', text: '❌ 错误: ' + (e.message || '未知') })
+  } finally { sending.value = false; autoSaveSession(); scrollBottom() }
+}
 
 // 发送
 async function send() {
@@ -575,15 +601,26 @@ async function sendToken(text: string, img: string, hasUrl: boolean = false) {
           if (ev.kind === 'reasoning' && ev.delta) { reasoning += ev.delta; aiMsg.reasoning = reasoning }
           else if (ev.delta) { full += ev.delta; aiMsg.text = full }
           else if (ev.sources) { aiMsg.sources = ev.sources }
+          else if (ev.question) {
+            // AI 反问：展示问题与选项，等用户回答
+            pendingQuestion.value = { question: ev.question.question || '', options: ev.question.options || [] }
+            if (!full) { full = ev.question.question || '请回答：'; aiMsg.text = full }
+          }
           else if (ev.error) { full += '\n❌ ' + ev.error; aiMsg.text = full }
         }
       }
     } else {
       const d = await res.json()
-      if (!d.reply) throw new Error('服务器返回为空')
-      full = d.reply
-      aiMsg.text = full
-      if (d.sources) aiMsg.sources = d.sources
+      if (d.question) {
+        pendingQuestion.value = { question: d.question.question || '', options: d.question.options || [] }
+        full = d.question.question || '请回答：'
+        aiMsg.text = full
+      } else {
+        if (!d.reply) throw new Error('服务器返回为空')
+        full = d.reply
+        aiMsg.text = full
+        if (d.sources) aiMsg.sources = d.sources
+      }
     }
     if (!full && !reasoning) throw new Error('服务器返回为空')
   } catch (e: any) {
@@ -594,8 +631,32 @@ async function sendToken(text: string, img: string, hasUrl: boolean = false) {
   if (mode.value === 'token') loadProfile()
 }
 
+// 兼容 JSON 数组格式的 AI 回复（如 ["正文", []]），自动提取第一个字符串元素
+function normalizeText(v: any): string {
+  if (typeof v === 'string') {
+    const s = v.trim()
+    if (s.startsWith('[') && s.endsWith(']')) {
+      try {
+        const arr = JSON.parse(s)
+        if (Array.isArray(arr)) {
+          const first = arr.find((x: any) => typeof x === 'string')
+          if (first) return first
+        }
+      } catch {}
+    }
+    return v
+  }
+  if (Array.isArray(v)) {
+    const first = v.find((x: any) => typeof x === 'string')
+    if (first) return first
+    return v.map((x: any) => (typeof x === 'string' ? x : JSON.stringify(x))).join('')
+  }
+  return v ? String(v) : ''
+}
+
 // 纯前端 token 估算（中文≈1.5字/token，英文≈3.5字/token）
-function estimateTokens(text: string): number {
+function estimateTokens(text: unknown): number {
+  if (typeof text !== 'string' || !text) return 0
   let tokens = 0
   for (const ch of text) {
     tokens += ch.charCodeAt(0) > 127 ? 1 / 1.5 : 1 / 3.5
@@ -606,7 +667,7 @@ function estimateTokens(text: string): number {
 function chatTokens(): number {
   let total = 0
   for (const m of messages.value) {
-    if (m.text) total += estimateTokens(m.text)
+    if (typeof m.text === 'string' && m.text) total += estimateTokens(m.text)
     if (m.image) total += 256 // 每张图估算 256 tokens
   }
   if (ownPrompt.value) total += estimateTokens(ownPrompt.value)
@@ -758,10 +819,10 @@ onMounted(async () => {
       <div v-for="(msg, i) in messages" :key="i" class="flex flex-col" :class="msg.role==='user'?'items-end':'items-start'">
         <div class="flex items-center gap-1.5 w-full" :class="msg.role==='user'?'justify-end':'justify-start'">
           <input v-if="msgEditMode" type="checkbox" :checked="selectedMsgs.has(i)" @change="toggleSelectMsg(i)" @click.stop class="w-4 h-4 accent-pink-500 cursor-pointer shrink-0" :class="msg.role==='user'?'order-last':''" />
-          <div class="max-w-[85%] rounded-2xl px-3 py-2 text-sm overflow-hidden cursor-default" :style="msg.role==='user'?{backgroundColor:userBubbleColor,color:userBubbleTextColor}:{backgroundColor:aiBubbleColor,color:aiBubbleTextColor}" :class="[msg.role==='user'?'rounded-br-md':'rounded-bl-md', msgEditMode && selectedMsgs.has(i) ? 'ring-2 ring-pink-400' : '']" @click="msgEditMode && toggleSelectMsg(i)">
-            <img v-if="msg.image" :src="msg.image" class="max-w-[200px] max-h-[200px] rounded-lg mb-1" />
+          <div class="max-w-[85%] rounded-2xl px-3 py-2 overflow-hidden cursor-default" :style="[{backgroundColor:msg.role==='user'?userBubbleColor:aiBubbleColor,color:msg.role==='user'?userBubbleTextColor:aiBubbleTextColor},{fontSize:bubbleFontSize+'px'}]" :class="[msg.role==='user'?'rounded-br-md':'rounded-bl-md', msgEditMode && selectedMsgs.has(i) ? 'ring-2 ring-pink-400' : '']" @click="msgEditMode && toggleSelectMsg(i)">
+            <img v-if="msg.image" :src="msg.image" class="max-w-[200px] max-h-[200px] rounded-lg mb-1 cursor-zoom-in" @click.stop="viewImage=msg.image" />
             <div v-if="msg.role==='assistant' && showReasoning && msg.reasoning" class="mb-2 text-xs italic whitespace-pre-wrap break-words border-l-2 pl-2" style="border-color:currentColor;opacity:0.6;overflow-wrap:anywhere;min-width:0">{{ msg.reasoning }}</div>
-            <div class="whitespace-pre-wrap break-words" style="overflow-wrap:anywhere;min-width:0">{{ msg.text }}</div>
+            <div class="whitespace-pre-wrap break-words" style="overflow-wrap:anywhere;min-width:0">{{ normalizeText(msg.text) }}</div>
             <div v-if="msg.role==='assistant' && msg.sources && msg.sources.length" class="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600">
               <div class="text-[10px] text-gray-400 mb-1">来源：</div>
               <div v-for="(s, si) in msg.sources.slice(0, 5)" :key="si" class="flex items-center gap-1 text-[11px] leading-tight">
@@ -773,7 +834,7 @@ onMounted(async () => {
           </div>
         </div>
         <div v-if="msgEditMode" class="flex gap-1 mt-1 px-1">
-          <button @click="copyMessage(msg.text)" class="text-[9px] px-1.5 py-0.5 rounded bg-pink-100 dark:bg-pink-900 text-pink-600 dark:text-pink-300 hover:bg-pink-200 cursor-pointer border-0" title="复制">📋 复制</button>
+          <button @click="copyMessage(normalizeText(msg.text))" class="text-[9px] px-1.5 py-0.5 rounded bg-pink-100 dark:bg-pink-900 text-pink-600 dark:text-pink-300 hover:bg-pink-200 cursor-pointer border-0" title="复制">📋 复制</button>
           <button @click="deleteMessage(i)" class="text-[9px] px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-900 text-red-500 dark:text-red-300 hover:bg-red-200 cursor-pointer border-0" title="删除">✕ 删除</button>
         </div>
       </div>
@@ -792,9 +853,21 @@ onMounted(async () => {
       </div>
     </div>
 
+    <!-- AI 反问卡片 -->
+    <div v-if="pendingQuestion" class="px-3 py-2 border-t border-pink-100 dark:border-gray-600 bg-pink-50/70 dark:bg-gray-800 shrink-0">
+      <div class="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-2">🤔 {{ pendingQuestion.question }}</div>
+      <div v-if="pendingQuestion.options.length" class="flex flex-wrap gap-2 mb-2">
+        <button v-for="(op, oi) in pendingQuestion.options" :key="oi" @click="answerQuestion(op)" class="px-3 py-1.5 rounded-xl text-xs cursor-pointer border-0 bg-pink-100 dark:bg-pink-900 text-pink-700 dark:text-pink-300 hover:bg-pink-200">{{ op }}</button>
+      </div>
+      <div class="flex gap-2">
+        <input v-model="questionAnswer" type="text" placeholder="输入你的回答..." class="flex-1 border border-pink-200 dark:border-gray-500 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 placeholder-gray-400" @keydown.enter="answerQuestion('')" />
+        <button @click="answerQuestion('')" class="shrink-0 px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer border-0 bg-pink-500 text-white hover:bg-pink-600">回答</button>
+      </div>
+    </div>
+
     <!-- 图片预览 -->
     <div v-if="imagePreview" class="relative px-3 py-1 border-t border-pink-100 dark:border-gray-600 bg-white dark:bg-gray-800 shrink-0">
-      <img :src="imagePreview" class="max-w-[80px] max-h-[80px] rounded-lg border border-gray-200 dark:border-gray-600" />
+      <img :src="imagePreview" class="max-w-[80px] max-h-[80px] rounded-lg border border-gray-200 dark:border-gray-600 cursor-zoom-in" @click="viewImage=imagePreview" />
       <button @click="removeImage" class="absolute top-0 left-0 w-5 h-5 bg-black/50 text-white rounded-full text-xs flex items-center justify-center cursor-pointer border-0">✕</button>
     </div>
 
@@ -1013,6 +1086,10 @@ onMounted(async () => {
           <input v-model="cardBgColor" type="color" class="mt-1 w-full h-8 rounded-xl border border-gray-200 cursor-pointer box-border" />
           <button @click="cardBgColor=''" class="text-[10px] text-gray-400 hover:text-pink-500 cursor-pointer border-0 bg-transparent">重置</button>
         </label>
+        <label class="block text-xs text-gray-600 dark:text-gray-400 mb-3">
+          气泡文字大小（px）：{{ bubbleFontSize }}
+          <input v-model.number="bubbleFontSize" type="range" min="12" max="22" step="1" class="mt-1 w-full accent-pink-500 h-1 cursor-pointer" />
+        </label>
 
         <div class="flex gap-2">
           <button @click="showSettings=false" class="flex-1 py-2 bg-gray-100 dark:bg-gray-700 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-600 text-sm text-gray-600 dark:text-gray-300 cursor-pointer border-0">取消</button>
@@ -1024,5 +1101,13 @@ onMounted(async () => {
 
     <!-- 系统提示词预设弹窗 -->
     <AiPromptPresets ref="promptPresetsRef" :on-fill="applyPromptPreset" />
+
+    <!-- 图片查看大图 -->
+    <Teleport to="body">
+      <div v-if="viewImage" class="fixed inset-0 z-[90] bg-black/80 flex items-center justify-center p-4" @click="viewImage=''">
+        <img :src="viewImage" class="max-w-full max-h-full object-contain rounded-lg" @click.stop />
+        <button class="absolute top-4 right-4 w-9 h-9 bg-black/60 text-white rounded-full text-xl flex items-center justify-center cursor-pointer border-0 hover:bg-black/80" @click="viewImage=''">✕</button>
+      </div>
+    </Teleport>
   </div>
 </template>

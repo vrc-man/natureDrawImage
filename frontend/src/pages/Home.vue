@@ -88,6 +88,10 @@ const negativePrompt = ref(localStorage.getItem('formState_negative_prompt') || 
 const nlPrompt = ref(localStorage.getItem('formState_nl') || '')
 const rewrite = ref(localStorage.getItem('formState_rewrite') === 'true')
 const promptMode = ref(localStorage.getItem('formState_promptMode') || 'tags')
+const seedMode = ref(localStorage.getItem('seedMode') || 'default')
+const seedValue = ref(parseInt(localStorage.getItem('seedValue') || '0'))
+function saveSeedMode(m: string) { seedMode.value = m; localStorage.setItem('seedMode', m) }
+function saveSeedValue() { localStorage.setItem('seedValue', String(seedValue.value || 0)) }
 interface LlmPromptTemplate { id: number; name: string; description?: string }
 const llmTemplates = ref<LlmPromptTemplate[]>([])
 const llmTemplateId = ref(localStorage.getItem('formState_llmTemplateId') || '')
@@ -98,6 +102,7 @@ const selectedTemplateDesc = computed(() => {
 const width = ref(parseInt(localStorage.getItem('formState_w') || '512'))
 const height = ref(parseInt(localStorage.getItem('formState_h') || '768'))
 const currentWorkflowPath = ref(localStorage.getItem('currentWorkflow') || '')
+const skipPromptInject = ref(false)
 const img2imgUsePreset = ref(false)
 
 // Fork
@@ -122,6 +127,8 @@ const queueStatus = ref('')
 const llmText = ref('')
 const logLines = ref<string[]>([])
 const showLog = ref(false)
+const logColor = ref(localStorage.getItem('logColor') || '#9ca3af')
+function saveLogColor(c: string) { logColor.value = c; localStorage.setItem('logColor', c) }
 const resultImages = ref<any[]>([])
 const myQueueItems = ref<any[]>([])
 const hasLoadImage = ref(true)
@@ -447,6 +454,7 @@ async function onWorkflowSelect(path: string, name?: string) {
     const r = await fetch(`/api/workflows/current?path=${encodeURIComponent(path)}&_t=${Date.now()}`)
     const d = await r.json()
     if (d.path && !d.error) {
+      skipPromptInject.value = !!d.skip_prompt_inject
       directPrompt.value = (d.builtin_prompt || '').trim()
       negativePrompt.value = (d.builtin_negative_prompt || '').trim()
       if (d.default_width && d.default_height) { width.value = d.default_width; height.value = d.default_height }
@@ -652,7 +660,7 @@ function prepareGen() {
   if (mode.value === 'txt2img') {
     try { char = JSON.parse(localStorage.getItem('currentCharacters') || '[]').join(', '); } catch {}
   }
-  if (!direct && !nl) { showErrorToast('请输入提示词'); return null }
+  if (!direct && !nl && !skipPromptInject.value) { showErrorToast('请输入提示词'); return null }
   // 检查分辨率是否在预设中，不在就自动用第一个
   if (!resolutions.value.some(r => r.w === width.value && r.h === height.value) && resolutions.value.length) {
     width.value = resolutions.value[0].w
@@ -756,6 +764,8 @@ async function actuallyStartRun(g: PendingGen) {
       character_tags: mode.value === 'txt2img' ? g.char : '',
       img2img_use_preset: img2imgUsePreset.value,
       image1_name, image2_name, image3_name,
+      seed_mode: seedMode.value,
+      seed_value: seedMode.value === 'manual' ? seedValue.value : undefined,
     }
     if (forkedWorkflow.value) payload.inline_workflow = forkedWorkflow.value
     ws.send(JSON.stringify(payload))
@@ -1371,7 +1381,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
               <div class="text-right">
                 <button @click="showLog=!showLog" class="text-[10px] text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent">{{ showLog ? '隐藏日志' : '📋 日志' }}</button>
               </div>
-              <pre v-if="showLog" class="text-[10px] text-gray-400 bg-white/50 rounded-xl p-3 max-h-40 overflow-y-auto whitespace-pre-wrap">{{ logLines.join('\n') }}</pre>
+              <pre v-if="showLog" class="text-[10px] bg-white/50 rounded-xl p-3 max-h-40 overflow-y-auto whitespace-pre-wrap" :style="{color: logColor}">{{ logLines.join('\n') }}</pre>
             </div>
           </div>
         </div>
@@ -1387,8 +1397,8 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <!-- ============ MORE ============ -->
         <div v-if="activeTab === 'more'" class="tab-page active p-4 sm:p-6"><div class="max-w-5xl mx-auto space-y-6">
           <!-- 公告 -->
-          <div v-if="annTitle" class="bg-pink-50 border border-pink-200 rounded-2xl p-4 text-sm text-pink-700">
-            <div class="font-semibold">{{ annTitle }}</div>
+          <div v-if="annTitle" class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 text-sm text-pink-700">
+            <div class="font-semibold text-base">{{ annTitle }}</div>
             <div class="mt-1 text-xs whitespace-pre-wrap">{{ annContent }}</div>
           </div>
           <!-- GPU -->
@@ -1518,6 +1528,25 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                   <input type="checkbox" :checked="soundNotify" @change="saveSoundNotify(($event.target as HTMLInputElement).checked);if(soundNotify)sound.play('done')" class="w-4 h-4 accent-pink-500 shrink-0" />
                   <span class="text-sm text-gray-600">🔊 声音提示</span>
                 </label>
+                <div class="px-3 py-2.5">
+                  <div class="text-sm text-gray-600 mb-2">🎲 种子模式</div>
+                  <div class="flex gap-2">
+                    <button @click="saveSeedMode('default')" class="flex-1 py-1.5 rounded-lg text-xs cursor-pointer border-0" :class="seedMode==='default'?'bg-pink-500 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'">📄 工作流默认</button>
+                    <button @click="saveSeedMode('random')" class="flex-1 py-1.5 rounded-lg text-xs cursor-pointer border-0" :class="seedMode==='random'?'bg-pink-500 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'">🎲 随机</button>
+                    <button @click="saveSeedMode('manual')" class="flex-1 py-1.5 rounded-lg text-xs cursor-pointer border-0" :class="seedMode==='manual'?'bg-pink-500 text-white':'bg-gray-100 text-gray-500 hover:bg-gray-200'">🔢 手动固定</button>
+                  </div>
+                  <div v-if="seedMode==='manual'" class="flex items-center gap-2 mt-2">
+                    <span class="text-xs text-gray-500 shrink-0">种子</span>
+                    <input :value="seedValue" @input="seedValue = Math.max(0, Math.min(1125899906842623, parseInt(($event.target as HTMLInputElement).value) || 0)); saveSeedValue()" type="number" min="0" :max="1125899906842623" class="flex-1 border border-pink-200 rounded-lg px-2 py-1 text-sm outline-none focus:border-pink-400 box-border" />
+                  </div>
+                  <p class="text-[10px] text-gray-400 mt-1">工作流默认=用工作流自带种子；随机=每次抽卡；手动=固定种子复现</p>
+                </div>
+                <div class="px-3 py-2.5">
+                  <div class="flex items-center justify-between text-sm text-gray-600 mb-1">
+                    <span>📋 日志字体颜色</span>
+                    <input :value="logColor" @input="saveLogColor(($event.target as HTMLInputElement).value)" type="color" class="w-10 h-6 rounded cursor-pointer border-0 bg-transparent" />
+                  </div>
+                </div>
                 <div v-if="soundNotify" class="space-y-1 pt-1 px-3">
                   <div v-for="s in [{type:'done',icon:'✅'},{type:'error',icon:'❌'},{type:'queued',icon:'⏳'}]" :key="s.type" class="flex items-center justify-between text-xs text-gray-400">
                     <span>{{ s.icon }} <span :id="'sound-name-'+s.type">{{ loadCustomSound(s.type).name || '未设置' }}</span></span>

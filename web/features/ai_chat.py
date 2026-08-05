@@ -149,7 +149,7 @@ def _get_active_llm(cfg: dict) -> Optional[dict]:
     return None
 
 
-def _llm_request_info(messages: List[dict], temperature: float, max_tokens: int, extra: dict | None = None) -> tuple:
+def _llm_request_info(messages: List[dict], temperature: float, max_tokens: int, extra: dict | None = None, tools: Optional[list] = None) -> tuple:
     """读取 ai_chat.json 配置，返回 (url, headers, body)。未配置抛异常。"""
     with _lock:
         aichat_cfg = _load()
@@ -183,14 +183,17 @@ def _llm_request_info(messages: List[dict], temperature: float, max_tokens: int,
         for k, v in extra.items():
             if v is not None:
                 body[k] = v
+    # function calling 工具列表
+    if tools:
+        body["tools"] = tools
     if llm_model:
         body["model"] = llm_model
     return url, headers, body
 
 
-async def _call_llm(messages: List[dict], temperature: float, max_tokens: int = 0, extra: dict | None = None) -> str:
-    """调用 LLM（OpenAI 兼容格式），支持多模态 content 数组。非流式返回完整文本。"""
-    url, headers, body = _llm_request_info(messages, temperature, max_tokens, extra)
+async def _call_llm(messages: List[dict], temperature: float, max_tokens: int = 0, extra: dict | None = None, tools: Optional[list] = None) -> tuple:
+    """调用 LLM（OpenAI 兼容格式）。返回 (content, tool_calls)。非流式。"""
+    url, headers, body = _llm_request_info(messages, temperature, max_tokens, extra, tools)
     body["stream"] = False
     client = await ctx("get_http_client")()
     r = await client.post(url, json=body, headers=headers, timeout=120)
@@ -199,7 +202,8 @@ async def _call_llm(messages: List[dict], temperature: float, max_tokens: int = 
     resp = r.json()
     msg = ((resp.get("choices") or [{}])[0].get("message") or {})
     content = msg.get("content") or msg.get("reasoning_content") or ""
-    return content.strip()
+    tool_calls = msg.get("tool_calls")
+    return content.strip(), tool_calls
 
 
 async def _call_llm_stream(messages: List[dict], temperature: float, max_tokens: int = 0, extra: dict | None = None):
@@ -510,6 +514,149 @@ async def _web_gather(query: str, max_pages: int = 3, rewrite: bool = True) -> d
     return {"query": search_q, "sources": sources, "text": "\n".join(parts)}
 
 
+# ── 多轮决策（function calling）──
+
+SEARCH_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "联网搜索网页，获取与关键词相关的信息列表。适合查询实时信息、查找资料、了解某事物。搜索后返回标题、链接、摘要。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "搜索关键词"}
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_page",
+            "description": "访问一个网址并抓取其正文内容。适合查看搜索结果中某个链接的详情、网页正文、文档规范。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "要访问的网址"}
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ask_user",
+            "description": "当用户需求模糊、信息不足、或需要在多个选项中做选择时，必须调用本工具向用户提问澄清，让用户从选项中选择或自由回答。注意：不要用普通文字反问，必须调用本工具，这样前端才能显示选项按钮。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "要向用户提出的问题"},
+                    "options": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "可选的选项列表（可为空数组，表示让用户自由回答）",
+                    },
+                },
+                "required": ["question"],
+            },
+        },
+    },
+]
+
+
+async def _exec_search_tool(call: dict, sources: list) -> str:
+    """执行工具调用，返回结果文本。复用现有 _web_search / _fetch_webpage。"""
+    fn = (call.get("function") or {})
+    name = fn.get("name", "")
+    try:
+        args = json.loads(fn.get("arguments") or "{}")
+    except Exception:
+        args = {}
+    if name == "web_search":
+        return await _web_search(str(args.get("query", "")))
+    if name == "fetch_page":
+        try:
+            d = await _fetch_webpage(str(args.get("url", "")))
+            sources.append({"title": d.get("title", ""), "url": d.get("url", "")})
+            return d.get("text", "") or "（该页面无文字内容）"
+        except Exception as e:
+            return f"（抓取失败: {type(e).__name__}）"
+    return "（未知工具）"
+
+
+async def _agentic_search(messages: List[dict], temperature: float, max_tokens: int = 0, sampling: dict | None = None, max_rounds: int = 8) -> tuple:
+    """多轮决策循环：LLM 自主调用 web_search / fetch_page / ask_user，直到给出最终答案。
+
+    返回 (final_text, sources, question)。
+    - question 非空表示需要用户回答（AI 反问），前端应暂停并展示问题。
+    - 否则 final_text 是最终回答，sources 是访问过的来源。
+    """
+    sources: list = []
+    # 追加系统指令：告知 AI 可用工具和决策原则
+    sys_guide = (
+        "你可以使用联网搜索和网页访问来获取最新、最准确的信息。决策原则：\n"
+        "1. 遇到需要实时信息/资料/不熟悉的话题，先调用 web_search 搜索。\n"
+        "2. 搜索后若需要详情，可调用 fetch_page 访问具体网址。\n"
+        "3. 若用户需求模糊、信息不足、或需要在多个选项中做选择，必须调用 ask_user 工具向用户提问澄清（前端会显示选项按钮）。绝对不要用普通文字反问。\n"
+        "4. 信息足够后直接输出最终回答，不要调用工具。\n"
+        "回答中可引用搜索到的内容，并说明来源。"
+    )
+    # 把决策指令附加到当前 user 消息后（避免污染历史）
+    work_messages = list(messages)
+    if work_messages and work_messages[-1].get("role") == "user":
+        content = work_messages[-1].get("content")
+        if isinstance(content, str):
+            work_messages[-1]["content"] = content + "\n\n" + sys_guide
+        elif isinstance(content, list):
+            work_messages[-1]["content"] = content + [{"type": "text", "text": "\n\n" + sys_guide}]
+
+    for _ in range(max_rounds):
+        content, tool_calls = await _call_llm(work_messages, temperature, max_tokens, sampling, tools=SEARCH_TOOLS)
+        print(f"[ai-chat agent] round={_+1} tool_calls={json.dumps(tool_calls, ensure_ascii=False)[:200] if tool_calls else 'NONE'}", flush=True)
+        if not tool_calls:
+            return content, sources, None
+
+        # 1. 先追加 assistant 消息（含 tool_calls）——tool 结果必须跟在 assistant 后
+        asst_content = content or None if tool_calls else content
+        work_messages.append({"role": "assistant", "content": asst_content, "tool_calls": tool_calls})
+
+        # 2. 优先处理 ask_user（反问），其余执行工具
+        ask = None
+        for call in tool_calls:
+            fn = (call.get("function") or {})
+            if fn.get("name") == "ask_user":
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except Exception:
+                    args = {}
+                ask = {
+                    "question": str(args.get("question", "")),
+                    "options": args.get("options") or [],
+                }
+                break
+        if ask:
+            return content, sources, ask
+
+        # 3. 执行其他工具，结果回填
+        for call in tool_calls:
+            fn = (call.get("function") or {})
+            if fn.get("name") == "ask_user":
+                continue
+            result = await _exec_search_tool(call, sources)
+            work_messages.append({
+                "role": "tool",
+                "tool_call_id": call.get("id", ""),
+                "content": result,
+            })
+
+    # 超过轮次：强制让 LLM 基于已有信息总结
+    content, _ = await _call_llm(work_messages, temperature, max_tokens, sampling)
+    return content, sources, None
+
+
 # ── API ──
 
 @router.post("/api/features/ai-chat/fetch")
@@ -586,18 +733,12 @@ async def api_ai_chat_send(request: Request):
         temperature = sys_temp
 
     try:
-        # 统一联网：改写→搜索→抓正文
-        sources = []
-        search_text = ""
-        if do_search:
-            gather = await _web_gather(message, max_pages=search_max_pages, rewrite=search_rewrite)
-            sources = gather.get("sources", [])
-            search_text = gather.get("text", "")
-        # 构建 messages
+        # 多轮决策搜索（function calling）：AI 自主搜索/访问/反问
+        agent_result = None  # (content, sources, question)
+        sources = []  # 非 agent 路径的来源（保持兼容）
+        # 先构建完整 messages（含 history），供 agent 决策
         content_parts: list = []
-        if search_text:
-            content_parts.append({"type": "text", "text": search_text})
-        elif message:
+        if message:
             content_parts.append({"type": "text", "text": message})
         if image:
             content_parts.append({"type": "image_url", "image_url": {"url": image}})
@@ -626,10 +767,40 @@ async def api_ai_chat_send(request: Request):
                     messages.append({"role": role, "content": htext})
         messages.append({"role": "user", "content": content_parts})
 
+        if do_search:
+            agent_result = await _agentic_search(messages, temperature, max_tokens, sampling)
+
         if llm_stream:
             async def _gen():
                 got_content = False
                 try:
+                    if agent_result:
+                        # 多轮决策结果：question 或最终 content
+                        _, agent_sources, agent_question = agent_result
+                        if agent_question:
+                            yield f"data: {json.dumps({'question': agent_question}, ensure_ascii=False)}\n\n"
+                            yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+                            return
+                        agent_content = agent_result[0]
+                        if agent_content:
+                            # 模拟流式逐块输出（约 40 字符/块）
+                            for i in range(0, len(agent_content), 40):
+                                yield f"data: {json.dumps({'delta': agent_content[i:i+40], 'kind': 'content'}, ensure_ascii=False)}\n\n"
+                            got_content = True
+                        if agent_sources:
+                            yield f"data: {json.dumps({'sources': agent_sources}, ensure_ascii=False)}\n\n"
+                        if not got_content:
+                            with _lock:
+                                data = _load()
+                                for t in data["tokens"]:
+                                    if t["token"] == token:
+                                        t["used"] = max(0, t.get("used", 0) - 1)
+                                        _save_atomic(data)
+                                        break
+                            yield f"data: {json.dumps({'error': 'LLM 返回为空'}, ensure_ascii=False)}\n\n"
+                            return
+                        yield f"data: {json.dumps({'done': True}, ensure_ascii=False)}\n\n"
+                        return
                     async for kind, delta in _call_llm_stream(messages, temperature, max_tokens, sampling):
                         got_content = True
                         yield f"data: {json.dumps({'delta': delta, 'kind': kind}, ensure_ascii=False)}\n\n"
@@ -658,6 +829,26 @@ async def api_ai_chat_send(request: Request):
                                 break
                     yield f"data: {json.dumps({'error': f'{type(e).__name__}: {e}'}, ensure_ascii=False)}\n\n"
             return StreamingResponse(_gen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+        if agent_result:
+            _, agent_sources, agent_question = agent_result
+            if agent_question:
+                return {"question": agent_question}
+            reply = agent_result[0]
+            if not reply:
+                # LLM 返回空内容，退还次数
+                with _lock:
+                    data = _load()
+                    for t in data["tokens"]:
+                        if t["token"] == token:
+                            t["used"] = max(0, t.get("used", 0) - 1)
+                            _save_atomic(data)
+                            break
+                raise HTTPException(500, "LLM 返回为空")
+            resp = {"reply": reply}
+            if agent_sources:
+                resp["sources"] = agent_sources
+            return resp
 
         reply = await _call_llm(messages, temperature, max_tokens, sampling)
         if not reply:

@@ -484,6 +484,95 @@ async def _get_http_client() -> httpx.AsyncClient:
         )
         return _http_client
 
+
+# ComfyUI 节点定义缓存（object_info）：用于工作流 API 转换时对齐字段名/补默认值
+# key: 节点类型名，value: {required: {字段: 定义}, optional: {...}}
+_NODE_INFO_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+async def _preload_node_info(node_types: set) -> None:
+    """按需拉取指定节点类型的 object_info 到缓存。失败静默（转换时走保守回退）。"""
+    global _NODE_INFO_CACHE
+    need = set()
+    for t in node_types:
+        if not t or t in _NODE_INFO_CACHE:
+            continue
+        need.add(t)
+    if not need:
+        return
+    client = await _get_http_client()
+    try:
+        if len(need) == 1:
+            t = next(iter(need))
+            r = await client.get(f"{COMFYUI_API}/object_info/{t}", headers={"Comfy-User": ""}, timeout=15)
+            if r.is_success:
+                d = r.json()
+                if isinstance(d, dict) and t in d:
+                    _NODE_INFO_CACHE[t] = d[t]
+        else:
+            r = await client.get(f"{COMFYUI_API}/object_info", headers={"Comfy-User": ""}, timeout=20)
+            if r.is_success:
+                all_info = r.json()
+                for t in need:
+                    if t in all_info:
+                        _NODE_INFO_CACHE[t] = all_info[t]
+    except Exception:
+        pass
+
+
+def _node_required_fields(node_type: str) -> Dict[str, Any]:
+    """返回节点当前 required 字段定义（含默认值）。无缓存时返回空。"""
+    info = _NODE_INFO_CACHE.get(node_type)
+    if not info:
+        return {}
+    return dict((info.get("input") or {}).get("required") or {})
+
+
+def _align_legacy_widgets(node: Dict[str, Any], result: Dict[str, Any], node_type: str) -> None:
+    """旧版节点字段名/顺序不匹配时，按当前 object_info 对齐并补默认值。
+
+    - 保留已有值（extract_inputs 已正确解析的链接输入和 widget 值）
+    - 字段名兼容映射：旧版字段名 → 当前 required 字段名（值不变）
+    - 缺失的 required 字段：补 object_info 默认值
+    - 已知旧版 widget 值错位时（字段增删），按默认值兜底
+    """
+    required = _node_required_fields(node_type)
+    if not required:
+        return
+    # 旧版字段名 → 新版字段名（不同版本的命名差异）
+    FIELD_ALIASES: Dict[str, str] = {
+        "mmproj_model": "mmproj",
+        "n_gpu_layers": "vram_limit",
+        "downscale": "max_size",
+        "presence_penalty": "present_penalty",
+        "inference": "inference_mode",
+    }
+    default_map: Dict[str, Any] = {}
+    widget_defaults: Dict[str, Any] = {}
+    for fname, fdef in required.items():
+        if isinstance(fdef, (list, tuple)) and len(fdef) >= 2 and isinstance(fdef[1], dict):
+            default_map[fname] = fdef[1].get("default")
+        elif isinstance(fdef, (list, tuple)) and fdef:
+            default_map[fname] = fdef[0]
+        else:
+            default_map[fname] = None
+        # 记录 widget 型字段的默认值（INT/FLOAT/STRING/BOOLEAN/COMBO）
+        if isinstance(fdef, (list, tuple)) and len(fdef) >= 1 and isinstance(fdef[0], str) and fdef[0] in ("INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"):
+            widget_defaults[fname] = default_map[fname]
+    # 1. 字段名别名迁移：值不变，换新字段名
+    for old, new in FIELD_ALIASES.items():
+        if old in result and new not in result:
+            result[new] = result.pop(old)
+    # 2. 缺失的 required widget 字段补默认值（保持 seed 等已有值不动）
+    for fname in required:
+        if fname not in result:
+            result[fname] = default_map.get(fname)
+    # 3. 清理 result 中已不存在的旧字段（不在 required 且不是链接残留）
+    for k in list(result.keys()):
+        if k not in required and not (isinstance(result[k], list) and len(result[k]) == 2 and isinstance(result[k][0], str)):
+            # 链接型输入保留（[node_id, slot]），其他非 required 字段移除
+            result.pop(k, None)
+
 DEFAULT_LIMITS = {
     "gen_cooldown_sec": 30,
     "image_rate_window_sec": 60,
@@ -2757,12 +2846,28 @@ async def download_image(filename: str, subfolder: str, img_type: str) -> Tuple[
 
 # ---------------- workflow → prompt API ----------------
 
+# 文件名关键词：命中则跳过提示词注入（与前端同步，勿单边修改）
+SKIP_PROMPT_KEYWORDS = ("洗图", "高清", "放大", "重绘", "转真人")
+
+
+def workflow_needs_skip_prompt(path: Optional[str], data: Dict[str, Any]) -> bool:
+    """判断工作流是否需要跳过提示词注入（自带 LLM 或文件名命中关键词）。"""
+    p = (path or "").lower()
+    if any(kw in p for kw in SKIP_PROMPT_KEYWORDS):
+        return True
+    for n in (data.get("nodes", []) if isinstance(data, dict) else []):
+        if str(n.get("type", "")).lower().startswith("llama_cpp"):
+            return True
+    return False
+
+
 def summarize_workflow(data: Dict[str, Any]) -> Dict[str, Any]:
     nodes = data.get("nodes", [])
     types: Dict[str, int] = {}
     has_loadimage = False
     has_cliptextencode = False
     has_ksampler = False
+    has_internal_llm = False
     for node in nodes:
         t = node.get("type", "?")
         types[t] = types.get(t, 0) + 1
@@ -2772,6 +2877,8 @@ def summarize_workflow(data: Dict[str, Any]) -> Dict[str, Any]:
             has_cliptextencode = True
         if t in ("KSampler", "KSamplerAdvanced", "SamplerCustom", "SamplerCustomAdvanced"):
             has_ksampler = True
+        if str(t).lower().startswith("llama_cpp"):
+            has_internal_llm = True
     return {
         "node_count": len(nodes),
         "link_count": len(data.get("links", [])),
@@ -2780,6 +2887,7 @@ def summarize_workflow(data: Dict[str, Any]) -> Dict[str, Any]:
         "has_loadimage": has_loadimage,
         "has_cliptextencode": has_cliptextencode,
         "has_ksampler": has_ksampler,
+        "has_internal_llm": has_internal_llm,
     }
 
 
@@ -2899,6 +3007,11 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
         result: Dict[str, Any] = {}
         widgets = node.get("widgets_values", []) or []
         widget_idx = 0
+        # rgthree Seed 等纯 widget 节点：无 inputs 数组，seed 在 widgets_values[0]
+        if not (node.get("inputs") or []) and str(node.get("type", "")).startswith("Seed"):
+            if widgets:
+                result["seed"] = widgets[0]
+            return result
         for inp in node.get("inputs", []) or []:
             name = inp.get("name")
             if not name:
@@ -2922,6 +3035,14 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
                     val = widgets[widget_idx]
                     if isinstance(val, str) and val in ("fixed", "increment", "decrement", "randomize"):
                         widget_idx += 1
+        # 字段兼容：节点定义升级（字段名/新增字段变化）时，按 object_info 对齐并补默认值
+        ntype = str(node.get("type", ""))
+        required = _node_required_fields(ntype)
+        if required:
+            saved_names = {inp.get("name") for inp in node.get("inputs", []) or []}
+            if required.keys() - saved_names:
+                # 仅当缺失 required 时才对齐，避免误伤常规节点
+                _align_legacy_widgets(node, result, ntype)
         return result
 
     NON_EXEC = {"MarkdownNote", "Note", "Reroute", "PrimitiveNode"}
@@ -3014,6 +3135,45 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
                     break
 
     return prompt, positive_ref, negative_ref
+
+
+_SEED_MAX = 1125899906842623  # 2^50 - 1，与 ComfyUI INT widget 上限一致
+
+
+def _apply_seed_mode(prompt_dict: Dict[str, Any], mode: str, manual_seed: Optional[int] = None) -> None:
+    """按种子模式处理 prompt 里的种子。
+
+    - default: 保留工作流原始 seed，不覆盖
+    - random : 所有 seed/noise_seed 覆盖为随机值（0 ~ 2^50-1）
+    - manual : 所有 seed/noise_seed 覆盖为用户指定值
+    双采样器经 rgthree Seed 共享同一 seed，保持一致性。
+    兼容 seed 经 PrimitiveInt 等中转引用的采样器（seed=['709',0] 指向 PrimitiveInt）。
+    """
+    if mode not in ("random", "manual"):
+        return
+    if mode == "manual":
+        try:
+            val = int(manual_seed) if manual_seed is not None else 0
+        except (TypeError, ValueError):
+            val = 0
+        val = max(0, min(_SEED_MAX, val))
+    for nid, nd in prompt_dict.items():
+        if not isinstance(nd, dict):
+            continue
+        inputs = nd.get("inputs")
+        if not isinstance(inputs, dict):
+            continue
+        for k in ("seed", "noise_seed"):
+            if isinstance(inputs.get(k), int):
+                inputs[k] = val if mode == "manual" else random.randint(0, _SEED_MAX)
+            elif isinstance(inputs.get(k), list) and len(inputs[k]) >= 1:
+                # seed 经中转节点引用（如 PrimitiveInt）→ 覆盖目标节点的 value
+                ref_id = str(inputs[k][0])
+                ref_nd = prompt_dict.get(ref_id)
+                if isinstance(ref_nd, dict) and "Primitive" in str(ref_nd.get("class_type", "")):
+                    ref_inp = ref_nd.get("inputs")
+                    if isinstance(ref_inp, dict) and isinstance(ref_inp.get("value"), int):
+                        ref_inp["value"] = val if mode == "manual" else random.randint(0, _SEED_MAX)
 
 
 # ---------------- LLM ----------------
@@ -4821,6 +4981,7 @@ async def api_current(path: Optional[str] = None):
         "default_height": res[1] if res else None,
         "builtin_prompt": builtin_prompt,
         "builtin_negative_prompt": builtin_negative_prompt,
+        "skip_prompt_inject": workflow_needs_skip_prompt(path, data),
         "loras": extract_loras(pd),
         "lora_link": find_lora_link(path),
     }
@@ -5281,6 +5442,8 @@ class RunRequest(BaseModel):
     prompt_mode: str = "tags"
     mode: str = "txt2img"  # "txt2img" | "img2img"
     llm_template_id: Optional[int] = None  # 选中的自定义 LLM 提示词模板（None=走内置 tags/natural）
+    seed_mode: str = "default"  # "default" | "random" | "manual" 种子模式
+    seed_value: Optional[int] = None  # manual 模式下用户指定的种子
 
     @field_validator("direct_prompt", "nl_prompt", "style_tags", "negative_prompt")
     @classmethod
@@ -6407,14 +6570,48 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
     else:
         await emit(ws, {"type": "log", "message": f"[1/4] 加载工作流 {path}"})
         data = await get_workflow(path)
+    # 预加载工作流用到的节点类型定义（字段兼容对齐用），失败静默
+    try:
+        _node_types = {n.get("type", "") for n in (data.get("nodes", []) if isinstance(data, dict) else [])}
+        _node_types |= {nd.get("class_type", "") for nd in (data.values() if isinstance(data, dict) and "nodes" not in data else []) if isinstance(nd, dict)}
+        if _node_types:
+            await _preload_node_info({t for t in _node_types if t})
+    except Exception:
+        pass
     prompt_dict, positive_ref, negative_ref = workflow_to_prompt_api(data)
+    # 种子模式处理：default 保留原始 / random 随机 / manual 手动固定
+    _apply_seed_mode(prompt_dict, req.seed_mode, req.seed_value)
+    # 汇总实际使用的种子（用于日志显示）：遍历所有含 seed/noise_seed 输入的节点
+    _seed_log = []
+    _seed_total = 0
+    for _sid, _nd in prompt_dict.items():
+        if not isinstance(_nd, dict):
+            continue
+        _ct = str(_nd.get("class_type", ""))
+        _inp = _nd.get("inputs") or {}
+        for _k in ("seed", "noise_seed"):
+            _v = _inp.get(_k)
+            if isinstance(_v, int):
+                _seed_total += 1
+                _seed_log.append(f"[{_ct}] {_k}={_v}")
+            elif isinstance(_v, list) and len(_v) >= 1:
+                _ref = prompt_dict.get(str(_v[0]))
+                if isinstance(_ref, dict) and "Primitive" in str(_ref.get("class_type", "")):
+                    _rv = (_ref.get("inputs") or {}).get("value")
+                    if isinstance(_rv, int):
+                        _seed_total += 1
+                        _seed_log.append(f"[{_ct}] {_k}(经Primitive)={_rv}")
+    _mode_label = {"default": "工作流默认", "random": "随机", "manual": "手动固定"}.get(req.seed_mode, req.seed_mode)
+    if _seed_total:
+        _show = " ".join(_seed_log[:6])
+        if _seed_total > 6:
+            _show += f" …共{_seed_total}个种子"
+        await emit(ws, {"type": "log", "message": f"🎲 种子模式: {_mode_label} | {_show}"})
 
-    # 自动检测：是否洗图/高清放大/纯处理类工作流（按文件名关键词跳过提示词注入）
-    _path_lower = path.lower() if path else ""
+    # 自动检测：是否洗图/高清放大/纯处理类工作流（按文件名关键词）或自带 LLM → 跳过提示词注入
     _is_cleanup_workflow = bool(path and any(
-        kw in _path_lower for kw in ("洗图", "高清", "放大", "重绘", "转真人")
+        kw in path.lower() for kw in SKIP_PROMPT_KEYWORDS
     ))
-    # 自动检测：工作流是否自带 LLM（如洗图/反推类，不需要外部提示词注入）
     _has_internal_llm = any(
         n.get("type", "").lower().startswith("llama_cpp")
         for n in (data if isinstance(data, dict) else {}).get("nodes", [])
