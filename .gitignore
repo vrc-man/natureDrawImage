@@ -1,5 +1,7 @@
-# ── 默认不提交 JSON（运行时数据/配置优先保护） ──
+﻿# ── 默认不提交 JSON（运行时数据/配置优先保护） ──
 *.json
+*.yaml
+*.yml
 
 # ── 允许提交的前端项目配置 JSON ──
 !frontend/package.json

@@ -129,6 +129,8 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Requ
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import ORJSONResponse as _FastAPIORJSONResponse
+import orjson as _orjson
 from starlette.types import ASGIApp, Receive, Scope, Send, Message
 from pydantic import BaseModel, field_validator
 
@@ -1294,7 +1296,26 @@ async def _creator_map_set(rel: str, ip: str) -> bool:
     except Exception:
         return False
 
-app = FastAPI(title="二次元绘梦")
+class _OrjsonResponse(_FastAPIORJSONResponse):
+    """orjson 编码的 JSON 响应，兜底序列化 datetime/set/Decimal 避免 500。"""
+    @staticmethod
+    def render(content) -> bytes:
+        def _default(o):
+            if isinstance(o, _datetime.datetime):
+                return o.isoformat()
+            if isinstance(o, _datetime.date):
+                return o.isoformat()
+            if isinstance(o, (set, frozenset, tuple)):
+                return list(o)
+            raise TypeError(f"Type not JSON serializable: {type(o).__name__}")
+        return _orjson.dumps(
+            content,
+            default=_default,
+            option=_orjson.OPT_NON_STR_KEYS | _orjson.OPT_SERIALIZE_NUMPY,
+        )
+
+
+app = FastAPI(title="二次元绘梦", default_response_class=_OrjsonResponse)
 # gzip 压缩，但跳过已压缩的图片
 class _SmartGZip:
     def __init__(self, app: ASGIApp): self.app = app
@@ -2369,6 +2390,7 @@ async def _start_gc():
     _safe_task(_startup_thumb_sequence(), "startup_thumb_sequence")
     _gc_task = _safe_task(_gc_loop(), "gc_loop")
     _safe_task(_backup_loop(), "backup_loop")
+    _safe_task(_llm_comfy_health_loop(), "llm_comfy_health")
     # 记录重启次数
     async with _kv_state_lock:
         cnt = db.state_get("restart_count", 0)
@@ -5444,6 +5466,7 @@ class RunRequest(BaseModel):
     llm_template_id: Optional[int] = None  # 选中的自定义 LLM 提示词模板（None=走内置 tags/natural）
     seed_mode: str = "default"  # "default" | "random" | "manual" 种子模式
     seed_value: Optional[int] = None  # manual 模式下用户指定的种子
+    task_type: str = ""  # "" = 正常生图；"reverse" = 图片反推（跳过冷却、不写日志）
 
     @field_validator("direct_prompt", "nl_prompt", "style_tags", "negative_prompt")
     @classmethod
@@ -5622,6 +5645,102 @@ async def _broadcast(msg: Dict[str, Any]) -> None:
         async with _ws_sub_lock:
             for d in dead:
                 _status_subscribers.discard(d)
+
+
+# ── 健康检测（ComfyUI 生图模块 + LLM profiles）──
+_health_state: Dict[str, Any] = {"comfy": None, "llms": {}, "updated_at": 0}
+_health_lock = asyncio.Lock()
+_HEALTH_TTL = 45    # 缓存秒数
+_HEALTH_TIMEOUT = 6  # 单次探测超时
+
+
+async def _check_comfy_health() -> Dict[str, Any]:
+    """探测 ComfyUI 生图模块是否在线（/system_stats）。"""
+    try:
+        client = await _get_http_client()
+        r = await client.get(f"{COMFYUI_API}/system_stats", timeout=_HEALTH_TIMEOUT)
+        if r.status_code >= 400:
+            return {"ok": False, "error": f"HTTP {r.status_code}"}
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}"}
+
+
+async def _check_llm_health(endpoint: str, api_key: str = "") -> Dict[str, Any]:
+    """探测 OpenAI 兼容 LLM 端点（GET /v1/models）。带 key 的端点需要 Authorization。"""
+    ep = (endpoint or "").strip().rstrip("/")
+    if not ep:
+        return {"ok": None, "error": "未配置端点"}
+    try:
+        client = await _get_http_client()
+        headers: Dict[str, str] = {}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
+        r = await client.get(f"{ep}/v1/models", headers=headers, timeout=_HEALTH_TIMEOUT)
+        if r.status_code >= 400:
+            return {"ok": False, "error": f"HTTP {r.status_code}"}
+        data = r.json()
+        models = [str(m.get("id")) for m in (data.get("data") or []) if isinstance(m, dict) and m.get("id")]
+        return {"ok": True, "models": models[:5]}
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}"}
+
+
+async def _empty_health() -> Dict[str, Any]:
+    return {"ok": None, "error": "未配置端点"}
+
+
+def _profile_endpoint_for_health(pcfg: Dict[str, Any]) -> str:
+    provider = str(pcfg.get("provider", "local"))
+    if provider == "google":
+        return ""  # Google API 无 OpenAI /v1/models，不探测
+    if provider == "custom":
+        return str(pcfg.get("custom_endpoint", "") or "").strip()
+    # local：未填端点时回落默认 LMS_API
+    return str(pcfg.get("local_endpoint", "") or "").strip() or LMS_API
+
+
+async def _refresh_health(force: bool = False) -> Dict[str, Any]:
+    """刷新健康缓存（TTL 内复用）。comfy/各 LLM profile 并发探测。"""
+    global _health_state
+    now = _time_module.time()
+    async with _health_lock:
+        if not force and now - _health_state["updated_at"] < _HEALTH_TTL and _health_state.get("comfy") is not None:
+            return _health_state
+        _ensure_llm_profiles()
+        names = list(_llm_profiles.keys())
+        tasks = [_check_comfy_health()]
+        for pname in names:
+            pcfg = _llm_profiles[pname]
+            ep = _profile_endpoint_for_health(pcfg)
+            key = str(pcfg.get("custom_api_key", "") or "") if str(pcfg.get("provider", "local")) == "custom" else ""
+            tasks.append(_check_llm_health(ep, key) if ep else _empty_health())
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        comfy = results[0] if isinstance(results[0], dict) else {"ok": False, "error": f"{type(results[0]).__name__}"}
+        llms: Dict[str, Any] = {}
+        for i, pname in enumerate(names):
+            r = results[i + 1]
+            llms[pname] = r if isinstance(r, dict) else {"ok": False, "error": f"{type(r).__name__}"}
+        _health_state = {"comfy": comfy, "llms": llms, "active": _llm_active_profile, "updated_at": _time_module.time()}
+        return _health_state
+
+
+async def _llm_comfy_health_loop() -> None:
+    """后台轮询：每 60s 探测一次并广播给所有 /ws/status 前端。"""
+    while True:
+        try:
+            state = await _refresh_health()
+            await _broadcast({"type": "health", **state})
+        except Exception as e:
+            print(f"[health] 轮询异常: {type(e).__name__}: {e}")
+        await asyncio.sleep(60)
+
+
+@app.get("/api/comfy/health")
+async def api_comfy_health():
+    """健康状态接口：ComfyUI + LLM profiles 在线情况（首次可能耗时数秒）。"""
+    state = await _refresh_health()
+    return state
 
 
 # emit() 不再广播任何业务事件给所有订阅者（防止隐私泄漏和 UI 混乱）
@@ -6328,6 +6447,8 @@ async def ws_run(ws: WebSocket):
                     return
 
                 wait_sec = 0
+                task_type = str(init.get("task_type", "")).strip() if isinstance(init, dict) else ""
+                is_reverse = task_type == "reverse"
                 async with _cooldown_lock:
                     now = _time.time()
                     last = _RATE_LAST_TS.get(github_id, 0.0)
@@ -6335,7 +6456,8 @@ async def ws_run(ws: WebSocket):
                     wait = 0 if ws_user.get("role") == "admin" else cooldown - (now - last)
                     if wait > 0:
                         wait_sec = int(wait) + 1
-                if wait_sec > 0:
+                # 反推任务（task_type=reverse）不受生图冷却限制，但要排队
+                if wait_sec > 0 and not is_reverse:
                     try:
                         await ws.send_json({"type": "error", "message": f"生图间隔限制：请 {wait_sec}s 后再试", "cooldown_remaining": wait_sec})
                     except Exception:
@@ -6362,7 +6484,8 @@ async def ws_run(ws: WebSocket):
                 key_preconsumed = bool(claimed_key and ws_user.get("role") != "admin")
                 if key_preconsumed:
                     _key_usage_reserved_ws[id(ws)] = claimed_key
-                if ws_user.get("role") != "admin":
+                # 反推任务不占用生图冷却
+                if ws_user.get("role") != "admin" and not is_reverse:
                     async with _cooldown_lock:
                         _RATE_LAST_TS[github_id] = _time.time()
                         old_cd = _cooldown_tasks.pop(github_id, None)
@@ -6535,15 +6658,19 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
     import time as _time
     path = req.workflow_path
     inline = req.inline_workflow
+    is_reverse = req.task_type == "reverse"
 
     # 图生图自动选择工作流（已禁用，由用户手动选择）
     if not path and not inline and req.image1_name:
         pass
 
-    # 校验工作流路径是否匹配当前模式目录
-    if path and not inline:
+    # 校验工作流路径是否匹配当前模式目录（反推任务不校验，反推工作流在独立目录）
+    if path and not inline and not is_reverse:
         _is_img2img = req.mode == "img2img"
         _allowed_dir = WF_DIR_IMG2IMG if _is_img2img else WF_DIR_TXT2IMG
+        # AI 助手等前端可能只传文件名（不含目录），补上允许目录前缀
+        if _allowed_dir and "/" not in path and "\\" not in path:
+            path = _allowed_dir + "/" + path
         _norm_path = path.replace("\\", "/").replace("workflows/", "", 1)
         _norm_dir = _allowed_dir.replace("\\", "/")
         if _norm_dir and not _norm_path.startswith(_norm_dir):
@@ -6738,8 +6865,11 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
                 presets = _resolutions.get("presets", [])
                 allowed = {(p["w"], p["h"]) for p in presets}
                 rw, rh = int(req.width), int(req.height)
-                if (rw, rh) not in allowed:
-                    await emit(ws, {"type": "error", "message": f"不支持的分辨率 {rw}x{rh}，请从预设中选择"})
+                # 支持预设分辨率 + 自定义分辨率（512~2000 范围内都允许，兼容 1080p）
+                in_preset = (rw, rh) in allowed
+                in_custom_range = 512 <= rw <= 2000 and 512 <= rh <= 2000
+                if not in_preset and not in_custom_range:
+                    await emit(ws, {"type": "error", "message": f"不支持的分辨率 {rw}x{rh}，请从预设中选择或使用 512~2000 的自定义尺寸"})
                     return
                 n = apply_resolution(prompt_dict, rw, rh)
                 if n:
@@ -6856,6 +6986,14 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
 
     await emit(ws, {"type": "log", "message": "[4/4] 等待生成..."})
     history = await _wait_for(prompt_id, ws, prompt_dict)
+
+    # 反推任务：无图片输出是正常的，提取 ui.text 文本结果，不写生图日志/用户图片
+    if is_reverse:
+        reverse_result = _extract_reverse_result(history, prompt_dict)
+        await emit(ws, {"type": "reverse_result", "result": reverse_result})
+        await emit(ws, {"type": "done", "count": 0, "reverse": True})
+        # 反推完成不记录 gen_log、不更新用户图片、不占用冷却
+        return
 
     images = []
     seen = set()
@@ -7046,6 +7184,46 @@ async def _wait_for(prompt_id: str, ws: WebSocket, prompt_dict: Dict[str, Any],
             await asyncio.sleep(1)
         raise TimeoutError("无法获取 history")
     raise RuntimeError("ComfyUI 任务未完成")
+
+
+def _extract_reverse_result(history: Dict[str, Any], prompt_dict: Dict[str, Any]) -> Dict[str, str]:
+    """从 history 的 easy showAnything 节点（按节点 title 区分）提取反推文本。
+
+    返回 {"sd_tags": "...", "chinese_prompt": "..."}。
+    """
+    result: Dict[str, str] = {}
+    for node_id, node_output in (history.get("outputs") or {}).items():
+        # text 可能直接挂在节点输出顶层（{"text": [...]}）或 ui.text 下
+        texts = node_output.get("text")
+        if not texts:
+            ui = node_output.get("ui") or {}
+            texts = ui.get("text")
+        if not texts:
+            continue
+        if isinstance(texts, str):
+            text_val = texts.strip()
+        else:
+            text_val = "".join(str(t) for t in texts).strip()
+        if not text_val:
+            continue
+        # 通过 prompt_dict 拿该节点的 title（_meta.title 或 class_type）
+        nd = prompt_dict.get(str(node_id)) or {}
+        title = str((nd.get("_meta") or {}).get("title", ""))
+        if not title:
+            title = str(nd.get("class_type", ""))
+        title_l = title.lower()
+        if "sd标签" in title or ("sd" in title_l and "标签" in title) or "tag" in title_l:
+            result["sd_tags"] = text_val
+        elif "中文" in title or "句子" in title or "prompt" in title_l:
+            result["chinese_prompt"] = text_val
+        else:
+            # 兜底：按内容特征判断（含中文较多 → 中文描述；否则 → sd标签）
+            cn_chars = sum(1 for c in text_val if '\u4e00' <= c <= '\u9fff')
+            if cn_chars >= 10:
+                result["chinese_prompt"] = text_val
+            else:
+                result["sd_tags"] = text_val
+    return result
 
 
 # ---------------- 举报 ----------------
@@ -9080,6 +9258,12 @@ async def api_admin_llm_test(request: Request, payload: Dict[str, Any]):
         raise HTTPException(403)
     cfg = dict(_llm_config)
     if isinstance(payload, dict):
+        # 编辑已有配置时前端无明文 key，用 profile 名取存储的（已解密）base 配置
+        pname = str(payload.get("profile", "") or "").strip()
+        if pname:
+            _ensure_llm_profiles()
+            if pname in _llm_profiles:
+                cfg = dict(_llm_profiles[pname])
         for k in cfg:
             if k in payload and payload[k] is not None:
                 cfg[k] = str(payload[k]).strip()
@@ -9142,6 +9326,12 @@ async def api_admin_llm_models(request: Request, payload: Dict[str, Any]):
         raise HTTPException(403)
     cfg = dict(_llm_config)
     if isinstance(payload, dict):
+        # 编辑已有配置时前端无明文 key，用 profile 名取存储的（已解密）base 配置
+        pname = str(payload.get("profile", "") or "").strip()
+        if pname:
+            _ensure_llm_profiles()
+            if pname in _llm_profiles:
+                cfg = dict(_llm_profiles[pname])
         for k in cfg:
             if k in payload and payload[k] is not None:
                 cfg[k] = str(payload[k]).strip()

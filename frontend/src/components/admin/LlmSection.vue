@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { api } from './useAdminApi'
 import { ADMIN_TOAST_SHORT } from './uiTimers'
 
@@ -147,6 +147,7 @@ async function testConnection() {
       llm_stream: editProfile.value.llm_stream ?? true,
       llm_max_tokens: editProfile.value.llm_max_tokens || 1024,
     }
+    if (editProfile.value.name) body.profile = editProfile.value.name
     if (editProfile.value.google_api_key) body.google_api_key = editProfile.value.google_api_key
     if (editProfile.value.custom_api_key) body.custom_api_key = editProfile.value.custom_api_key
     const d = await api('POST', '/api/admin/llm/test', body)
@@ -165,6 +166,7 @@ async function detectModels() {
       custom_endpoint: editProfile.value.custom_endpoint || '',
       custom_model: editProfile.value.custom_model || '',
     }
+    if (editProfile.value.name) body.profile = editProfile.value.name
     if (editProfile.value.google_api_key) body.google_api_key = editProfile.value.google_api_key
     if (editProfile.value.custom_api_key) body.custom_api_key = editProfile.value.custom_api_key
     const d = await api('POST', '/api/admin/llm/models', body)
@@ -195,7 +197,21 @@ function hasKey(p: LLMProfile): boolean {
          (p.provider === 'local')
 }
 
-onMounted(loadProfiles)
+// 健康检测：拉 /api/comfy/health 的 llms 状态，60s 轮询
+const health = ref<Record<string, any>>({})
+async function loadHealth() {
+  try {
+    const r = await fetch('/api/comfy/health')
+    if (r.ok) { const d = await r.json(); health.value = d.llms || {} }
+  } catch {}
+}
+let healthTimer: any = null
+onMounted(() => {
+  loadProfiles()
+  loadHealth()
+  healthTimer = setInterval(loadHealth, 60000)
+})
+onUnmounted(() => { if (healthTimer) clearInterval(healthTimer) })
 </script>
 
 <template>
@@ -236,6 +252,7 @@ onMounted(loadProfiles)
             <div class="text-xs space-y-0.5 text-gray-500">
               <div class="flex items-center gap-1">
                 <span class="px-1.5 py-0.5 rounded text-[10px]" :class="providerColors[p.provider] || 'bg-gray-100'">{{ providerLabels[p.provider] || p.provider }}</span>
+                <span v-if="health[p.name]" class="px-1.5 py-0.5 rounded text-[10px]" :class="health[p.name].ok === true ? 'bg-green-100 text-green-700' : health[p.name].ok === false ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'" :title="health[p.name].error || ''">{{ health[p.name].ok === true ? '🟢 在线' : health[p.name].ok === false ? '🔴 离线' : '⚪ 未知' }}</span>
               </div>
               <div v-if="p.provider === 'local' && p.local_endpoint" class="truncate font-mono text-[10px]">端点: {{ p.local_endpoint }}</div>
               <div v-if="p.provider === 'google'">

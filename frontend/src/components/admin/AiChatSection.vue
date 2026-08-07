@@ -14,6 +14,8 @@ const searchRewrite = ref(true)
 const webFetchMaxChars = ref(6000)
 const searchTestStatus = ref('')
 const searchTesting = ref(false)
+const wfRefreshStatus = ref('')
+const wfRefreshLoading = ref(false)
 const llms = ref<any[]>([])
 const activeLlmId = ref('')
 const cfgStatus = ref('')
@@ -92,6 +94,17 @@ async function testSearch() {
   } finally { searchTesting.value = false }
 }
 
+async function refreshWorkflows() {
+  wfRefreshLoading.value = true
+  wfRefreshStatus.value = '刷新中...'
+  try {
+    const d = await api('POST', '/api/admin/features/ai-chat/workflows-refresh')
+    wfRefreshStatus.value = `✅ 工作流清单已刷新（${d.count} 条${d.updated ? '，有更新' : ''}）`
+  } catch (e: any) {
+    wfRefreshStatus.value = '❌ 刷新失败: ' + (e.message || '未知')
+  } finally { wfRefreshLoading.value = false }
+}
+
 async function saveCfg() {
   cfgLoading.value = true
   cfgStatus.value = ''
@@ -140,6 +153,17 @@ async function delToken(token: string) {
     await api('POST', '/api/admin/features/ai-chat/tokens/delete', { token })
     tokens.value = tokens.value.filter(x => x.token !== token)
   } catch (e: any) { alert('删除失败: ' + e.message) }
+}
+
+async function cleanupTokens() {
+  if (!confirm('确定清理所有已用完（失效）的额度 Token？此操作不可恢复。')) return
+  tLoading.value = true
+  try {
+    const d = await api('POST', '/api/admin/features/ai-chat/tokens/cleanup')
+    genStatus.value = `✅ 已清理 ${d.removed} 个失效 Token，剩余 ${d.remaining} 个`
+    await loadTokens()
+    setTimeout(() => { if (genStatus.value?.startsWith('✅ 已清理')) genStatus.value = '' }, 5000)
+  } catch (e: any) { genStatus.value = '❌ 清理失败: ' + e.message } finally { tLoading.value = false }
 }
 
 async function copyToken() {
@@ -242,8 +266,13 @@ onMounted(() => { loadCfg(); loadTokens() })
           <span v-if="searchTesting" class="inline-block w-3 h-3 border-2 border-green-400 border-t-green-700 rounded-full animate-spin"></span>
           {{ searchTesting ? '测试中...' : '🧪 测试搜索' }}
         </button>
+        <button @click="refreshWorkflows" :disabled="wfRefreshLoading" class="flex-1 py-2 rounded-xl text-xs font-semibold cursor-pointer border-0 flex items-center justify-center gap-1" :class="wfRefreshLoading?'bg-gray-200 text-gray-400 cursor-not-allowed':'bg-purple-100 text-purple-700 hover:bg-purple-200'">
+          <span v-if="wfRefreshLoading" class="inline-block w-3 h-3 border-2 border-purple-400 border-t-purple-700 rounded-full animate-spin"></span>
+          {{ wfRefreshLoading ? '刷新中...' : '🔄 刷新工作流清单' }}
+        </button>
       </div>
       <div v-if="searchTestStatus" class="text-xs mb-2 px-2 py-1.5 rounded-lg" :class="searchTestStatus.startsWith('✅')?'bg-green-50 text-green-700':'bg-red-50 text-red-600'">{{ searchTestStatus }}</div>
+      <div v-if="wfRefreshStatus" class="text-xs mb-2 px-2 py-1.5 rounded-lg" :class="wfRefreshStatus.startsWith('✅')?'bg-green-50 text-green-700':'bg-red-50 text-red-600'">{{ wfRefreshStatus }}</div>
       <label class="flex items-center justify-between gap-2 text-xs text-gray-600 mb-2">
         <span>启用联网搜索</span>
         <button @click="webSearchEnabled=!webSearchEnabled" class="relative w-10 h-5 rounded-full transition-colors cursor-pointer border-0" :class="webSearchEnabled?'bg-pink-500':'bg-gray-300'">
@@ -299,6 +328,7 @@ onMounted(() => { loadCfg(); loadTokens() })
         <button @click="generate" :disabled="genLoading" class="px-3 py-1.5 bg-gradient-to-r from-pink-400 to-rose-400 text-white rounded-xl hover:from-pink-300 hover:to-rose-300 text-xs font-semibold cursor-pointer border-0 disabled:opacity-50" :class="genLoading?'cursor-not-allowed':''">
           {{ genLoading ? '生成中...' : '➕ 生成' }}
         </button>
+        <button @click="cleanupTokens" :disabled="tLoading" class="px-3 py-1.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 text-xs font-semibold cursor-pointer border-0 disabled:opacity-50" title="清理所有已用完的额度 Token">🧹 清理失效</button>
       </div>
       <div v-if="genStatus" class="text-xs mb-2" :class="genStatus.startsWith('✅')?'text-green-500':'text-red-400'">{{ genStatus }}</div>
       <div v-if="newToken" class="flex items-center gap-2 mb-3 p-2 bg-white border border-pink-200 rounded-xl">

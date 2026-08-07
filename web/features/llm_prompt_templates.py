@@ -40,7 +40,7 @@ FEATURE_VERSION = "1.0.0"
 # 字段长度上限（防滥用 / 防 JSON 膨胀）
 _MAX_NAME = 100
 _MAX_DESC = 500
-_MAX_PROMPT = 20000
+_MAX_PROMPT = 200000
 
 
 # ────────────────────────── JSON 读写 ──────────────────────────
@@ -68,6 +68,18 @@ def _save_atomic(items: List[Dict[str, Any]]) -> None:
         json.dump(items, f, ensure_ascii=False, indent=2)
         f.write("\n")
     os.replace(tmp, JSON_PATH)
+
+
+# ── 内存缓存（启动/首次读取加载，后台保存后立即更新；手动改文件需重启刷新）──
+_cache: Optional[List[Dict[str, Any]]] = None
+
+
+def _load_cached() -> List[Dict[str, Any]]:
+    """读取模板列表（走内存缓存）。缓存未建时读文件；文件损坏仍抛错（保留防清空保护）。"""
+    global _cache
+    if _cache is None:
+        _cache = _load()
+    return _cache
 
 
 def _next_id(items: List[Dict[str, Any]]) -> int:
@@ -112,7 +124,7 @@ def _public_view(it: Dict[str, Any]) -> Dict[str, Any]:
 
 def list_all() -> List[Dict[str, Any]]:
     with _lock:
-        items = [_normalize(x) for x in _load()]
+        items = [_normalize(x) for x in _load_cached()]
     items.sort(key=lambda x: (x["sort_order"], x["id"]))
     return items
 
@@ -131,7 +143,7 @@ def get_enabled_template(tid: Optional[int]) -> Optional[Dict[str, Any]]:
         return None
     try:
         with _lock:
-            items = _load()
+            items = _load_cached()
         for raw in items:
             it = _normalize(raw)
             if it["id"] == tid_int and it["enabled"]:
@@ -142,6 +154,7 @@ def get_enabled_template(tid: Optional[int]) -> Optional[Dict[str, Any]]:
 
 
 def create_template(data: Dict[str, Any]) -> Dict[str, Any]:
+    global _cache
     name = str(data.get("name", "")).strip()
     if not name:
         raise HTTPException(400, "模板名称不能为空")
@@ -149,7 +162,7 @@ def create_template(data: Dict[str, Any]) -> Dict[str, Any]:
     if not sg:
         raise HTTPException(400, "不改写规则（system_generate）不能为空")
     with _lock:
-        items = _load()
+        items = _load_cached()
         now = time.time()
         new = _normalize({
             "id": _next_id(items),
@@ -164,12 +177,14 @@ def create_template(data: Dict[str, Any]) -> Dict[str, Any]:
         })
         items.append(new)
         _save_atomic(items)
+        _cache = items
     return new
 
 
 def update_template(tid: int, data: Dict[str, Any]) -> Dict[str, Any]:
+    global _cache
     with _lock:
-        items = _load()
+        items = _load_cached()
         target = None
         for i, raw in enumerate(items):
             if int(raw.get("id", 0)) == tid:
@@ -191,6 +206,7 @@ def update_template(tid: int, data: Dict[str, Any]) -> Dict[str, Any]:
         cur["updated_at"] = time.time()
         items[target] = _normalize(cur)
         _save_atomic(items)
+        _cache = items
         return items[target]
 
 
@@ -203,13 +219,15 @@ def _renumber(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def delete_template(tid: int) -> None:
+    global _cache
     with _lock:
-        items = _load()
+        items = _load_cached()
         new_items = [x for x in items if int(x.get("id", 0)) != tid]
         if len(new_items) == len(items):
             raise HTTPException(404, "模板不存在")
         new_items = _renumber(new_items)
         _save_atomic(new_items)
+        _cache = new_items
 
 
 # ────────────────────────── 路由 ──────────────────────────

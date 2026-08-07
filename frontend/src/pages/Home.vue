@@ -65,6 +65,39 @@ const moreCollapse = ref({ gpu: true, extractor: false, links: false, disclaimer
 
 // ===== State =====
 const onlineCount = ref(0)
+// 健康检测：comfy 生图模块 + LLM
+const comfyHealth = ref<'unknown' | 'online' | 'offline'>('unknown')
+const llmStates = ref<Record<string, any>>({})
+const activeLlm = ref('')
+const llmExpanded = ref(false)
+// 各 LLM profile 状态列表：active 排最前，AI1/AI2/AI3 编号；超过 3 个折叠
+const llmList = computed(() => {
+  const entries = Object.entries(llmStates.value || {})
+  entries.sort((a, b) => (a[0] === activeLlm.value ? -1 : b[0] === activeLlm.value ? 1 : a[0].localeCompare(b[0])))
+  return entries.map(([name, s], i) => ({
+    name,
+    index: i + 1,
+    ok: s && s.ok,
+    error: (s && s.error) || '',
+  }))
+})
+const llmVisible = computed(() => llmExpanded.value ? llmList.value : llmList.value.slice(0, 3))
+const llmHiddenCount = computed(() => Math.max(0, llmList.value.length - 3))
+function llmTitle(l: { name: string; ok: any; error: string }): string {
+  const st = l.ok === true ? '在线' : l.ok === false ? '离线' : '未知'
+  return `${l.name}：${st}${l.ok !== true && l.error ? '（' + l.error + '）' : ''}`
+}
+function applyHealth(m: any) {
+  if (m && m.comfy) comfyHealth.value = m.comfy.ok === true ? 'online' : m.comfy.ok === false ? 'offline' : 'unknown'
+  if (m && m.llms) llmStates.value = m.llms || {}
+  if (m && m.active) activeLlm.value = m.active
+}
+async function fetchHealth() {
+  try {
+    const r = await fetch('/api/comfy/health')
+    if (r.ok) applyHealth(await r.json())
+  } catch {}
+}
 const darkMode = ref(localStorage.getItem('dark') === '1')
 const genNoticeAcked = ref(document.cookie.includes('genNoticeAcked=1'))
 const showGenNoticeModal = ref(false)
@@ -358,6 +391,7 @@ function startAuthedServices() {
   authedServicesStarted = true
   startPolling()
   connectStatusWS()
+  fetchHealth()
   startGPUPoll()
   loadGenerationData()
 }
@@ -633,6 +667,7 @@ function connectStatusWS() {
       if (m.type === 'online') onlineCount.value = m.count || 0
       else if (m.type === 'cooldown_done') stopCooldown()
       else if (m.type === 'mirror' && !activeWS) handleMsg(m.event)
+      else if (m.type === 'health') applyHealth(m)
     } catch {}
   }
   ws.onclose = () => { setTimeout(connectStatusWS, 2000) }
@@ -1198,6 +1233,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
         <div class="flex items-center gap-2">
           <h1 class="text-sm font-bold text-pink-500">🎨 二次元绘梦</h1>
           <span class="text-[10px] text-gray-400 bg-white/50 px-2 py-0.5 rounded-full">{{ onlineCount }} 在线</span>
+          <span class="text-[10px] px-2 py-0.5 rounded-full" :class="comfyHealth === 'online' ? 'bg-green-100 text-green-600' : comfyHealth === 'offline' ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-400'" :title="'生图模块（ComfyUI）状态'">{{ comfyHealth === 'online' ? '🟢 生图' : comfyHealth === 'offline' ? '🔴 生图' : '⚪ 生图' }}</span>
         </div>
         <div class="flex items-center gap-1">
           <button @click="toggleDark" class="text-base px-1.5 py-1 rounded-xl hover:bg-pink-50 transition-all cursor-pointer border-0" title="夜间模式">{{ darkMode ? '☀️' : '🌙' }}</button>
@@ -1290,6 +1326,13 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                   <div class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
                     <span>自然语言描述</span>
                     <span class="text-gray-400 font-normal text-[7px] sm:text-sm">(中文/英文，LLM 翻译生成提示词)</span>
+                    <div class="flex items-center gap-1 shrink-0 ml-3">
+                      <span v-for="l in llmVisible" :key="l.name" class="inline-flex items-center gap-1 text-[9px] leading-none px-1.5 py-1 rounded-full cursor-default" :class="l.ok === true ? 'bg-green-100 text-green-700' : l.ok === false ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500'" :title="llmTitle(l)">
+                        <span class="inline-block w-1.5 h-1.5 rounded-full" :class="l.ok === true ? 'bg-green-500' : l.ok === false ? 'bg-red-500' : 'bg-gray-400'"></span>
+                        AI{{ l.index }}<span v-if="l.name === activeLlm" class="text-[8px] opacity-60">★</span>
+                      </span>
+                      <span v-if="llmHiddenCount > 0" class="text-[9px] text-gray-400 px-1 cursor-pointer select-none" :title="llmExpanded ? '收起' : '展开全部 LLM'" @click="llmExpanded = !llmExpanded">{{ llmExpanded ? '收起' : '+' + llmHiddenCount }}</span>
+                    </div>
                     <button @click="nlPrompt=''" class="ml-auto text-xs text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded px-2 py-0.5 transition-all cursor-pointer border-0">清空</button>
                   </div>
                   <textarea id="nl" v-model="nlPrompt" placeholder="描述你想要的画面，LLM 会自动翻译为 tags" rows="2" class="w-full border border-pink-200 rounded-xl px-3 py-2.5 text-sm bg-white resize-y outline-none focus:border-pink-400 focus:ring-2 focus:ring-pink-200 box-border"></textarea>
