@@ -170,7 +170,29 @@ async function copyToken() {
   try { await navigator.clipboard.writeText(newToken.value); alert('已复制') } catch { prompt('复制此 Token：', newToken.value) }
 }
 
-onMounted(() => { loadCfg(); loadTokens() })
+// ── 补充提示词（可为空）：AI 聊天生图的可选系统提示词前缀 ──
+const extraPrompt = ref('')
+const extraEnabled = ref(true)
+const extraStatus = ref('')
+const extraLoading = ref(false)
+async function loadExtra() {
+  try {
+    const d = await api('GET', '/api/admin/features/ai-chat/extra-prompt')
+    extraEnabled.value = !!d.enabled
+    extraPrompt.value = d.prompt || ''
+  } catch { }
+}
+async function saveExtra() {
+  extraLoading.value = true
+  try {
+    await api('POST', '/api/admin/features/ai-chat/extra-prompt', { enabled: extraEnabled.value, prompt: extraPrompt.value })
+    extraStatus.value = '✓ 已保存'
+    setTimeout(() => { extraStatus.value = '' }, 2000)
+  } catch (e: any) { extraStatus.value = '❌ ' + e.message }
+  extraLoading.value = false
+}
+
+onMounted(() => { loadCfg(); loadTokens(); loadExtra() })
 </script>
 
 <template>
@@ -314,6 +336,23 @@ onMounted(() => { loadCfg(); loadTokens() })
         {{ cfgLoading ? '保存中...' : '💾 保存配置' }}
       </button>
       <span v-if="cfgStatus" class="ml-2 text-xs" :class="cfgStatus.startsWith('✅')?'text-green-500':'text-red-400'">{{ cfgStatus }}</span>
+    </div>
+
+    <!-- 补充提示词（可为空） -->
+    <div class="border border-gray-100 rounded-xl p-3 bg-gray-50/60">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-sm font-semibold text-gray-700">🧩 补充提示词（可为空）</div>
+        <label class="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+          启用
+          <input v-model="extraEnabled" type="checkbox" class="w-4 h-4 accent-pink-500" />
+        </label>
+      </div>
+      <p class="text-[11px] text-gray-400 mb-2">启用并填写后，该内容会作为 AI 聊天生图的系统提示词前缀注入（全局生效）。留空或关闭则不注入。</p>
+      <textarea v-model="extraPrompt" rows="4" placeholder="可选：输入补充提示词内容..." class="w-full border border-gray-200 rounded-xl px-3 py-2 text-xs font-mono outline-none focus:border-pink-400 bg-white text-gray-700 resize-y box-border"></textarea>
+      <div class="flex items-center gap-2 mt-2">
+        <button @click="saveExtra" :disabled="extraLoading" class="px-3 py-1.5 text-xs bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 cursor-pointer border-0 disabled:opacity-50">{{ extraLoading ? '保存中...' : '💾 保存' }}</button>
+        <span v-if="extraStatus" class="text-xs" :class="extraStatus.startsWith('❌')?'text-red-400':'text-green-500'">{{ extraStatus }}</span>
+      </div>
     </div>
 
     <!-- 额度 Token 管理 -->

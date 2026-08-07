@@ -4,7 +4,7 @@
 设计：
   - 模板数据存 web/features/config/llm_prompt_templates.json（数组），带线程锁 + 原子写。
   - JSON 损坏时**抛错**，绝不自动清空（避免后台一保存把模板全清掉）。
-  - 复用原 tags 模式机制：模板只提供 system prompt 规则；NSFW 绕过 + 输出格式
+  - 复用原 tags 模式机制：模板只提供 system prompt 规则；补充提示词（可为空）+ 输出格式
     POSITIVE/NEGATIVE 由主流程（app.translate_prompt）统一包头尾，本模块不管解析。
 
 接口：

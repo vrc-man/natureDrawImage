@@ -218,7 +218,7 @@ onMounted(load)
 
         <label class="block text-sm text-gray-600 mb-3">
           不改写规则 system_generate <span class="text-red-500">*</span>
-          <textarea v-model="form.system_generate" rows="8" class="mt-1 w-full border rounded px-3 py-2 font-mono text-xs outline-none focus:border-pink-400 resize-y" placeholder="写给 LLM 的模板规则。系统会自动追加 NSFW 规则和 POSITIVE/NEGATIVE 输出格式。"></textarea>
+          <textarea v-model="form.system_generate" rows="8" class="mt-1 w-full border rounded px-3 py-2 font-mono text-xs outline-none focus:border-pink-400 resize-y" placeholder="写给 LLM 的模板规则。系统会自动追加补充提示词和 POSITIVE/NEGATIVE 输出格式。"></textarea>
         </label>
 
         <label class="block text-sm text-gray-600 mb-4">
