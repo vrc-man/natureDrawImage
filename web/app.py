@@ -9245,6 +9245,10 @@ async def api_admin_llm_profiles_save(request: Request, name: str, payload: Dict
     _llm_profiles[name.strip()] = cfg
     if not _llm_active_profile:
         _llm_active_profile = name.strip()
+    # 编辑的是当前激活 profile → 同步 _llm_config，立即生效（无需重启）
+    if _llm_active_profile == name.strip():
+        _llm_config.clear()
+        _llm_config.update(cfg)
     await _save_llm_config(_llm_config)
     return {"ok": True}
 
