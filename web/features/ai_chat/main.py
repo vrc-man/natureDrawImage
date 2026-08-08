@@ -992,7 +992,7 @@ def _prompt_style_for_workflow(workflow_path: str) -> str:
             "【当前工作流是 Anima 二次元 DiT 模型（含角色 Lora）】提示词写法（官方规范）：\n"
             "- 正向提示词：Danbooru 标签风格，逗号分隔，固定加质量词 'masterpiece, best quality, solo' 开头。先写角色名及 Lora 触发词（若有），再写人物特征/动作/服饰/场景。\n"
             "- 支持 @画师 触发词语法（如 '@某某画师'）指定特定画师风格；权重用法类似 SD 的 (tag:1.1)。\n"
-            "- 反向提示词：仅用 'worst quality, low quality'（极简，屏蔽低清晰度低质量）。本地模型支持宽松内容，不要添加 nsfw/cleavage 等限制词。"
+            "- 反向提示词：仅用 'worst quality, low quality'（极简，屏蔽低清晰度低质量）。本地模型支持宽松内容，不要添加内容限制类负面词。"
         )
     # SDXL 通用绘画（IcatTowerCknV12 / VIL-Gembyte / matureritual 等未匹配关键词时）及默认
     return (

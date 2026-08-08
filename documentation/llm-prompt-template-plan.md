@@ -31,7 +31,7 @@ JSON 文件：`web/llm_prompt_templates.json`（数组）。带线程锁 + 原�
 ### 老代码最小打孔
 4. `web/app.py` `RunRequest`（L5270）：加字段 `llm_template_id: Optional[int] = None`
 5. `web/app.py` `translate_prompt`（L3043）：加参数 `template_id=None` + 一个分支：
-   - 有 template_id：system = NSFW + (rewrite时 system_rewrite or system_generate / 否则 system_generate) + _LLM_OUTPUT_RULE；走 _parse_pos_neg
+   - 有 template_id：system = 补充提示词 + (rewrite时 system_rewrite or system_generate / 否则 system_generate) + _LLM_OUTPUT_RULE；走 _parse_pos_neg
    - 无 template_id：完全走原 tags/natural 逻辑（不变）
    - 模板查询用 try/except，查不到/禁用则回退原逻辑
 6. `web/app.py` 两处调用（L6430 / L6436）：透传 `template_id=req.llm_template_id`
