@@ -1,0 +1,14 @@
+{
+  "name": "search_workflows",
+  "description": "从系统工作流库中搜索可用的文生图工作流（按名称/分类，如 Anima、WAI、NoobAIXL、Krea2、Z-Image、FLUX 等）。用户要求切换到某个模型/工作流时调用，返回匹配的工作流列表（含路径和分类）。",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "description": "搜索关键词（模型名/工作流名/分类，如 anime、鬼针草、Krea）" }
+    },
+    "required": ["query"]
+  },
+  "entry": "main.py:execute",
+  "data_dir": "data",
+  "shared": { "workflow_meta": "workflow_meta.json" }
+}

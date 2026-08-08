@@ -103,6 +103,8 @@ web/features/config/*.env
 web/features/config/*.xml
 web/features/config/*.properties
 web/features/config/*.pkl
+# 插件私有 config（目录化后各插件自带）
+web/features/*/config/
 web/llm_prompt_templates.json
 
 # ── 项目本地配置（不提交；避免误伤 package.json / pyproject.toml 等正式项目文件） ──
@@ -152,3 +154,6 @@ frontend/*.tsbuildinfo
 # ── 不提交纯文本笔记（本地文档和 AI 笔记） ──
 *.txt
 !requirements.txt
+
+# ── AI 聊天技能说明书（skill.json 需入库，否则新环境技能无法加载） ──
+!web/features/*/skills/**/skill.json

@@ -27,6 +27,8 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from features._deps import require_admin, ctx
 
+# 目录化后 main.py 位于 web/features/ai_chat/，上溯 3 级定位 web/（角色库/画风库/工作流元数据所在）
+_WEB_DIR = Path(__file__).resolve().parent.parent.parent
 CONFIG_DIR = Path(__file__).resolve().parent / "config"
 JSON_PATH = CONFIG_DIR / "ai_chat.json"
 
@@ -581,10 +583,10 @@ SEARCH_TOOLS = [
 ]
 
 # ── 技能目录加载器（仿 ComfyUI custom_nodes / opencode skills）──
-# 每个技能 = ai_chat_skills/<name>/ 目录，含 skill.json（说明书+schema+入口）+ 若干 py + data/
+# 每个技能 = skills/<name>/ 目录，含 skill.json（说明书+schema+入口）+ 若干 py + data/
 # 加技能 = 新建目录放 skill.json，重启即自动发现，无需改主文件。
 
-SKILLS_DIR = Path(__file__).resolve().parent / "ai_chat_skills"
+SKILLS_DIR = Path(__file__).resolve().parent / "skills"
 
 
 class SkillContext:
@@ -606,7 +608,7 @@ class SkillContext:
         self.data: Dict[str, Any] = {}
         try:
             sd = (ai_config or {}).get("skill_data") or {}
-            web_dir = Path(__file__).resolve().parent.parent
+            web_dir = _WEB_DIR
             for k, v in sd.items():
                 if isinstance(v, str) and v.strip():
                     p = Path(v.strip())
@@ -621,7 +623,7 @@ class SkillContext:
 
 def _resolve_shared(shared: dict) -> dict:
     """把 skill.json 的 shared 相对路径（相对 web/）解析为绝对路径。"""
-    web_dir = Path(__file__).resolve().parent.parent
+    web_dir = _WEB_DIR
     out = {}
     for k, v in (shared or {}).items():
         p = str(v or "")
@@ -634,7 +636,7 @@ def _resolve_shared(shared: dict) -> dict:
 
 
 def _discover_skills() -> dict:
-    """扫描 ai_chat_skills/，返回 {name: meta}。"""
+    """扫描 skills/，返回 {name: meta}。"""
     skills: dict = {}
     if not SKILLS_DIR.is_dir():
         return skills
@@ -742,7 +744,7 @@ def _build_workflow_cache() -> None:
         # 可选：从 workflow_meta.json 补充分类（若配置了则用它）
         cats: dict = {}
         try:
-            meta_p = sd.get("workflow_meta_file") or str(Path(__file__).resolve().parent.parent / "workflow_meta.json")
+            meta_p = sd.get("workflow_meta_file") or str(_WEB_DIR / "workflow_meta.json")
             if os.path.isfile(meta_p):
                 d = json.load(open(meta_p, encoding="utf-8"))
                 if isinstance(d, list):
@@ -792,7 +794,7 @@ def _load_char_mem() -> None:
         sd = (cfg or {}).get("skill_data") or {}
         db = str(sd.get("character_db", "") or "").strip()
         if db and not os.path.isabs(db):
-            db = str((Path(__file__).resolve().parent.parent / db).resolve())
+            db = str((_WEB_DIR / db).resolve())
         if not db or not os.path.isfile(db):
             return
         import sqlite3
@@ -865,7 +867,7 @@ async def _exec_search_tool(call: dict, sources: list) -> str:
 def _gen_load_chars() -> list:
     try:
         import json as _j, os as _os
-        p = _os.path.join(_os.path.dirname(__file__), "..", "characters.json")
+        p = str(_WEB_DIR / "characters.json")
         d = _j.load(open(p, encoding="utf-8"))
         return [c for c in d if isinstance(c, dict) and str(c.get("name", "")).strip()]
     except Exception:
@@ -875,7 +877,7 @@ def _gen_load_chars() -> list:
 def _gen_load_styles() -> list:
     try:
         import json as _j, os as _os
-        p = _os.path.join(_os.path.dirname(__file__), "..", "styles.json")
+        p = str(_WEB_DIR / "styles.json")
         d = _j.load(open(p, encoding="utf-8"))
         return [s for s in d if isinstance(s, dict) and str(s.get("name", "")).strip()]
     except Exception:
@@ -886,7 +888,7 @@ def _gen_load_workflows() -> list:
     """加载工作流库（web/workflow_meta.json：工作流路径 + 分类）。"""
     try:
         import json as _j, os as _os
-        p = _os.path.join(_os.path.dirname(__file__), "..", "workflow_meta.json")
+        p = str(_WEB_DIR / "workflow_meta.json")
         d = _j.load(open(p, encoding="utf-8"))
         out = []
         if isinstance(d, list):
@@ -1816,7 +1818,7 @@ async def api_search_characters(request: Request, q: str = ""):
         sd = (cfg or {}).get("skill_data") or {}
         db = str(sd.get("character_db", "") or "").strip()
         if db and not os.path.isabs(db):
-            db = str((Path(__file__).resolve().parent.parent / db).resolve())
+            db = str((_WEB_DIR / db).resolve())
         if not db or not os.path.isfile(db):
             return {"characters": []}
         if not _CHAR_MEM:

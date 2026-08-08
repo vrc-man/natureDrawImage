@@ -5,7 +5,7 @@
 ## 目录结构
 
 ```
-web/features/ai_chat_skills/
+web/features/ai_chat/skills/
 ├── SKILLS.md                    # 本文档
 ├── skill_template/              # 模板（复制它改）
 ├── new_skill.py                 # 脚手架：python new_skill.py 技能名 "描述"
@@ -64,7 +64,7 @@ def execute(args: dict, ctx) -> str:
 
 ## 加技能步骤
 
-1. `python web/features/ai_chat_skills/new_skill.py 我的技能 "描述"`
+1. `python web/features/ai_chat/skills/new_skill.py 我的技能 "描述"`
    （或复制 `skill_template/` 改名为技能名）
 2. 编辑 `skill.json`：改 description / parameters
 3. 实现 `main.py` 的 `execute(args, ctx)`

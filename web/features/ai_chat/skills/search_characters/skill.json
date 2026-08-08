@@ -1,0 +1,14 @@
+{
+  "name": "search_characters",
+  "description": "从角色库中搜索角色。用户提到角色（如原神的胡桃、猫娘、某个动漫角色）时调用，返回匹配的角色列表。找不到匹配时用自然语言绘制原创角色。",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "description": "搜索关键词（角色名/作品/特征）" }
+    },
+    "required": ["query"]
+  },
+  "entry": "main.py:execute",
+  "data_dir": "data",
+  "shared": { "characters": "characters.json" }
+}

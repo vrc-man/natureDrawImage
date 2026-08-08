@@ -127,10 +127,9 @@ import httpx
 import websockets
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request, UploadFile, Form
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+import orjson as _orjson
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import ORJSONResponse as _FastAPIORJSONResponse
-import orjson as _orjson
 from starlette.types import ASGIApp, Receive, Scope, Send, Message
 from pydantic import BaseModel, field_validator
 
@@ -1296,8 +1295,9 @@ async def _creator_map_set(rel: str, ip: str) -> bool:
     except Exception:
         return False
 
-class _OrjsonResponse(_FastAPIORJSONResponse):
+class _OrjsonResponse(Response):
     """orjson 编码的 JSON 响应，兜底序列化 datetime/set/Decimal 避免 500。"""
+    media_type = "application/json"
     @staticmethod
     def render(content) -> bytes:
         def _default(o):
@@ -3590,9 +3590,13 @@ async def _llm_openai_compat(system: str, user: str, endpoint: str,
     headers: Dict[str, str] = {}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    merged = f"{system}\n\n{user}"
+    # 独立 system role（对齐 AI 聊天结构）：破限/规则放 system，用户需求放 user，
+    # 避免合并进 user 消息导致云端模型（如 DeepSeek）审核挂起/偶发空响应
     body: Dict[str, Any] = {
-        "messages": [{"role": "user", "content": merged}],
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
         "temperature": 0.7,
         "max_tokens": _llm_config.get("llm_max_tokens", 1024),
         "stream": use_stream,
@@ -3607,53 +3611,77 @@ async def _llm_openai_compat(system: str, user: str, endpoint: str,
     print(f"[LLM-DEBUG] ======")
 
     chunks: List[str] = []
-    client = await _get_http_client()
-    if use_stream:
-        async with client.stream("POST", f"{endpoint}/v1/chat/completions", json=body, headers=headers, timeout=120) as r:
-            if r.status_code >= 400:
-                text = await r.aread()
-                print(f"[LLM] OpenAI 流式 HTTP {r.status_code}: {text.decode()[:500]}")
-                raise RuntimeError(f"LLM 返回错误状态码 {r.status_code}")
-            async for line in r.aiter_lines():
-                if not line or not line.startswith("data:"):
-                    continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    obj = json.loads(data)
-                except Exception:
-                    continue
-                delta = ((obj.get("choices") or [{}])[0].get("delta") or {})
-                piece = delta.get("content") or ""
-                if piece:
-                    chunks.append(piece)
+
+    async def _run() -> str:
+        nonlocal chunks
+        chunks = []
+        # 每次调用独立连接：避免共享连接池坏连接复用导致流式空响应 / 无限挂起
+        client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0))
+        try:
+            if use_stream:
+                async with client.stream("POST", f"{endpoint}/v1/chat/completions", json=body, headers=headers, timeout=60) as r:
+                    if r.status_code >= 400:
+                        text = await r.aread()
+                        print(f"[LLM] OpenAI 流式 HTTP {r.status_code}: {text.decode()[:500]}")
+                        raise RuntimeError(f"LLM 返回错误状态码 {r.status_code}")
+                    async for line in r.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            obj = json.loads(data)
+                        except Exception:
+                            continue
+                        delta = ((obj.get("choices") or [{}])[0].get("delta") or {})
+                        piece = delta.get("content") or ""
+                        if piece:
+                            chunks.append(piece)
+                            if on_chunk is not None:
+                                try:
+                                    await on_chunk(piece)
+                                except Exception:
+                                    pass
+            else:
+                r = await client.post(f"{endpoint}/v1/chat/completions", json=body, headers=headers, timeout=60)
+                if r.status_code >= 400:
+                    print(f"[LLM] OpenAI HTTP {r.status_code}: {r.text[:500]}")
+                    raise RuntimeError(f"LLM 返回错误状态码 {r.status_code}")
+                resp = r.json()
+                content = ((resp.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+                if content:
+                    chunks.append(content)
                     if on_chunk is not None:
                         try:
-                            await on_chunk(piece)
+                            await on_chunk(content)
                         except Exception:
                             pass
-    else:
-        r = await client.post(f"{endpoint}/v1/chat/completions", json=body, headers=headers, timeout=120)
-        if r.status_code >= 400:
-            print(f"[LLM] OpenAI HTTP {r.status_code}: {r.text[:500]}")
-            raise RuntimeError(f"LLM 返回错误状态码 {r.status_code}")
-        resp = r.json()
-        content = ((resp.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-        if content:
-            chunks.append(content)
-            if on_chunk is not None:
-                try:
-                    await on_chunk(content)
-                except Exception:
-                    pass
-    full = "".join(chunks).strip()
-    print(f"[LLM-DEBUG] ====== LLM 原始返回 ======")
-    print(f"[LLM-DEBUG] {repr(full)}")
-    print(f"[LLM-DEBUG] ======")
-    if not full:
-        raise RuntimeError("LLM 返回空内容")
-    return full
+        finally:
+            await client.aclose()
+        full = "".join(chunks).strip()
+        print(f"[LLM-DEBUG] ====== LLM 原始返回 ======")
+        print(f"[LLM-DEBUG] {repr(full)}")
+        print(f"[LLM-DEBUG] ======")
+        if not full:
+            raise RuntimeError("LLM 返回空内容")
+        return full
+
+    # 空内容自动重试（DeepSeek 等云端模型对敏感内容偶发返回空，重试可显著提高成功率）
+    last_err: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            return await asyncio.wait_for(_run(), timeout=70)
+        except asyncio.TimeoutError:
+            print(f"[LLM] OpenAI 请求超时（70s）endpoint={endpoint}")
+            raise RuntimeError("LLM 请求超时（70s）")
+        except RuntimeError as _re:
+            last_err = _re
+            if "空内容" in str(_re) and attempt < 2:
+                print(f"[LLM] OpenAI 返回空内容，重试 {attempt + 1}/3")
+                continue
+            raise
+    raise last_err if last_err else RuntimeError("LLM 返回空内容")
 
 
 # ---------------- GitHub API 工具 ----------------

@@ -1,0 +1,14 @@
+{
+  "name": "get_recommended_dimensions",
+  "description": "获取推荐尺寸。用户提到画幅（横屏/竖屏/方图/比例）时调用，返回推荐宽高。",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "aspect_ratio": { "type": "string", "description": "宽高比，如 1:1 / 2:3 / 3:4 / 9:16 / 16:9" }
+    },
+    "required": ["aspect_ratio"]
+  },
+  "entry": "main.py:execute",
+  "data_dir": "data",
+  "shared": {}
+}

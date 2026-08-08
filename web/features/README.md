@@ -81,21 +81,28 @@ from web.app import xxx
 
 ---
 
-### 2.2 一个功能 = 一个文件 + 一个 APIRouter
+### 2.2 一个插件 = 一个目录 + __init__.py 导出 APIRouter（ComfyUI 式）
 
 推荐：
 
 ```text
-features/my_feature.py
+features/my_feature/
+├── __init__.py      # 导出 router（注册入口，兼容 `from features.my_feature import router`）
+└── main.py          # 实现代码（可再拆子模块，共享状态放 data.py）
 ```
 
-里面只导出：
+`__init__.py` 内容：
 
 ```python
-router = APIRouter(...)
+from .main import router
 ```
 
-不要一个文件塞多个不相关功能。这样出问题时可以直接从 `features/__init__.py` 里移除注册。
+要点：
+
+- 一个插件 = `features/` 下的一个目录，`__init__.py` 导出 `router`（`APIRouter`）即被自动发现挂载；
+- 代码多的插件按职责拆多个 `.py`（如 `data.py` / `llm.py` / `routes.py`），共享状态集中一处防循环 import；
+- 插件私有配置放 `<plugin>/config/`（gitignore 忽略，不提交）；`features/config/` 是主 app 层共享配置（app.py 直接消费的例外，如 `llm_extra_prompt.json`）；
+- 出问题可以直接删整个目录回退，不影响主应用启动（单插件失败 try/except 隔离）。
 
 ---
 
@@ -168,20 +175,36 @@ _status = {...}
 
 ## 3. 目录结构
 
-当前结构：
+当前结构（目录化，ComfyUI custom_nodes 式自动发现）：
 
 ```text
 features/
-├── __init__.py                 # register_all(app)：统一挂载入口
+├── __init__.py                 # register_all(app)：自动发现目录插件并挂载
 ├── _deps.py                    # 鉴权、路径工具、少量 app 上下文注入
 ├── README.md                   # 本文档
 ├── featured_request_design.md  # 精选申请功能设计记录
-├── access_keys.py              # 访问密钥管理
-├── gen_stats.py                # 系统生图统计
-├── gen_leaderboard.py          # 生图排行榜
-├── health_check.py             # 图片目录健康检查
-├── llm_prompt_templates.py     # LLM 提示词模板
-└── config/                     # feature 私有/默认配置文件
+├── config/                     # 主 app 层共享配置（app.py 直接消费的例外，如 llm_extra_prompt.json）
+├── ai_chat/                    # AI 聊天生图助手
+│   ├── __init__.py             # 导出 router + re-export 兼容符号
+│   ├── main.py                 # 实现（后续按需拆 data/llm/prompts/skills/agent/routes）
+│   ├── config/                 # 插件私有配置（ai_chat.json / ai_chat_data.db / prompt_instructions/）
+│   └── skills/                 # AI 聊天技能目录（每个技能一个子目录，skill.json 自动发现）
+├── llm_prompt_templates/       # LLM 提示词模板（config/ 存模板 json）
+├── health_check/               # 图片目录健康检查
+├── access_keys/                # 访问密钥管理
+├── gen_stats/                  # 系统生图统计
+├── gen_leaderboard/            # 生图排行榜
+└── share/                      # 分享链接
+```
+
+每个插件目录结构：
+
+```text
+features/<plugin>/
+├── __init__.py      # from .main import router（注册入口）
+├── main.py          # 实现代码（大插件按职责拆子模块）
+├── config/          # 插件私有配置（gitignore 忽略）
+└── plugin.json      #（可选）声明 name/description/router/requires/enabled
 ```
 
 ---
@@ -243,30 +266,24 @@ async def list_items(request: Request, limit: int = 20, offset: int = 0):
 
 ---
 
-### 第 3 步：在 `features/__init__.py` 注册
+### 第 3 步：放目录，自动发现（无需改注册代码）
 
-在 `register_all(app)` 中加：
-
-```python
-try:
-    from .my_feature import router as my_feature_router
-    routers.append(("my-feature", my_feature_router))
-except Exception as e:
-    print(f"[features] my_feature 加载失败: {type(e).__name__}: {e}")
-```
-
-然后统一 include：
+新建目录 `web/features/my_feature/`，写 `__init__.py`：
 
 ```python
-for name, r in routers:
-    try:
-        app.include_router(r)
-        print(f"[features] 已挂载: {name}")
-    except Exception as e:
-        print(f"[features] 挂载失败 {name}: {type(e).__name__}: {e}")
+from .main import router
 ```
 
-注册必须放在 try/except 里，保证单个 feature 加载失败不影响主应用启动。
+`register_all(app)` 启动时自动扫描 `features/` 直接子目录：
+
+- 含 `__init__.py` 且导出 `router` 即自动挂载（日志 `[features] 已挂载: my_feature`）；
+- 单插件加载失败 try/except 隔离，打印 `加载失败` 不影响主应用启动；
+- **无需手动改 `features/__init__.py` 注册**。
+
+禁用插件：
+
+- 目录名加 `.disabled` 后缀（`my_feature.disabled/`）；
+- 或目录内 `plugin.json` 写 `{ "enabled": false }`（可选 manifest：还可声明 `name/description/router/requires`）。
 
 ---
 
@@ -542,23 +559,25 @@ def execute_sql(sql, params):
 | 低频写入 | 管理员偶尔编辑 |
 | 不影响核心一致性 | 损坏不会破坏用户/日志/队列 |
 
-推荐统一放在：
+推荐统一放在插件自己的 config 目录（目录化后）：
 
 ```text
-web/features/config/<feature_module_name>.json
+web/features/<plugin>/config/<feature_module_name>.json
 ```
 
 例如：
 
 ```text
-web/features/config/llm_prompt_templates.json
-web/features/config/my_feature.json
-web/features/config/banner_rules.json
+web/features/ai_chat/config/ai_chat.json
+web/features/llm_prompt_templates/config/llm_prompt_templates.json
+web/features/my_feature/config/my_feature.json
 ```
 
-命名规则：Python 模块名和 JSON 文件名保持一致，`my_feature.py` 对应 `config/my_feature.json`。
+例外：**app.py 直接消费的共享配置**留在 `web/features/config/`（如 `llm_extra_prompt.json`），app.py 路径常量指向它，不随插件迁移。
 
-注意：这些 JSON 如果包含运行时私有配置或敏感内容，**默认不要提交到 Git**；如果只是无敏感的默认模板/示例配置（如 `config/llm_prompt_templates.json`），可以提交作为开箱默认值。
+命名规则：Python 模块名和 JSON 文件名保持一致，`my_feature` 对应 `config/my_feature.json`。
+
+注意：插件 config 目录已被 `.gitignore` 忽略（`web/features/*/config/`），**默认不提交到 Git**（含 tokens/加密密钥/数据库等敏感内容）；如确有无敏感默认配置需入库，请另行调整忽略规则。
 
 ### 应该进 MySQL 的场景
 
@@ -885,6 +904,22 @@ GET http://127.0.0.1:23601/api/admin/features/<feature>/ping
 
 ## 19. 最小模板
 
+目录结构：
+
+```text
+features/my_feature/
+├── __init__.py      # from .main import router
+└── main.py          # 实现
+```
+
+`__init__.py`：
+
+```python
+from .main import router
+```
+
+`main.py`：
+
 ```python
 """外挂功能：我的功能。"""
 
@@ -902,15 +937,7 @@ async def ping(request: Request):
     return {"ok": True, "feature": "my-feature"}
 ```
 
-注册：
-
-```python
-try:
-    from .my_feature import router as my_feature_router
-    routers.append(("my-feature", my_feature_router))
-except Exception as e:
-    print(f"[features] my_feature 加载失败: {type(e).__name__}: {e}")
-```
+放目录 + 重启后端即自动挂载，无需手动注册。可选 `plugin.json` 声明 name/description/router/requires/enabled。
 
 ---
 

@@ -1,0 +1,14 @@
+{
+  "name": "search_styles",
+  "description": "从画风库中搜索画风。用户提到画风（如赛博朋克、厚涂、水彩）时调用，返回匹配的画风列表。找不到时用自然语言描述画风。",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "query": { "type": "string", "description": "搜索关键词（画风名/风格）" }
+    },
+    "required": ["query"]
+  },
+  "entry": "main.py:execute",
+  "data_dir": "data",
+  "shared": { "styles": "styles.json" }
+}

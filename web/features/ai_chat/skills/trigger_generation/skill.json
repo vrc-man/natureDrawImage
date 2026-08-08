@@ -1,0 +1,20 @@
+{
+  "name": "trigger_generation",
+  "description": "最终提交生图。所有参数（正向提示词、反向提示词、角色、画风、尺寸、工作流）确定后调用本工具。prompt 必须是一段完整融合了角色/画风触发词、质量词、场景的最终提示词（按当前工作流的提示词结构组织，如 Danbooru 标签顺序：质量词→角色触发词→细节→场景→画风触发词→光线），生图会直接使用这段 prompt。调用后直接向用户输出最终生图卡片。",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "prompt": { "type": "string", "description": "正向提示词（Danbooru 标签或自然语言，根据模型风格）" },
+      "negative_prompt": { "type": "string", "description": "反向提示词" },
+      "width": { "type": "integer", "description": "图片宽度" },
+      "height": { "type": "integer", "description": "图片高度" },
+      "character": { "type": "string", "description": "角色（搜索到的角色名，可为空）" },
+      "style": { "type": "string", "description": "画风（可为空）" },
+      "workflow_path": { "type": "string", "description": "用户要求的工作流路径（如 '文生图/Anima正式版-美学修复.json'）。仅当用户明确要求切换模型/工作流时才传；未要求则不传（沿用当前工作流）。" }
+    },
+    "required": ["prompt", "negative_prompt", "width", "height"]
+  },
+  "entry": "main.py:execute",
+  "data_dir": "data",
+  "shared": {}
+}
