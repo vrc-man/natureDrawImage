@@ -851,8 +851,12 @@ async def _exec_search_tool(call: dict, sources: list) -> str:
                 ctx = _skill_context(name, ai_cfg)
                 result = executor(args, ctx)
                 if inspect.isawaitable(result):
-                    result = await result
+                    # 超时兜底：防 async 技能网络卡死拖住 agent 回复
+                    result = await asyncio.wait_for(result, timeout=30)
                 return str(result or "")
+            except asyncio.TimeoutError:
+                print(f"[ai-chat skill] 执行 {name} 超时（30s）", flush=True)
+                return f"（技能 {name} 执行超时）"
             except Exception as e:
                 print(f"[ai-chat skill] 执行 {name} 异常: {type(e).__name__}: {e}", flush=True)
                 return f"（技能 {name} 执行失败: {type(e).__name__}）"

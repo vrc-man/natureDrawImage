@@ -47,7 +47,7 @@ shared: {}
 """
 
 # 内置 main.py 模板（首次自动释放）
-PY_TEMPLATE = '''"""{NAME} 技能。实现 execute(args, ctx)。
+PY_TEMPLATE = '''"""{NAME} 技能。实现 async execute(args, ctx)。
 
 - args: dict，来自 LLM 的 function calling 参数（按 skill.yaml 的 parameters 定义）
 - ctx: SkillContext，提供 data_dir（技能私有数据目录）和 shared（共享文件路径映射）
@@ -55,7 +55,7 @@ PY_TEMPLATE = '''"""{NAME} 技能。实现 execute(args, ctx)。
 """
 
 
-def execute(args: dict, ctx) -> str:
+async def execute(args: dict, ctx) -> str:
     query = str(args.get("query", "")).strip()
     if not query:
         return "（参数为空）"

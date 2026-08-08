@@ -1,13 +1,13 @@
 """技能模板：新技能从这里复制。
 
-execute(args, ctx) 是唯一入口。
+async execute(args, ctx) 是唯一入口（加载器用 isawaitable 自动 await；同步技能也可用 def）。
 - args: dict，来自 LLM 的 function calling 参数（按 skill.json 的 parameters 定义）
 - ctx: SkillContext，提供 data_dir（技能自己的数据目录）和 shared（共享文件路径映射）
 返回: str（工具结果文本，会回填给 LLM）
 """
 
 
-def execute(args: dict, ctx) -> str:
+async def execute(args: dict, ctx) -> str:
     query = str(args.get("query", "")).strip()
     if not query:
         return "（参数为空）"
