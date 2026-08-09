@@ -228,7 +228,10 @@ onMounted(() => { loadCfg(); loadTokens(); loadExtra() })
         </label>
         <label class="block text-xs text-gray-600 mb-2">
           API Key（可留空）
-          <input v-model="llm.api_key" type="text" placeholder="sk-xxx" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 box-border font-mono text-xs" />
+          <div class="relative mt-1">
+            <input v-model="llm.api_key" :type="llm.showApiKey ? 'text' : 'password'" placeholder="sk-xxx" class="w-full border border-gray-200 rounded-xl px-3 py-2 pr-9 text-sm outline-none focus:border-pink-400 box-border font-mono text-xs" />
+            <button type="button" @click="llm.showApiKey = !llm.showApiKey" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent p-0.5 text-base leading-none" :title="llm.showApiKey ? '隐藏' : '显示'">{{ llm.showApiKey ? '🙈' : '👁️' }}</button>
+          </div>
         </label>
         <label class="block text-xs text-gray-600 mb-2">
           模型

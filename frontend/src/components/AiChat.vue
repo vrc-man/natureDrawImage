@@ -504,7 +504,12 @@ async function send() {
       } else if (mode.value === 'own') {
         await sendOwn(llmText, imgData)
       } else {
-        await sendToken(llmText, imgData, hasUrl, genMode.value)
+        // 生图模式开着：即使消息未触发生图意图词，也强制 AI 一次生成审核卡片（避免需重复强调才生成）
+        let finalMsg = llmText
+        if (genMode.value) {
+          finalMsg = llmText + '\n\n请立即调用生图工具（trigger_generation）生成一张「审核生图参数」卡片，包含正/负提示词、尺寸、角色、画风。'
+        }
+        await sendToken(finalMsg, imgData, hasUrl, genMode.value)
       }
     }
   } catch (e: any) {

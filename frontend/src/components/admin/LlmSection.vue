@@ -26,6 +26,8 @@ const activeName = ref('')
 const loading = ref(false)
 const status = ref('')
 const showModal = ref(false)
+const showGoogleKey = ref(false)
+const showCustomKey = ref(false)
 const editProfile = ref<LLMProfile>({ name: '', provider: 'local' })
 const isNewProfile = ref(false)
 const testResult = ref('')
@@ -357,7 +359,10 @@ onUnmounted(() => { if (healthTimer) clearInterval(healthTimer) })
           <template v-if="editProfile.provider === 'google'">
             <div class="mb-3">
               <label class="block text-sm font-medium text-gray-700 mb-1">API Key <span class="text-gray-400 font-normal">（留空不修改）</span></label>
-              <input v-model="editProfile.google_api_key" type="password" class="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-blue-400 box-border" placeholder="AIza..." autocomplete="off" />
+              <div class="relative">
+                <input v-model="editProfile.google_api_key" :type="showGoogleKey ? 'text' : 'password'" class="w-full border rounded-lg px-3 py-2 pr-9 text-sm font-mono outline-none focus:border-blue-400 box-border" placeholder="AIza..." autocomplete="off" />
+                <button type="button" @click="showGoogleKey = !showGoogleKey" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent p-0.5 text-base leading-none" :title="showGoogleKey ? '隐藏' : '显示'">{{ showGoogleKey ? '🙈' : '👁️' }}</button>
+              </div>
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
@@ -398,7 +403,10 @@ onUnmounted(() => { if (healthTimer) clearInterval(healthTimer) })
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">API 密钥 <span class="text-gray-400 font-normal">（选填）</span></label>
-                <input v-model="editProfile.custom_api_key" type="password" class="w-full border rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-blue-400 box-border" placeholder="sk-..." autocomplete="off" />
+                <div class="relative">
+                  <input v-model="editProfile.custom_api_key" :type="showCustomKey ? 'text' : 'password'" class="w-full border rounded-lg px-3 py-2 pr-9 text-sm font-mono outline-none focus:border-blue-400 box-border" placeholder="sk-..." autocomplete="off" />
+                  <button type="button" @click="showCustomKey = !showCustomKey" class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 cursor-pointer border-0 bg-transparent p-0.5 text-base leading-none" :title="showCustomKey ? '隐藏' : '显示'">{{ showCustomKey ? '🙈' : '👁️' }}</button>
+                </div>
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">模型名称</label>

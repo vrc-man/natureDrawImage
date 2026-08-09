@@ -1450,6 +1450,10 @@ async def api_ai_chat_send(request: Request):
                 style_guide = _prompt_style_for_workflow(workflow_path)
                 if style_guide:
                     gen_sys_guide += "\n\n" + style_guide
+                # 锁定当前工作流：顶部已选时禁止 AI 擅自更换（除非用户明确要求切换）
+                if workflow_path:
+                    _wf_name = workflow_path.replace("\\", "/").rsplit("/", 1)[-1].replace(".json", "")
+                    gen_sys_guide += f"\n\n【当前工作流（顶部已选）】{_wf_name}。trigger_generation 时必须沿用该 workflow_path；除非用户明确要求切换工作流/模型（如'换成 Krea2''用 anima 工作流'），否则禁止调用 search_workflows 或更换工作流。"
                 # 当前工作流完整扩写/改写指令（扩写和改写规则都在里面），生图时同样遵循
                 instruction = _prompt_instruction_for_workflow(workflow_path)
                 if instruction:
