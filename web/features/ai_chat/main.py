@@ -1326,6 +1326,9 @@ async def api_ai_chat_send(request: Request):
     workflow_path = str(body.get("workflow_path", "")).strip()
     selected_characters = str(body.get("selected_characters", "")).strip()
     selected_style = str(body.get("selected_style", "")).strip()
+    # 高级面板预设分辨率（前端 genConfig.width/height），AI 生成卡片时优先采用
+    user_width = int(body.get("width", 0) or 0)
+    user_height = int(body.get("height", 0) or 0)
     max_tokens = int(body.get("max_tokens", 0) or 0)
     history = body.get("history") or []
     user_stream = body.get("stream")  # 前端用户自定义，None=用管理员默认
@@ -1441,6 +1444,9 @@ async def api_ai_chat_send(request: Request):
                     gen_sys_guide += f"\n\n【用户已在顶部选择角色】{selected_characters}。生成 prompt 时必须包含这些角色的触发词并融合到正确位置（多角色用 multiple girls / 多个角色标签）。"
                 if selected_style:
                     gen_sys_guide += f"\n\n【用户已在顶部选择画风】{selected_style}。生成 prompt 时必须包含该画风的触发词并融合到正确位置。"
+                # 高级面板预设分辨率：优先采用；用户消息里明确要求其他画幅/比例时再调整
+                if user_width >= 512 and user_height >= 512:
+                    gen_sys_guide += f"\n\n【用户已设置分辨率 {user_width}x{user_height}】trigger_generation 时优先使用该尺寸；若用户明确要求其他画幅（横竖/比例）再调整。"
                 style_guide = _prompt_style_for_workflow(workflow_path)
                 if style_guide:
                     gen_sys_guide += "\n\n" + style_guide

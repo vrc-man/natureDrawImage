@@ -639,6 +639,8 @@ async function sendToken(text: string, img: string, hasUrl: boolean = false, gen
   if (webSearch.value && !hasUrl) body.search = true
   if (genMode) body.gen_mode = true
   if (genMode && genConfig.value.workflow_path) body.workflow_path = genConfig.value.workflow_path
+  // 高级面板预设分辨率传给 AI（优先采用；聊天里明确要求其他画幅时 AI 可改）
+  if (genMode) { body.width = genConfig.value.width; body.height = genConfig.value.height }
   body.max_tokens = 50000
   body.stream = userStream.value
   body.top_p = ownTopP.value
@@ -1118,10 +1120,21 @@ function genCardSizeLabel(card: any): string {
   const hit = GEN_SIZES.value.find(s => s.w === card.width && s.h === card.height)
   return hit ? hit.label : ''
 }
-// AI 生成卡片时若指定了工作流，自动切换顶部工作流
+// AI 生成卡片时同步顶部：工作流 + 角色 + 画风（顶部显示并供后续对话参考）
 function applyGenCardWorkflow(card: any) {
-  if (card && card.workflow_path && card.workflow_path !== genConfig.value.workflow_path) {
+  if (!card) return
+  if (card.workflow_path && card.workflow_path !== genConfig.value.workflow_path) {
     genConfig.value.workflow_path = card.workflow_path
+  }
+  if (card.character) {
+    genConfig.value.character = card.character
+    genConfig.value.characterName = card.character
+    genConfig.value.characterCats = []
+  }
+  if (card.style) {
+    genConfig.value.style = card.style
+    genConfig.value.styleName = card.style
+    genConfig.value.styleCat = ''
   }
 }
 // 自动批准：收到卡片后自动确认生成（跳过手动点确认）
