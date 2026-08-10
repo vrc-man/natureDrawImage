@@ -1441,9 +1441,21 @@ async def api_ai_chat_send(request: Request):
                     "8. 当用户表达确认/确定（如'确定、确认、就这样、可以、生成吧、开始吧、OK、好的'）且之前已有讨论好的需求时，立即调用 trigger_generation 基于之前讨论的内容提交生图参数并输出卡片，不要再追问或继续讨论。"
                 )
                 if selected_characters:
-                    gen_sys_guide += f"\n\n【用户已在顶部选择角色】{selected_characters}。生成 prompt 时必须包含这些角色的触发词并融合到正确位置（多角色用 multiple girls / 多个角色标签）。"
+                    gen_sys_guide += f"\n\n【用户已在顶部选择角色】{selected_characters}。格式为「角色名（分类）｜触发词」：触发词是可直接使用的 Danbooru 标签，生成 prompt 时**直接原样使用｜后面的触发词**（必要时保留反斜杠转义），不要丢弃、不要改写、不要再用 search_characters 重复搜索；多角色用 multiple girls 等组合（多角色用 multiple girls / 多个角色标签）。"
                 if selected_style:
-                    gen_sys_guide += f"\n\n【用户已在顶部选择画风】{selected_style}。生成 prompt 时必须包含该画风的触发词并融合到正确位置。"
+                    gen_sys_guide += f"\n\n【用户已在顶部选择画风】{selected_style}。格式为「画风名（分类）｜触发词」：触发词是可直接使用的标签，生成 prompt 时**直接原样使用｜后面的触发词**（必要时保留反斜杠转义），不要丢弃、不要改写、不要再用 search_styles 重复搜索。"
+                    # 画风 ↔ 工作流关联：顶部同时选了画风和工作流时，声明其匹配关系（用户可能已选用对应画风 lora 的工作流）
+                    if workflow_path:
+                        _wf_style = str(workflow_path).replace("\\", "/").rsplit("/", 1)[-1].replace(".json", "")
+                        _wf_cat = ""
+                        try:
+                            for _w in _gen_load_workflows():
+                                if str(_w.get("path", "")).replace("\\", "/") == str(workflow_path).replace("\\", "/"):
+                                    _wf_cat = str(_w.get("category", "") or "").strip()
+                                    break
+                        except Exception:
+                            _wf_cat = ""
+                        gen_sys_guide += f"\n\n【画风与工作流匹配】用户已在顶部选择画风「{selected_style.split('｜')[0].strip()}」，并已选用匹配该画风的当前工作流「{_wf_style}」{f'（类别：{_wf_cat}）' if _wf_cat else ''}。生成时必须**以该画风的触发词为准**，不要沿用旧卡片上的画风；除非用户明确要求更换画风/工作流。"
                 # 高级面板预设分辨率：优先采用；用户消息里明确要求其他画幅/比例时再调整
                 if user_width >= 512 and user_height >= 512:
                     gen_sys_guide += f"\n\n【用户已设置分辨率 {user_width}x{user_height}】trigger_generation 时优先使用该尺寸；若用户明确要求其他画幅（横竖/比例）再调整。"

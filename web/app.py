@@ -2813,6 +2813,10 @@ async def get_workflow(path: str) -> Dict[str, Any]:
         )
         r.raise_for_status()
         return r.json()
+    except httpx.HTTPStatusError as e:
+        # 只记录完整 URL 到后端日志，对外抛干净异常（不泄露内网 ComfyUI 地址）
+        print(f"[ComfyUI] 工作流加载失败 status={e.response.status_code} path={path} url={e.request.url}", flush=True)
+        raise RuntimeError(f"工作流加载失败：HTTP {e.response.status_code}")
     except Exception:
         # ComfyUI 不可达时回退到本地文件系统
         wf_dir = Path(COMFYUI_WORKFLOWS_DIR).resolve()
@@ -6275,14 +6279,22 @@ async def _process_queue() -> None:
         except asyncio.CancelledError:
             pass
         except Exception as e:
+            import re as _re
             err_msg = f"{type(e).__name__}: {e}"
             err_str = str(e)
             print(f"[ERROR] 生图任务异常: {err_msg}")
             # 按异常类型区分用户消息
-            if "ComfyUI" in err_str or type(e).__name__ in ("ConnectError", "TimeoutError", "WebSocketException", "ClientConnectorError") or "连接" in err_str or "connect" in err_str.lower():
+            _err_low = err_str.lower()
+            if ("ComfyUI" in err_str
+                    or type(e).__name__ in ("ConnectError", "TimeoutError", "WebSocketException", "ClientConnectorError", "HTTPStatusError")
+                    or "连接" in err_str or "connect" in _err_low
+                    # 兜底：任何带内网 URL / HTTP 状态码的异常都归为通信失败，不把地址泄露给用户
+                    or "http://" in _err_low or "http_status" in _err_low or _re.search(r"HTTP [45]\d\d", err_str)):
                 user_msg = "生图模块通信失败，请联系管理员"
             else:
                 user_msg = f"生成失败: {err_str[:200]}"
+            # error_reason 脱敏：去掉内网 ComfyUI 地址，避免写入数据库
+            _clean_reason = _re.sub(r"https?://[^\s'\"`)]+", "[内部地址]", err_msg)
             try:
                 await _save_gen_log(
                     next_item.get("github_id", ""), "",
@@ -6290,7 +6302,7 @@ async def _process_queue() -> None:
                     (next_item.get("params") or {}).get("workflow", ""),
                     0, "failed",
                     next_item.get("client_ip", "unknown"),
-                    error_reason=err_msg,
+                    error_reason=_clean_reason,
                 )
             except Exception:
                 pass

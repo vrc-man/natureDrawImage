@@ -459,7 +459,11 @@ async function send() {
     // 显式带上当前工作流，AI 按该工作流模型规则调整；强制走生图工具生成新卡
     const wfPath = genConfig.value.workflow_path || ''
     const wfName = wfPath ? String(wfPath).split(/[\\/]/).pop() : '未指定'
-    const ctx = card ? `（当前生图卡片：正向=${card.prompt}；反向=${card.negative_prompt}；尺寸=${card.width}x${card.height}；角色=${card.character}；画风=${card.style}；当前工作流=${wfName}）\n请在保留原有内容基础上，根据我的新要求调整：${ctxText}\n\n请立即调用生图工具（trigger_generation）生成一张更新后的「审核生图参数」卡片。` : ctxText
+    // 角色/画风：顶部实时选择优先（用户刚更新过），顶部未选才沿用上一张卡片的
+    const curChar = genConfig.value.character ? genConfig.value.character : (card && card.character || '')
+    const curStyle = genConfig.value.style ? genConfig.value.style : (card && card.style || '')
+    const topUpdated = genConfig.value.character || genConfig.value.style
+    const ctx = card ? `（当前生图卡片：正向=${card.prompt}；反向=${card.negative_prompt}；尺寸=${card.width}x${card.height}；角色=${curChar || '未指定'}；画风=${curStyle || '未指定'}；当前工作流=${wfName}）\n${topUpdated ? '注意：我刚刚在顶部更新了角色/画风选择，以上角色/画风以顶部最新选择为准（不要沿用旧卡片上的角色/画风）。\n' : ''}请在保留原有内容基础上，根据我的新要求调整：${ctxText}\n\n请立即调用生图工具（trigger_generation）生成一张更新后的「审核生图参数」卡片。` : ctxText
     const userMsg: any = { role: 'user', text: ctx }
     messages.value.push(userMsg)
     sending.value = true
@@ -504,10 +508,18 @@ async function send() {
       } else if (mode.value === 'own') {
         await sendOwn(llmText, imgData)
       } else {
-        // 生图模式开着：即使消息未触发生图意图词，也强制 AI 一次生成审核卡片（避免需重复强调才生成）
+        // 生图模式开着：判断是否该强制出卡片。
+        // 分级决策：
+        //   - 顶部画风+工作流都已选齐（配置完整，描述即需求）→ 直接出卡
+        //   - 自由发挥/口头描述/配置未选齐 → 第一轮先对话（AI 推荐/反问），等用户确认后再出卡
         let finalMsg = llmText
         if (genMode.value) {
-          finalMsg = llmText + '\n\n请立即调用生图工具（trigger_generation）生成一张「审核生图参数」卡片，包含正/负提示词、尺寸、角色、画风。'
+          const cfgComplete = genConfig.value.workflow_path && genConfig.value.style
+          if (cfgComplete) {
+            finalMsg = llmText + '\n\n请立即调用生图工具（trigger_generation）生成一张「审核生图参数」卡片，包含正/负提示词、尺寸、角色、画风。'
+          } else {
+            finalMsg = llmText + '\n\n请先基于我的描述和顶部已选配置，给我推荐合适的角色/画风/工作流方案并简要说明，或反问澄清缺失的信息；**先不要调用生图工具生成卡片**，等我说「确定/生成吧」后再出审核生图参数卡片。'
+          }
         }
         await sendToken(finalMsg, imgData, hasUrl, genMode.value)
       }
@@ -633,9 +645,20 @@ async function sendToken(text: string, img: string, hasUrl: boolean = false, gen
   const msgText = text
   const body: any = { token: token.value, message: msgText }
   // 顶部已选角色/画风作为独立字段传给后端（AI 决策参考），不混入气泡文本
+  // 直接传真实 tags（AI 无需再搜索），同时附名字/分类便于 AI 理解对应关系
   if (genMode) {
-    if (genConfig.value.character.trim()) body.selected_characters = (genConfig.value.characterName || genConfig.value.character).trim()
-    if (genConfig.value.style.trim()) body.selected_style = (genConfig.value.styleName || genConfig.value.style).trim()
+    if (genConfig.value.character.trim()) {
+      const names = (genConfig.value.characterName || '').split(',').map((s: string) => s.trim()).filter(Boolean)
+      const cats = genConfig.value.characterCats || []
+      const tagLine = genConfig.value.character.trim()
+      const infoParts = names.map((n: string, i: number) => n + (cats[i] ? `（${cats[i]}）` : '')).join('、')
+      body.selected_characters = (infoParts ? infoParts + '｜' : '') + tagLine
+    }
+    if (genConfig.value.style.trim()) {
+      const styleInfo = genConfig.value.styleName || ''
+      const styleTag = genConfig.value.style.trim()
+      body.selected_style = (styleInfo ? styleInfo + (genConfig.value.styleCat ? `（${genConfig.value.styleCat}）` : '') + '｜' : '') + styleTag
+    }
   }
   body.system_prompt = ownPrompt.value
   if (ownTemp.value > 0) body.temperature = ownTemp.value
@@ -941,6 +964,34 @@ function pickGenStyle(s: { name: string; tags?: string; category?: string }) {
   genConfig.value.styleName = s.name
   genConfig.value.styleCat = (s.category || '').trim()
   genShowStylePicker.value = false
+  // 选画风后自动匹配对应的「画风Lora」工作流（如 鬼针草画风 → anime绘画-鬼针草.json）
+  autoMatchStyleWorkflow(s)
+}
+// 画风 → 对应画风Lora工作流自动匹配：工作流 category 含「画风Lora」且名称/路径含画风名关键词
+function autoMatchStyleWorkflow(s: { name?: string; category?: string }) {
+  const styleName = (s?.name || '').trim()
+  if (!styleName) return
+  // 画风名关键词：去掉「画风/风格/style」等后缀和末尾版本号，保留核心词（如 鬼针草画风2 → 鬼针草）
+  const key = styleName.replace(/画风|风格|style|Style/gi, '').trim().replace(/[\d\sⅡⅢⅣ一二三四五六七八九十]+$/g, '').trim().toLowerCase()
+  if (!key) return
+  const styleCat = (s?.category || '').trim().toLowerCase()
+  // 画风大类 → 工作流画风Lora分类映射：Anima → Anima-画风Lora；SD → WAI/NoobAI(SDXL系)
+  const catMap: Record<string, string[]> = {
+    anima: ['anima-画风lora'],
+    sd: ['wai-illustrious画风lora', 'noobai', 'noobaixl-画风lora', 'sdxl'],
+  }
+  const loraWorkflows = genWorkflows.value.filter(w => (w.category || '').toLowerCase().includes('画风lora'))
+  let cands = loraWorkflows.filter(w => (w.name || w.path || '').toLowerCase().includes(key))
+  // 分类优先：先按画风大类过滤（同分类内的关键词命中优先）
+  if (styleCat && catMap[styleCat] && cands.length > 1) {
+    const inCat = cands.filter(w => catMap[styleCat].some(c => (w.category || '').toLowerCase().includes(c)))
+    if (inCat.length) cands = inCat
+  }
+  if (!cands.length) return
+  const chosen = cands[0]
+  if (chosen && chosen.path && chosen.path !== genConfig.value.workflow_path) {
+    genConfig.value.workflow_path = chosen.path
+  }
 }
 // 已选角色/画风 chips（仿 2x.nz：输入框上方展示，可单独取消，多角色组合）
 const genSelectedChips = computed(() => {
@@ -1128,8 +1179,12 @@ function genCardSizeLabel(card: any): string {
 // AI 生成卡片时同步顶部：工作流 + 角色 + 画风（顶部显示并供后续对话参考）
 function applyGenCardWorkflow(card: any) {
   if (!card) return
+  // 工作流防污染：AI 传的 workflow_path 必须能在本地工作流列表里精确匹配，否则沿用顶部已选，避免坏路径提交 404
   if (card.workflow_path && card.workflow_path !== genConfig.value.workflow_path) {
-    genConfig.value.workflow_path = card.workflow_path
+    const exists = genWorkflows.value.some(w => w.path === card.workflow_path || w.path.endsWith('/' + card.workflow_path) || w.path.replace(/\.json$/i, '') === card.workflow_path.replace(/\.json$/i, ''))
+    if (exists) {
+      genConfig.value.workflow_path = card.workflow_path
+    }
   }
   if (card.character) {
     genConfig.value.character = card.character
