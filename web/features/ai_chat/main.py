@@ -1296,6 +1296,62 @@ async def _agentic_search(messages: List[dict], temperature: float, max_tokens: 
     return content, sources, None, gen_card, _reasoning
 
 
+def _extract_gen_card_from_text(text: str, workflow_path: str = "") -> Optional[dict]:
+    """AI 未调用 trigger_generation 工具、但把卡片参数输出为文本时，从文本提取组装 gen_card。
+
+    兼容「正向提示词/反向提示词/负面提示词」标签、markdown 表格、宽x高尺寸。
+    返回 None 表示提取失败（保持原文本 + 前端「用此提示词生图」兜底）。
+    """
+    import re as _re
+    t = text or ""
+    if not t.strip():
+        return None
+    # 正向提示词：匹配「正向提示词」/「Prompt」后的内容（含 > 引用/表格单元格）
+    pm = _re.search(r"(?:正向提示词|✅?\s*正向提示词|正向|Positive)\s*[:：>|]?\s*([\s\S]*?)(?=(?:反向提示词|负面提示词|Negative|反向|###|^---))", t)
+    nm = _re.search(r"(?:反向提示词|负面提示词|Negative|反向)\s*[:：>|]?\s*([\s\S]*)", t)
+    prompt = pm.group(1).strip() if pm else ""
+    neg = nm.group(1).strip() if nm else ""
+    # 清理 markdown 装饰：去掉 > 引用符、代码块围栏、| 表格竖线、markdown 加粗/斜体
+    def _clean(s: str) -> str:
+        s = _re.sub(r"```\w*\n?", "", s).strip()
+        s = _re.sub(r"^>\s*", "", s, flags=_re.M)
+        s = s.replace("|", " ").strip()
+        s = _re.sub(r"\*\*|__|\*|_|`", "", s)
+        return s.strip()
+    prompt = _clean(prompt)
+    neg = _clean(neg)
+    # 无标签时：找代码块或最长含逗号行
+    if not prompt:
+        blocks = _re.findall(r"```\s*([\s\S]*?)```", t)
+        for b in blocks:
+            s = _clean(b)
+            if len(s) > 20:
+                prompt = s
+                break
+    if not prompt:
+        lines = [l.strip() for l in t.splitlines() if "," in l and len(l) > 30]
+        if lines:
+            prompt = max(lines, key=len).strip()
+    if not prompt:
+        return None
+    # 尺寸：宽x高
+    wm = _re.search(r"(\d{3,4})\s*[x×X]\s*(\d{3,4})", t)
+    width, height = 896, 1152
+    if wm:
+        width, height = int(wm.group(1)), int(wm.group(2))
+    if not (512 <= width <= 2000 and 512 <= height <= 2000):
+        width, height = 896, 1152
+    return {
+        "prompt": prompt,
+        "negative_prompt": neg,
+        "width": width,
+        "height": height,
+        "character": "",
+        "style": "",
+        "workflow_path": workflow_path,
+    }
+
+
 # ── API ──
 
 @router.post("/api/features/ai-chat/fetch")
@@ -1438,12 +1494,31 @@ async def api_ai_chat_send(request: Request):
                     "   - 改某特征 → **先移除原 prompt 中对应的旧 tags**，再补新 tags（如 bodystocking 改丝袜：删 bodystocking 加 pantyhose 或 thighhighs；黑发改红发：删 black hair 加 red hair），**绝不叠加冲突**。\n"
                     "   - 新增配饰 → 补标准 Danbooru 标签（穿丝袜=pantyhose/thighhighs；戴帽=hat；围巾=scarf），并检查互斥（穿丝袜不能 barefoot、换了发色不能保留旧发色 tag）。\n"
                     "   - 角色识别核心（角色名/作品/角/瞳色/非修改部位）必须保留。\n"
-                    "8. 当用户表达确认/确定（如'确定、确认、就这样、可以、生成吧、开始吧、OK、好的'）且之前已有讨论好的需求时，立即调用 trigger_generation 基于之前讨论的内容提交生图参数并输出卡片，不要再追问或继续讨论。"
+                    "8. 当用户表达确认/确定（如'确定、确认、就这样、可以、生成吧、开始吧、OK、好的'）且之前已有讨论好的需求时，立即调用 trigger_generation 基于之前讨论的内容提交生图参数并输出卡片，不要再追问或继续讨论。\n"
+                    "10. **生成卡片必须通过 trigger_generation 工具调用，禁止只输出文本代替**：\n"
+                    "   - 只要用户要求出图/生成卡片（或生图模式下需求已明确），**第一轮就必须调用 trigger_generation 工具**提交正/负提示词、尺寸、角色、画风参数，由系统渲染成审核卡片。\n"
+                    "   - **可以**在调用工具前后输出简短文字说明/方案/建议（文本说明 + 卡片可共存，系统会把卡片渲染在回复下方）。\n"
+                    "   - **绝对禁止**只输出 markdown 表格/文本卡片而不调用工具——那样前端收不到卡片，用户无法直接确认生成。\n"
+                    "   - 调用工具后，工具会返回『生图参数已接收』，你只需保留简短说明即可，**不要再把参数重复拼成『| 参数项 | 内容 |』表格**。\n"
+                    "   - 如果你发现自己想输出『| 参数项 | 内容 |』这种表格来呈现卡片，立刻改成调用 trigger_generation 工具。\n"
+                    "9. **负面提示词以固定标准模板为基座，再根据本次提示词内容微调**：\n"
+                    "   - 基础模板（动漫标签模型 Anima/WAI/Illustrious/NoobAI/SDXL 系）：`worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, signature, blurry`\n"
+                    "   - 基础模板（自然语言模型 Krea/FLUX/Z-Image/Wan）：`blurry, low quality, watermark, text, extra limbs, distorted`\n"
+                    "   - **微调规则**：以对应基础模板为底，再按本次正向提示词的内容做针对性调整——① 若提示词主要画人物：确保含手部/解剖类负面词（bad hands、extra fingers、deformed hands），画风不写实则去掉过度写实类要求；② 若提示词是风景/场景/产品：手部负面词可去掉，改加透视/构图/材质类（warped perspective、distorted proportions、cheap plastic）；③ 若提示词含文字/海报需求：不要加 text/watermark 负面词（会压制画面文字），改为 no misspelled text、blurry text；④ 若用户明确说了不要某元素（如'不要眼镜''不要文字'），追加对应负面词。微调是增删个别词，不要推翻基础模板。"
                 )
+                # 判断当前工作流是标签模型还是自然语言模型（决定角色/画风触发词的使用方式）
+                _wf_rule = _workflow_rule_name(workflow_path) if workflow_path else ""
+                _is_natural_lang = _wf_rule in ("flux", "krea", "zimage")
                 if selected_characters:
-                    gen_sys_guide += f"\n\n【用户已在顶部选择角色】{selected_characters}。格式为「角色名（分类）｜触发词」：触发词是可直接使用的 Danbooru 标签，生成 prompt 时**直接原样使用｜后面的触发词**（必要时保留反斜杠转义），不要丢弃、不要改写、不要再用 search_characters 重复搜索；多角色用 multiple girls 等组合（多角色用 multiple girls / 多个角色标签）。"
+                    if _is_natural_lang:
+                        gen_sys_guide += f"\n\n【用户已在顶部选择角色】{selected_characters}。注意：当前工作流是**自然语言模型**（不识别 Danbooru 标签，反斜杠转义也无意义）。不要把｜后面的标签整串原样贴进 prompt，而是**把该角色的外貌特征转化为通顺的自然语言描述**（主体+发型发色+瞳色+服装+气质），融合进画面描述；角色名/作品可保留（如 a girl resembling Ganyu from Genshin Impact）。不要用 multiple girls 这类标签，改用 two girls 等自然描述。"
+                    else:
+                        gen_sys_guide += f"\n\n【用户已在顶部选择角色】{selected_characters}。格式为「角色名（分类）｜触发词」：触发词是可直接使用的 Danbooru 标签，生成 prompt 时**直接原样使用｜后面的触发词**（反斜杠转义如 `\\(` `\\)` **必须一字不差保留，绝对不能删除**），不要丢弃、不要改写、不要再用 search_characters 重复搜索；多角色用 multiple girls 等组合（多角色用 multiple girls / 多个角色标签）。"
                 if selected_style:
-                    gen_sys_guide += f"\n\n【用户已在顶部选择画风】{selected_style}。格式为「画风名（分类）｜触发词」：触发词是可直接使用的标签，生成 prompt 时**直接原样使用｜后面的触发词**（必要时保留反斜杠转义），不要丢弃、不要改写、不要再用 search_styles 重复搜索。"
+                    if _is_natural_lang:
+                        gen_sys_guide += f"\n\n【用户已在顶部选择画风】{selected_style}。注意：当前工作流是**自然语言模型**（不识别 Danbooru 标签）。不要把｜后面的标签原样贴进 prompt，而是**用自然语言描述该画风的效果**（如：精致厚涂质感、细腻光影、柔和色彩），并把画风名/分类名保留在自然描述中。"
+                    else:
+                        gen_sys_guide += f"\n\n【用户已在顶部选择画风】{selected_style}。格式为「画风名（分类）｜触发词」：触发词是可直接使用的标签，生成 prompt 时**直接原样使用｜后面的触发词**（反斜杠转义如 `\\(` `\\)` **必须一字不差保留，绝对不能删除**），不要丢弃、不要改写、不要再用 search_styles 重复搜索。"
                     # 画风 ↔ 工作流关联：顶部同时选了画风和工作流时，声明其匹配关系（用户可能已选用对应画风 lora 的工作流）
                     if workflow_path:
                         _wf_style = str(workflow_path).replace("\\", "/").rsplit("/", 1)[-1].replace(".json", "")
@@ -1489,6 +1564,15 @@ async def api_ai_chat_send(request: Request):
                 tools=GEN_TOOLS if gen_mode else SEARCH_TOOLS,
                 sys_guide=gen_sys_guide,
             )
+            # 兜底：AI 未返回 trigger_generation 工具调用、但文本里输出了卡片参数（正向提示词/尺寸）时，
+            # 自动提取组装 gen_card，确保前端能渲染出审核卡片（文本说明 + 卡片共存）。
+            if gen_mode and agent_result and agent_result[3] is None:
+                _ac = (agent_result[0] or "").strip()
+                if _ac and ("正向提示词" in _ac or "正向" in _ac or "prompt" in _ac.lower() or "```" in _ac):
+                    _fc = _extract_gen_card_from_text(_ac, workflow_path)
+                    if _fc:
+                        agent_result = (agent_result[0], agent_result[1], agent_result[2], _fc, agent_result[4])
+                        print("[ai-chat] 已从文本自动提取 gen_card（AI 未调 trigger_generation）", flush=True)
 
         if llm_stream:
             async def _gen():
