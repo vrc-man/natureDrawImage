@@ -2937,8 +2937,8 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
                         src_id = str(slot[0])
                         src = prompt.get(src_id, {})
                         src_type = src.get("class_type", "")
-                        if src_type in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus"):
-                            text_field = "prompt" if "TextEncodeQwen" in src_type else "text"
+                        if src_type in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus", "Krea2EditGroundedEncode"):
+                            text_field = "prompt" if ("Krea2Edit" in src_type or "TextEncodeQwen" in src_type) else "text"
                             if role == "positive":
                                 positive_ref = (src_id, text_field)
                             else:
@@ -3021,8 +3021,8 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
         if not nd:
             return None
         ct = nd.get("class_type", "")
-        if ct in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus"):
-            return (nid, "prompt" if "TextEncodeQwen" in ct else "text")
+        if ct in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus", "Krea2EditGroundedEncode"):
+            return (nid, "prompt" if ("Krea2Edit" in ct or "TextEncodeQwen" in ct) else "text")
         if ct in COND_PASSTHROUGH_TYPES:
             ref = nd.get("inputs", {}).get("conditioning")
             if isinstance(ref, list) and len(ref) >= 1:
@@ -3106,9 +3106,9 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
                     "_meta": {"title": sub_node.get("title", sub_type)},
                 }
                 title = sub_node.get("title", "")
-                if sub_type in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus"):
+                if sub_type in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus", "Krea2EditGroundedEncode"):
                     t_low = title.lower()
-                    text_field = "prompt" if "TextEncodeQwen" in sub_type else "text"
+                    text_field = "prompt" if ("Krea2Edit" in sub_type or "TextEncodeQwen" in sub_type) else "text"
                     if "positive" in t_low or "[pos]" in t_low or "[prompt]" in t_low or "正面" in title:
                         positive_ref = (sub_nid, text_field)
                     elif "negative" in t_low or "[neg]" in t_low or "负面" in title:
@@ -3123,22 +3123,22 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
     if positive_ref is None:
         for node in top_nodes:
             ntype = node.get("type", "")
-            if ntype in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus"):
+            if ntype in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus", "Krea2EditGroundedEncode"):
                 title = node.get("title", "")
                 t_low = title.lower()
                 if "positive" in t_low or "[pos]" in t_low or "[prompt]" in t_low or "正面" in title:
-                    text_field = "prompt" if "TextEncodeQwen" in ntype else "text"
+                    text_field = "prompt" if ("Krea2Edit" in ntype or "TextEncodeQwen" in ntype) else "text"
                     positive_ref = (str(node["id"]), text_field)
                     break
 
     if negative_ref is None:
         for node in top_nodes:
             ntype = node.get("type", "")
-            if ntype in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus"):
+            if ntype in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus", "Krea2EditGroundedEncode"):
                 title = node.get("title", "")
                 t_low = title.lower()
                 if "negative" in t_low or "[neg]" in t_low or "负面" in title:
-                    text_field = "prompt" if "TextEncodeQwen" in ntype else "text"
+                    text_field = "prompt" if ("Krea2Edit" in ntype or "TextEncodeQwen" in ntype) else "text"
                     negative_ref = (str(node["id"]), text_field)
                     break
 
@@ -7015,7 +7015,7 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
                 return None
             if nd.get("class_type") in ("LoadImage", "VHS_LoadImages"):
                 return nid
-            for key in ("image", "pixels", "images", "input_image"):
+            for key in ("image", "pixels", "images", "input_image", "source_image", "source_image_b"):
                 ref = nd.get("inputs", {}).get(key)
                 if isinstance(ref, list) and ref:
                     return _trace_to_loadimage(str(ref[0]), seen)
@@ -7042,6 +7042,19 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
                     if target_id:
                         prompt_dict[target_id]["inputs"]["image"] = img
                         await emit(ws, {"type": "log", "message": f"图生图: {slot} -> LoadImage({target_id}) -> {img}"})
+        elif any(v.get("class_type") == "Krea2EditModelPatch" for v in prompt_dict.values()):
+            # Krea2 图片编辑：按 Krea2EditModelPatch 的 source_image / source_image_b 输入定向注入，
+            # 主图→source_image，副图→source_image_b，避免依赖 LoadImage 节点 id 排序（可能主副插反）
+            krea2_node = next(v for v in prompt_dict.values() if v.get("class_type") == "Krea2EditModelPatch")
+            for slot, img in [("source_image", req.image1_name), ("source_image_b", req.image2_name)]:
+                if not img:
+                    continue
+                ref = krea2_node.get("inputs", {}).get(slot)
+                if isinstance(ref, list) and ref:
+                    target_id = _trace_to_loadimage(str(ref[0]))
+                    if target_id:
+                        prompt_dict[target_id]["inputs"]["image"] = img
+                        await emit(ws, {"type": "log", "message": f"图生图(Krea2): {slot} -> LoadImage({target_id}) -> {img}"})
         else:
             loadimage_nodes = [
                 (nid, ndata) for nid, ndata in prompt_dict.items()
