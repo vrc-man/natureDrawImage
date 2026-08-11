@@ -23,7 +23,7 @@ except ImportError:  # yaml 可选，缺失时 skill.yaml 无法加载（skill.j
     _yaml = None
 
 from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, Response
 
 from features._deps import require_admin, ctx
 
@@ -1296,61 +1296,6 @@ async def _agentic_search(messages: List[dict], temperature: float, max_tokens: 
     return content, sources, None, gen_card, _reasoning
 
 
-def _extract_gen_card_from_text(text: str, workflow_path: str = "") -> Optional[dict]:
-    """AI 未调用 trigger_generation 工具、但把卡片参数输出为文本时，从文本提取组装 gen_card。
-
-    兼容「正向提示词/反向提示词/负面提示词」标签、markdown 表格、宽x高尺寸。
-    返回 None 表示提取失败（保持原文本 + 前端「用此提示词生图」兜底）。
-    """
-    import re as _re
-    t = text or ""
-    if not t.strip():
-        return None
-    # 正向提示词：匹配「正向提示词」/「Prompt」后的内容（含 > 引用/表格单元格）
-    pm = _re.search(r"(?:正向提示词|✅?\s*正向提示词|正向|Positive)\s*[:：>|]?\s*([\s\S]*?)(?=(?:反向提示词|负面提示词|Negative|反向|###|^---))", t)
-    nm = _re.search(r"(?:反向提示词|负面提示词|Negative|反向)\s*[:：>|]?\s*([\s\S]*)", t)
-    prompt = pm.group(1).strip() if pm else ""
-    neg = nm.group(1).strip() if nm else ""
-    # 清理 markdown 装饰：去掉 > 引用符、代码块围栏、| 表格竖线、markdown 加粗/斜体
-    def _clean(s: str) -> str:
-        s = _re.sub(r"```\w*\n?", "", s).strip()
-        s = _re.sub(r"^>\s*", "", s, flags=_re.M)
-        s = s.replace("|", " ").strip()
-        s = _re.sub(r"\*\*|__|\*|_|`", "", s)
-        return s.strip()
-    prompt = _clean(prompt)
-    neg = _clean(neg)
-    # 无标签时：找代码块或最长含逗号行
-    if not prompt:
-        blocks = _re.findall(r"```\s*([\s\S]*?)```", t)
-        for b in blocks:
-            s = _clean(b)
-            if len(s) > 20:
-                prompt = s
-                break
-    if not prompt:
-        lines = [l.strip() for l in t.splitlines() if "," in l and len(l) > 30]
-        if lines:
-            prompt = max(lines, key=len).strip()
-    if not prompt:
-        return None
-    # 尺寸：宽x高
-    wm = _re.search(r"(\d{3,4})\s*[x×X]\s*(\d{3,4})", t)
-    width, height = 896, 1152
-    if wm:
-        width, height = int(wm.group(1)), int(wm.group(2))
-    if not (512 <= width <= 2000 and 512 <= height <= 2000):
-        width, height = 896, 1152
-    return {
-        "prompt": prompt,
-        "negative_prompt": neg,
-        "width": width,
-        "height": height,
-        "character": "",
-        "style": "",
-        "workflow_path": workflow_path,
-    }
-
 
 # ── API ──
 
@@ -1499,7 +1444,8 @@ async def api_ai_chat_send(request: Request):
                     "   - 只要用户要求出图/生成卡片（或生图模式下需求已明确），**第一轮就必须调用 trigger_generation 工具**提交正/负提示词、尺寸、角色、画风参数，由系统渲染成审核卡片。\n"
                     "   - **可以**在调用工具前后输出简短文字说明/方案/建议（文本说明 + 卡片可共存，系统会把卡片渲染在回复下方）。\n"
                     "   - **绝对禁止**只输出 markdown 表格/文本卡片而不调用工具——那样前端收不到卡片，用户无法直接确认生成。\n"
-                    "   - 调用工具后，工具会返回『生图参数已接收』，你只需保留简短说明即可，**不要再把参数重复拼成『| 参数项 | 内容 |』表格**。\n"
+                    "   - 调用工具后，工具会返回『生图参数已接收』。**建议在回复里展示改动后的完整「正向提示词」和「负面提示词」**，方便用户确认本次调整（如：本次修改了发色/服装，请把调整后的完整正向提示词、负面提示词用简洁段落列出，不要省略），同时系统会把卡片渲染在下方。\n"
+                    "   - 区分：**展示提示词**（把完整正向/负面提示词用文字列出，帮助用户确认）可以；**用『| 参数项 | 内容 |』表格拼一张假卡片代替工具调用**不行——必须调用 trigger_generation。\n"
                     "   - 如果你发现自己想输出『| 参数项 | 内容 |』这种表格来呈现卡片，立刻改成调用 trigger_generation 工具。\n"
                     "9. **负面提示词以固定标准模板为基座，再根据本次提示词内容微调**：\n"
                     "   - 基础模板（动漫标签模型 Anima/WAI/Illustrious/NoobAI/SDXL 系）：`worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, signature, blurry`\n"
@@ -1564,15 +1510,6 @@ async def api_ai_chat_send(request: Request):
                 tools=GEN_TOOLS if gen_mode else SEARCH_TOOLS,
                 sys_guide=gen_sys_guide,
             )
-            # 兜底：AI 未返回 trigger_generation 工具调用、但文本里输出了卡片参数（正向提示词/尺寸）时，
-            # 自动提取组装 gen_card，确保前端能渲染出审核卡片（文本说明 + 卡片共存）。
-            if gen_mode and agent_result and agent_result[3] is None:
-                _ac = (agent_result[0] or "").strip()
-                if _ac and ("正向提示词" in _ac or "正向" in _ac or "prompt" in _ac.lower() or "```" in _ac):
-                    _fc = _extract_gen_card_from_text(_ac, workflow_path)
-                    if _fc:
-                        agent_result = (agent_result[0], agent_result[1], agent_result[2], _fc, agent_result[4])
-                        print("[ai-chat] 已从文本自动提取 gen_card（AI 未调 trigger_generation）", flush=True)
 
         if llm_stream:
             async def _gen():
@@ -1955,11 +1892,46 @@ async def api_search_characters(request: Request, q: str = ""):
         chars = []
         for c in rows:
             name = c["name_cn"] or c["danbooru_tag"] or "?"
-            chars.append({"name": name, "franchise": c["franchise"], "tags": c["tags"] or c["danbooru_tag"], "image": c.get("image") or ""})
+            img = c.get("image") or ""
+            # zerochan 外链有防盗链（Referer 检查），浏览器直连会 403；
+            # 统一走本地代理端点转发，规避防盗链并支持缓存。
+            if img.startswith("http"):
+                img = f"/api/features/ai-chat/char-thumb?u={urllib.parse.quote(img, safe='')}"
+            chars.append({"name": name, "franchise": c["franchise"], "tags": c["tags"] or c["danbooru_tag"], "image": img})
         return {"characters": chars}
     except Exception as e:
         print(f"[ai-chat] 角色搜索接口异常: {type(e).__name__}: {e}", flush=True)
         return {"characters": []}
+
+
+@router.get("/api/features/ai-chat/char-thumb")
+async def api_ai_chat_char_thumb(request: Request, u: str = ""):
+    """AI 聊天角色缩略图代理：转发 zerochan 外链图片，规避防盗链。带缓存。"""
+    from urllib.parse import urlparse
+    if not u or not u.startswith(("https://", "http://")):
+        raise HTTPException(400, "invalid url")
+    host = urlparse(u).netloc.lower()
+    if "zerochan.net" not in host:
+        raise HTTPException(400, "仅允许 zerochan.net 图片")
+    import hashlib as _hashlib
+    # ETag 缓存
+    etag = f'"{_hashlib.md5(u.encode()).hexdigest()[:16]}"'
+    if request.headers.get("If-None-Match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Cache-Control": "public, max-age=86400"})
+    try:
+        client = await ctx("get_http_client")()
+        r = await client.get(u, headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.zerochan.net/"}, timeout=15)
+        if r.status_code >= 400:
+            raise HTTPException(502, "图片拉取失败")
+        ctype = r.headers.get("content-type", "image/avif")
+        return Response(content=r.content, media_type=ctype, headers={
+            "ETag": etag, "Cache-Control": "public, max-age=86400",
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ai-chat] 缩略图代理失败 u={u}: {e}", flush=True)
+        raise HTTPException(502, "图片代理失败")
 
 
 @router.post("/api/features/ai-chat/proxy")

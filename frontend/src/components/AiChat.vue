@@ -28,6 +28,24 @@ async function loadDefaultPrompt() {
     ownTemp.value = defaultTemp.value
   } catch { alert('读取默认提示词失败') }
 }
+// 从 txt 文件导入系统提示词（读取 UTF-8 文本，覆盖当前输入框内容）
+const sysPromptFileInput = ref<HTMLInputElement | null>(null)
+function openSysPromptTxtImport() { sysPromptFileInput.value?.click() }
+function importSysPromptTxt(e: Event) {
+  const inp = e.target as HTMLInputElement
+  const f = inp.files && inp.files[0]
+  if (!f) return
+  const reader = new FileReader()
+  reader.onload = () => {
+    const text = String(reader.result || '')
+    ownPrompt.value = text
+    localStorage.setItem('aiChatSysPrompt', ownPrompt.value)
+    alert(`已从 ${f.name} 导入系统提示词（${text.length.toLocaleString()} 字符）`)
+  }
+  reader.onerror = () => alert('读取文件失败')
+  reader.readAsText(f, 'utf-8')
+  inp.value = ''
+}
 const token = ref(localStorage.getItem('aiChatToken') || '')
 const tokenProfile = ref<any>(null)
 const tokenLoading = ref(false)
@@ -834,12 +852,58 @@ const genCooldown = ref(0)
 const genRefImages = ref<{ name: string; preview: string }[]>([])
 const genRefUploading = ref(false)
 const genRefUploadErr = ref('')
+// ── 种子模式（高级面板 / 生图卡片 分开设置）──
+// 默认偏好：右上角设置里可改，存 localStorage，新面板/卡片默认用它
+const seedDefaultPref = ref<'default' | 'random' | 'manual'>(localStorage.getItem('aiChatSeedDefault') as any || 'default')
+const seedLocal = (k: string, d: string) => { try { const v = localStorage.getItem(k); return v || d } catch { return d } }
+// 高级面板种子（持久化：aiChatGenSeedMode / aiChatGenSeedValue）
+const genSeedMode = ref<'default' | 'random' | 'manual'>(seedLocal('aiChatGenSeedMode', 'default') as any)
+const genSeedValue = ref<number>(Number(seedLocal('aiChatGenSeedValue', '0')) || 0)
+// 生图卡片种子（持久化：aiChatCardSeedMode / aiChatCardSeedValue）
+const cardSeedMode = ref<'default' | 'random' | 'manual'>(seedLocal('aiChatCardSeedMode', 'default') as any)
+const cardSeedValue = ref<number>(Number(seedLocal('aiChatCardSeedValue', '0')) || 0)
+function syncSeedFromPref() {
+  genSeedMode.value = seedDefaultPref.value
+  cardSeedMode.value = seedDefaultPref.value
+  localStorage.setItem('aiChatGenSeedMode', genSeedMode.value)
+  localStorage.setItem('aiChatCardSeedMode', cardSeedMode.value)
+}
+function saveSeedPref(m: 'default' | 'random' | 'manual') {
+  seedDefaultPref.value = m
+  localStorage.setItem('aiChatSeedDefault', m)
+  syncSeedFromPref()
+}
+function setGenSeedMode(m: 'default' | 'random' | 'manual') {
+  genSeedMode.value = m
+  localStorage.setItem('aiChatGenSeedMode', m)
+}
+function setGenSeedValue(v: number) {
+  genSeedValue.value = v
+  localStorage.setItem('aiChatGenSeedValue', String(v))
+}
+function setCardSeedMode(m: 'default' | 'random' | 'manual') {
+  cardSeedMode.value = m
+  localStorage.setItem('aiChatCardSeedMode', m)
+}
+function setCardSeedValue(v: number) {
+  cardSeedValue.value = v
+  localStorage.setItem('aiChatCardSeedValue', String(v))
+}
+// ── 缩略图大小缩放（角色/画风选择缩略图，50%~300%，默认 100%）──
+const thumbScale = ref<number>(Number(localStorage.getItem('aiChatThumbScale') || '100') || 100)
+function saveThumbScale(v: number) {
+  thumbScale.value = Math.max(50, Math.min(300, v))
+  localStorage.setItem('aiChatThumbScale', String(thumbScale.value))
+}
 // 文生图工作流列表 + 内置角色/画风（供选择）
 const genWorkflows = ref<{ path: string; name: string; thumbnail?: string; category?: string }[]>([])
 const genCharacters = ref<{ name: string; tags: string; category: string }[]>([])
 const genStyles = ref<{ name: string; tags: string; category: string }[]>([])
 const genShowCharPicker = ref(false)
 const genShowStylePicker = ref(false)
+// 高级面板内角色/画风选择（独立开关，避免触发顶部工具条的全屏弹层）
+const genPanelCharPicker = ref(false)
+const genPanelStylePicker = ref(false)
 const genCharSearch = ref('')
 const genAllCharSearch = ref('')
 const genAllCharResults = ref<{ name: string; franchise: string; tags: string; image?: string }[]>([])
@@ -936,6 +1000,16 @@ const genStyleGroups = computed(() => {
 })
 // 工作流搜索/分组
 const genWfSearch = ref('')
+// 分类折叠状态：默认全折叠；搜索时自动展开所有
+const genWfCollapsed = ref<Record<string, boolean>>({})
+const genWfCollapsedAll = ref(true)
+function toggleGenWfCat(cat: string) {
+  genWfCollapsed.value[cat] = !genWfCollapsed.value[cat]
+}
+function genWfCatOpen(cat: string): boolean {
+  if (genWfSearch.value.trim()) return true
+  return !genWfCollapsed.value[cat]
+}
 const genWfFiltered = computed(() => {
   const q = genWfSearch.value.trim().toLowerCase()
   if (!q) return genWorkflows.value
@@ -1263,7 +1337,8 @@ async function submitGen(cardData?: GenCardData | null) {
       character_tags: cardMode ? '' : genConfig.value.character.trim(),
       img2img_use_preset: false,
       image1_name: '', image2_name: '', image3_name: '',
-      seed_mode: 'default',
+      seed_mode: cardMode ? cardSeedMode.value : genSeedMode.value,
+      seed_value: (cardMode ? cardSeedMode.value : genSeedMode.value) === 'manual' ? (cardMode ? cardSeedValue.value : genSeedValue.value) : undefined,
     }
     ws.send(JSON.stringify(payload))
   }
@@ -1445,10 +1520,11 @@ function confirmGenCard(idx: number) {
   submitGen(msg.genCard)
 }
 
-// 刷新图片（仿 2x.nz：用同卡重新生成，换随机种子）
+// 刷新图片（仿 2x.nz：用同卡重新生成，换随机种子；若卡片设了手动固定种子则用固定值重出）
 function refreshGenImage(idx: number) {
   const msg = messages.value[idx]
   if (!msg || !msg.genCard) return
+  if (cardSeedMode.value !== 'manual') cardSeedMode.value = 'random'
   msg.genCardStatus = 'queued'
   genTargetIndex.value = idx
   submitGen(msg.genCard)
@@ -1652,10 +1728,14 @@ onMounted(async () => {
         {{ genConfig.styleName || genConfig.style || '🎨 画风' }}
       </button>
       <button @click="openGenPanel(-1, '')" class="shrink-0 text-[11px] px-2 py-1 rounded-lg cursor-pointer border-0 bg-pink-100 dark:bg-pink-900 text-pink-700 dark:text-pink-300 hover:bg-pink-200" title="高级手动配置">⚙️ 高级</button>
+      <button @click="setCardSeedMode(cardSeedMode==='default' ? 'random' : (cardSeedMode==='random' ? 'manual' : 'default'))" class="shrink-0 text-[11px] px-2 py-1 rounded-lg cursor-pointer border-0" :class="cardSeedMode==='default'?'bg-gray-100 dark:bg-gray-700 dark:text-gray-300 hover:bg-gray-200':'bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 hover:bg-amber-200'" :title="'生图卡片种子模式：' + (cardSeedMode==='default'?'工作流默认':cardSeedMode==='random'?'随机':'手动固定')">
+        🎲 {{ cardSeedMode==='default' ? '默认' : (cardSeedMode==='random' ? '随机' : '固定') }}
+      </button>
+      <input v-if="cardSeedMode==='manual'" :value="cardSeedValue" @input="setCardSeedValue(Number(($event.target as any).value) || 0)" type="number" title="手动固定种子值" class="shrink-0 w-24 border border-amber-300 dark:border-amber-700 rounded-lg px-1.5 py-1 text-[11px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" placeholder="种子" />
       <!-- 角色/画风选择弹层 -->
       <Teleport to="body">
-        <div v-if="genShowCharPicker || genShowStylePicker" class="fixed inset-0 z-[80] bg-black/30 backdrop-blur-sm flex items-start justify-center pt-16 p-4" @click="genShowCharPicker=false; genShowStylePicker=false">
-          <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-md w-full p-4 max-h-[70vh] flex flex-col" @click.stop>
+        <div v-if="genShowCharPicker || genShowStylePicker" class="fixed inset-0 z-[86] bg-black/30 backdrop-blur-sm flex items-start justify-center pt-16 p-4" @click="genShowCharPicker=false; genShowStylePicker=false">
+          <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-[min(96rem,calc(100vw_-_2rem))] w-full p-4 max-h-[70vh] flex flex-col" @click.stop>
             <div class="flex items-center justify-between mb-2">
               <h3 class="text-sm font-bold text-gray-700 dark:text-gray-200">{{ genShowCharPicker ? '🎯 选择角色' : '🎨 选择画风' }}</h3>
               <div class="flex items-center gap-2">
@@ -1677,8 +1757,8 @@ onMounted(async () => {
                 <div v-if="genAllCharResults.length" class="space-y-0.5 mb-2">
                   <div class="text-[10px] font-semibold text-blue-500 px-1">搜索结果（共 {{ genAllCharResults.length }} 个，点击选用）</div>
                   <div v-for="c in genAllCharResults" :key="c.name + c.tags" @click="pickAllGenCharacter(c)" class="flex items-center gap-2 px-2 py-1 rounded text-[11px] cursor-pointer border-0 hover:bg-blue-50 dark:hover:bg-blue-900/40">
-                    <img v-if="c.image" :src="c.image" class="w-9 h-9 object-cover rounded-md shrink-0 border border-gray-200 dark:border-gray-600" loading="lazy" />
-                    <span v-else class="w-9 h-9 rounded-md bg-gray-100 dark:bg-gray-700 flex items-center justify-center shrink-0 text-sm">🎭</span>
+                    <img v-if="c.image" :src="c.image" class="shrink-0 rounded-md border border-gray-200 dark:border-gray-600" :style="{width: (70 * thumbScale / 100) + 'px', height: 'auto'}" loading="lazy" />
+                    <span v-else class="rounded-md bg-gray-100 dark:bg-gray-700 flex items-center justify-center shrink-0 text-sm" :style="{width: (70 * thumbScale / 100) + 'px', height: (70 * thumbScale / 100) + 'px'}">🎭</span>
                     <span class="truncate flex-1">{{ c.name }}<span v-if="c.franchise" class="text-gray-400"> · {{ c.franchise }}</span></span>
                     <button @click.stop="copyText(c.tags || c.name)" class="shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300 hover:bg-gray-200 cursor-pointer border-0" title="复制 tag">📋</button>
                   </div>
@@ -1687,10 +1767,10 @@ onMounted(async () => {
                 <div v-for="g in genCharGroups" :key="g.category" class="space-y-0.5">
                   <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 px-1">{{ g.category }} ({{ g.items.length }})</div>
                   <div class="flex flex-wrap gap-1.5">
-                    <div v-for="c in g.items" :key="c.name" class="flex flex-col items-center gap-1 w-[86px] p-1.5 rounded-xl cursor-pointer border-0 hover:bg-blue-50 dark:hover:bg-blue-900/40" :class="genConfig.characterName && genConfig.characterName.includes(c.name) ? 'bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-300' : ''" :title="c.name" @click="pickGenCharacter(c)">
-                      <div class="relative w-[72px] h-[72px]">
-                        <img v-if="c.image" :src="'/api/character_thumbnail?name=' + encodeURIComponent(c.image)" class="w-[72px] h-[72px] object-cover rounded-lg" loading="lazy" />
-                        <div v-else class="w-[72px] h-[72px] rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-lg">🎭</div>
+                    <div v-for="c in g.items" :key="c.name" class="flex flex-col items-center gap-1 p-1.5 rounded-xl cursor-pointer border-0 hover:bg-blue-50 dark:hover:bg-blue-900/40" :class="genConfig.characterName && genConfig.characterName.includes(c.name) ? 'bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-300' : ''" :title="c.name" @click="pickGenCharacter(c)" :style="{width: (72 * thumbScale / 100 + 12) + 'px'}">
+                      <div class="relative" :style="{width: (72 * thumbScale / 100) + 'px', height: (72 * thumbScale / 100) + 'px'}">
+                        <img v-if="c.image" :src="'/api/character_thumbnail?name=' + encodeURIComponent(c.image)" class="object-cover rounded-lg" :style="{width: (72 * thumbScale / 100) + 'px', height: (72 * thumbScale / 100) + 'px'}" loading="lazy" />
+                        <div v-else class="rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-lg" :style="{width: (72 * thumbScale / 100) + 'px', height: (72 * thumbScale / 100) + 'px'}">🎭</div>
                         <button @click.stop="copyText(c.tags || c.name)" class="absolute top-0.5 right-0.5 w-5 h-5 text-[9px] leading-none rounded-md bg-black/50 text-white hover:bg-black/70 cursor-pointer border-0" title="复制 tag">📋</button>
                       </div>
                       <span class="text-[10px] text-gray-600 dark:text-gray-300 line-clamp-2 text-center break-all">{{ c.name }}</span>
@@ -1704,10 +1784,10 @@ onMounted(async () => {
                 <div v-for="g in genStyleGroups" :key="g.category" class="space-y-0.5">
                   <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 px-1">{{ g.category }} ({{ g.items.length }})</div>
                   <div class="flex flex-wrap gap-1.5">
-                    <div v-for="s in g.items" :key="s.name" class="flex flex-col items-center gap-1 w-[86px] p-1.5 rounded-xl cursor-pointer border-0 hover:bg-emerald-50 dark:hover:bg-emerald-900/40" :class="genConfig.styleName === s.name || genConfig.style === s.tags ? 'bg-emerald-100 dark:bg-emerald-900 ring-1 ring-emerald-300' : ''" :title="s.name" @click="pickGenStyle(s)">
-                      <div class="relative w-[72px] h-[72px]">
-                        <img v-if="s.image" :src="'/api/style_thumbnail?name=' + encodeURIComponent(s.image)" class="w-[72px] h-[72px] object-cover rounded-lg" loading="lazy" />
-                        <div v-else class="w-[72px] h-[72px] rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-lg">🖌️</div>
+                    <div v-for="s in g.items" :key="s.name" class="flex flex-col items-center gap-1 p-1.5 rounded-xl cursor-pointer border-0 hover:bg-emerald-50 dark:hover:bg-emerald-900/40" :class="genConfig.styleName === s.name || genConfig.style === s.tags ? 'bg-emerald-100 dark:bg-emerald-900 ring-1 ring-emerald-300' : ''" :title="s.name" @click="pickGenStyle(s)" :style="{width: (72 * thumbScale / 100 + 12) + 'px'}">
+                      <div class="relative" :style="{width: (72 * thumbScale / 100) + 'px', height: (72 * thumbScale / 100) + 'px'}">
+                        <img v-if="s.image" :src="'/api/style_thumbnail?name=' + encodeURIComponent(s.image)" class="object-cover rounded-lg" :style="{width: (72 * thumbScale / 100) + 'px', height: (72 * thumbScale / 100) + 'px'}" loading="lazy" />
+                        <div v-else class="rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-lg" :style="{width: (72 * thumbScale / 100) + 'px', height: (72 * thumbScale / 100) + 'px'}">🖌️</div>
                         <button @click.stop="copyText(s.tags || s.name)" class="absolute top-0.5 right-0.5 w-5 h-5 text-[9px] leading-none rounded-md bg-black/50 text-white hover:bg-black/70 cursor-pointer border-0" title="复制 tag">📋</button>
                       </div>
                       <span class="text-[10px] text-gray-600 dark:text-gray-300 line-clamp-2 text-center break-all">{{ s.name }}</span>
@@ -1730,7 +1810,7 @@ onMounted(async () => {
       <!-- 工作流选择弹层 -->
       <Teleport to="body">
         <div v-if="showWfPicker" class="fixed inset-0 z-[80] bg-black/30 backdrop-blur-sm flex items-start justify-center pt-16 p-4" @click="showWfPicker=false">
-          <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-md w-full p-4 max-h-[70vh] flex flex-col" @click.stop>
+          <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-[min(96rem,calc(100vw_-_2rem))] w-full p-4 max-h-[70vh] flex flex-col" @click.stop>
             <div class="flex items-center justify-between mb-2">
               <h3 class="text-sm font-bold text-gray-700 dark:text-gray-200">📋 选择工作流（文生图）</h3>
               <input v-model="genWfSearch" type="text" placeholder="搜索工作流..." class="border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-[11px] outline-none w-32 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" />
@@ -1739,12 +1819,15 @@ onMounted(async () => {
             <div class="flex-1 overflow-y-auto min-h-0 space-y-2">
               <template v-if="genWfGroups.length">
                 <div v-for="g in genWfGroups" :key="g.category" class="space-y-1">
-                  <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 px-1">{{ g.category }} ({{ g.items.length }})</div>
-                  <div class="flex flex-wrap gap-1.5">
-                    <div v-for="w in g.items" :key="w.path" class="flex flex-col items-center gap-1 w-[86px] p-1.5 rounded-xl cursor-pointer border-0 hover:bg-pink-50 dark:hover:bg-pink-900/40" :class="genConfig.workflow_path===w.path ? 'bg-pink-100 dark:bg-pink-900 ring-1 ring-pink-300' : ''" :title="w.name" @click="genConfig.workflow_path=w.path; showWfPicker=false">
-                      <img v-if="w.thumbnail" :src="'/api/thumbnail?path=' + encodeURIComponent(w.path)" class="w-[72px] h-[72px] object-cover rounded-lg" loading="lazy" />
-                      <div v-else class="w-[72px] h-[72px] rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-lg">🎨</div>
-                      <span class="text-[10px] text-gray-600 dark:text-gray-300 line-clamp-2 text-center break-all">{{ w.name }}</span>
+                  <div class="flex items-center justify-between px-1 cursor-pointer select-none" @click="toggleGenWfCat(g.category)">
+                    <span class="text-[10px] font-semibold text-gray-500 dark:text-gray-400">{{ genWfCatOpen(g.category) ? '▾' : '▸' }} {{ g.category }} ({{ g.items.length }})</span>
+                    <span class="text-[9px] text-gray-400">{{ genWfCatOpen(g.category) ? '点击折叠' : '点击展开' }}</span>
+                  </div>
+                  <div v-show="genWfCatOpen(g.category)" class="flex flex-wrap gap-1.5">
+                    <div v-for="w in g.items" :key="w.path" class="flex flex-col items-center gap-1 w-[230px] p-1.5 rounded-xl cursor-pointer border-0 hover:bg-pink-50 dark:hover:bg-pink-900/40" :class="genConfig.workflow_path===w.path ? 'bg-pink-100 dark:bg-pink-900 ring-1 ring-pink-300' : ''" :title="w.name" @click="genConfig.workflow_path=w.path; showWfPicker=false">
+                      <img v-if="w.thumbnail" :src="'/api/thumbnail?path=' + encodeURIComponent(w.path)" class="w-[216px] h-[216px] object-cover rounded-lg" loading="lazy" />
+                      <div v-else class="w-[216px] h-[216px] rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-lg">🎨</div>
+                      <span class="text-[11px] text-gray-600 dark:text-gray-300 line-clamp-2 text-center break-all">{{ w.name }}</span>
                     </div>
                   </div>
                 </div>
@@ -2034,6 +2117,28 @@ onMounted(async () => {
           <button @click="settingMode='token'" class="flex-1 py-2 rounded-xl text-xs font-semibold cursor-pointer border-0" :class="settingMode==='token'?'bg-green-500 text-white':'bg-gray-100 text-gray-600'">用额度 Token</button>
         </div>
 
+        <!-- 生图默认种子偏好（新高级面板/生图卡片默认采用） -->
+        <div class="text-xs text-gray-600 dark:text-gray-400 mb-3">
+          生图默认种子模式（高级面板 / 生图卡片默认采用）
+          <div class="flex gap-1.5 mt-1">
+            <button @click="saveSeedPref('default')" class="flex-1 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 transition-colors" :class="seedDefaultPref==='default'?'bg-pink-500 text-white':'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-pink-100'">📄 工作流默认</button>
+            <button @click="saveSeedPref('random')" class="flex-1 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 transition-colors" :class="seedDefaultPref==='random'?'bg-pink-500 text-white':'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-pink-100'">🎲 随机</button>
+            <button @click="saveSeedPref('manual')" class="flex-1 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 transition-colors" :class="seedDefaultPref==='manual'?'bg-pink-500 text-white':'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-pink-100'">🔢 手动固定</button>
+          </div>
+        </div>
+
+        <!-- 缩略图大小缩放（角色/画风选择缩略图，50%~300%） -->
+        <div class="text-xs text-gray-600 dark:text-gray-400 mb-3">
+          <div class="flex items-center justify-between">
+            <span>角色/画风缩略图大小</span>
+            <span class="text-gray-400">{{ thumbScale }}%</span>
+          </div>
+          <div class="flex items-center gap-2 mt-1">
+            <input type="range" min="50" max="300" step="10" :value="thumbScale" @input="saveThumbScale(Number(($event.target as any).value) || 100)" class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+            <button @click="saveThumbScale(100)" class="shrink-0 px-2 py-1 rounded-lg text-[11px] cursor-pointer border-0 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-gray-200">重置</button>
+          </div>
+        </div>
+
         <template v-if="settingMode==='own'">
           <label class="block text-xs text-gray-600 mb-2">
             API 端点
@@ -2077,10 +2182,17 @@ onMounted(async () => {
         <label class="block text-xs text-gray-600 mb-2">
           <div class="flex items-center justify-between mb-1">
             <span>系统提示词</span>
-            <button @click="openPromptPresets" class="text-[10px] px-2 py-1 rounded-lg cursor-pointer border-0 bg-pink-100 dark:bg-pink-900 text-pink-600 dark:text-pink-300 hover:bg-pink-200">📝 管理预设</button>
+            <div class="flex items-center gap-1.5">
+              <button v-if="settingMode==='own'" @click="openSysPromptTxtImport" class="text-[10px] px-2 py-1 rounded-lg cursor-pointer border-0 bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-300 hover:bg-blue-200">📂 导入 txt</button>
+              <button @click="openPromptPresets" class="text-[10px] px-2 py-1 rounded-lg cursor-pointer border-0 bg-pink-100 dark:bg-pink-900 text-pink-600 dark:text-pink-300 hover:bg-pink-200">📝 管理预设</button>
+            </div>
           </div>
+          <input v-if="settingMode==='own'" ref="sysPromptFileInput" type="file" accept=".txt,text/plain" class="hidden" @change="importSysPromptTxt" />
           <textarea id="aiChatSysPromptTa" v-model="ownPrompt" rows="4" class="mt-1 w-full border border-gray-200 rounded-xl px-3 py-2 text-sm outline-none focus:border-pink-400 box-border resize-y font-mono text-[11px]" placeholder="可在此自定义系统提示词，或点击下方加载后台默认"></textarea>
-          <button @click="loadDefaultPrompt" class="mt-1 text-[10px] text-pink-500 hover:text-pink-600 cursor-pointer border-0 bg-transparent">📥 读取后台默认</button>
+          <div class="flex items-center justify-between mt-0.5">
+            <button @click="loadDefaultPrompt" class="text-[10px] text-pink-500 hover:text-pink-600 cursor-pointer border-0 bg-transparent">📥 读取后台默认</button>
+            <span class="text-[10px] text-gray-400" :class="ownPrompt.length > 50000 ? 'text-red-500 font-semibold' : ''">已输入 {{ ownPrompt.length.toLocaleString() }} / 50000 字符</span>
+          </div>
         </label>
         <label class="block text-xs text-gray-600 mb-2">
           温度 (0-2)
@@ -2213,7 +2325,7 @@ onMounted(async () => {
     <!-- 生图配置面板 -->
     <Teleport to="body">
       <div v-if="showGenPanel" class="fixed inset-0 z-[85] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-lg w-full p-5 max-h-[85vh] flex flex-col">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-[min(96rem,calc(100vw_-_2rem))] w-full p-5 max-h-[85vh] flex flex-col">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-sm font-bold text-gray-700 dark:text-gray-200">⚡ 生图配置</h3>
             <button @click="closeGenPanel" class="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
@@ -2228,11 +2340,17 @@ onMounted(async () => {
               🤖 AI 优化中...
             </div>
             <label class="block text-xs text-gray-600 dark:text-gray-400">
-              正向提示词
+              <div class="flex items-center justify-between">
+                <span>正向提示词</span>
+                <button @click="genConfig.direct=''" class="text-[10px] px-1.5 py-0.5 rounded cursor-pointer border-0 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600" title="清空正向提示词">✕ 清空</button>
+              </div>
               <textarea v-model="genConfig.direct" rows="5" class="mt-1 w-full border border-gray-200 dark:border-gray-600 rounded-xl px-3 py-2 text-xs outline-none focus:border-pink-400 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 resize-y font-mono" placeholder="输入正面提示词..."></textarea>
             </label>
             <label class="block text-xs text-gray-600 dark:text-gray-400">
-              负面提示词
+              <div class="flex items-center justify-between">
+                <span>负面提示词</span>
+                <button @click="genConfig.negative=''" class="text-[10px] px-1.5 py-0.5 rounded cursor-pointer border-0 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600" title="清空负面提示词">✕ 清空</button>
+              </div>
               <textarea v-model="genConfig.negative" rows="3" class="mt-1 w-full border border-gray-200 dark:border-gray-600 rounded-xl px-3 py-2 text-xs outline-none focus:border-pink-400 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 resize-y font-mono" placeholder="可选"></textarea>
             </label>
             <div class="text-xs text-gray-600 dark:text-gray-400">
@@ -2246,14 +2364,24 @@ onMounted(async () => {
               角色
               <div class="flex gap-1.5 mt-1">
                 <input v-model="genConfig.character" @input="genConfig.characterName = genConfig.character" type="text" class="flex-1 min-w-0 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5 text-xs outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" placeholder="自定义角色 tags（可多个，逗号分隔）" />
-                <button @click="genShowCharPicker=!genShowCharPicker" class="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 hover:bg-blue-200">{{ genShowCharPicker ? '收起' : '🎯 选内置' }}</button>
+                <button @click="genPanelCharPicker=!genPanelCharPicker" class="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 hover:bg-blue-200">{{ genPanelCharPicker ? '收起' : '🎯 选内置' }}</button>
+                <button @click="genConfig.character=''; genConfig.characterName=''; genConfig.characterCats=[]" class="shrink-0 px-2 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600" title="清空角色">✕</button>
               </div>
-              <div v-if="genShowCharPicker" class="mt-1.5 border border-gray-200 dark:border-gray-600 rounded-lg p-2 bg-gray-50 dark:bg-gray-700">
+              <div v-if="genPanelCharPicker" class="mt-1.5 border border-gray-200 dark:border-gray-600 rounded-lg p-2 bg-gray-50 dark:bg-gray-700">
                 <input v-model="genCharSearch" type="text" placeholder="搜索角色..." class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-[11px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 mb-1.5" />
-                <div class="max-h-40 overflow-y-auto space-y-2">
+                <div class="max-h-44 overflow-y-auto space-y-2">
                   <div v-for="g in genCharGroups" :key="g.category" class="space-y-0.5">
                     <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 px-1 pt-1 first:pt-0 sticky bg-gray-50 dark:bg-gray-700">{{ g.category }} <span class="text-gray-400">({{ g.items.length }})</span></div>
-                    <button v-for="c in g.items" :key="c.name" @click="pickGenCharacter(c)" class="block w-full text-left px-2 py-1 rounded text-[11px] cursor-pointer border-0 hover:bg-blue-50 dark:hover:bg-blue-900/40" :title="c.tags">{{ c.name }}</button>
+                    <div class="flex flex-wrap gap-1.5">
+                      <div v-for="c in g.items" :key="c.name" class="flex flex-col items-center gap-1 p-1.5 rounded-xl cursor-pointer border-0 hover:bg-blue-50 dark:hover:bg-blue-900/40" :class="genConfig.characterName && genConfig.characterName.includes(c.name) ? 'bg-blue-100 dark:bg-blue-900 ring-1 ring-blue-300' : ''" :title="c.name" @click="pickGenCharacter(c)" :style="{width: (60 * thumbScale / 100 + 12) + 'px'}">
+                        <div class="relative" :style="{width: (60 * thumbScale / 100) + 'px', height: (60 * thumbScale / 100) + 'px'}">
+                          <img v-if="c.image" :src="'/api/character_thumbnail?name=' + encodeURIComponent(c.image)" class="object-cover rounded-lg" :style="{width: (60 * thumbScale / 100) + 'px', height: (60 * thumbScale / 100) + 'px'}" loading="lazy" />
+                          <div v-else class="rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-base" :style="{width: (60 * thumbScale / 100) + 'px', height: (60 * thumbScale / 100) + 'px'}">🎭</div>
+                          <button @click.stop="copyText(c.tags || c.name)" class="absolute top-0 right-0 w-4 h-4 text-[8px] leading-none rounded-md bg-black/50 text-white hover:bg-black/70 cursor-pointer border-0" title="复制 tag">📋</button>
+                        </div>
+                        <span class="text-[10px] text-gray-600 dark:text-gray-300 line-clamp-2 text-center break-all">{{ c.name }}</span>
+                      </div>
+                    </div>
                   </div>
                   <div v-if="!genCharGroups.length" class="text-[11px] text-gray-400 text-center py-2">无匹配角色</div>
                 </div>
@@ -2269,8 +2397,8 @@ onMounted(async () => {
                   <div v-if="genAllCharResults.length" class="space-y-0.5">
                     <div class="text-[10px] font-semibold text-blue-500 px-1">搜索结果（共 {{ genAllCharResults.length }} 个，点击选用）</div>
                     <div v-for="c in genAllCharResults" :key="c.name + c.tags" @click="pickAllGenCharacter(c)" class="flex items-center gap-2 px-2 py-1 rounded text-[11px] cursor-pointer border-0 hover:bg-blue-50 dark:hover:bg-blue-900/40">
-                      <img v-if="c.image" :src="c.image" class="w-7 h-7 object-cover rounded-md shrink-0 border border-gray-200 dark:border-gray-600" loading="lazy" />
-                      <span v-else class="w-7 h-7 rounded-md bg-gray-100 dark:bg-gray-700 flex items-center justify-center shrink-0 text-xs">🎭</span>
+                      <img v-if="c.image" :src="c.image" class="shrink-0 rounded-md border border-gray-200 dark:border-gray-600" :style="{width: (70 * thumbScale / 100) + 'px', height: 'auto'}" loading="lazy" />
+                      <span v-else class="rounded-md bg-gray-100 dark:bg-gray-700 flex items-center justify-center shrink-0 text-xs" :style="{width: (70 * thumbScale / 100) + 'px', height: (70 * thumbScale / 100) + 'px'}">🎭</span>
                       <span class="truncate flex-1">{{ c.name }}<span v-if="c.franchise" class="text-gray-400"> · {{ c.franchise }}</span></span>
                       <button @click.stop="copyText(c.tags || c.name)" class="shrink-0 text-[9px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300 hover:bg-gray-200 cursor-pointer border-0" title="复制 tag">📋</button>
                     </div>
@@ -2283,14 +2411,24 @@ onMounted(async () => {
               画风
               <div class="flex gap-1.5 mt-1">
                 <input v-model="genConfig.style" @input="genConfig.styleName = genConfig.style" type="text" class="flex-1 min-w-0 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5 text-xs outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" placeholder="自定义画风 tags（如：赛博朋克）" />
-                <button @click="genShowStylePicker=!genShowStylePicker" class="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200">{{ genShowStylePicker ? '收起' : '🎨 选内置' }}</button>
+                <button @click="genPanelStylePicker=!genPanelStylePicker" class="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200">{{ genPanelStylePicker ? '收起' : '🎨 选内置' }}</button>
+                <button @click="genConfig.style=''; genConfig.styleName=''; genConfig.styleCat=''" class="shrink-0 px-2 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600" title="清空画风">✕</button>
               </div>
-              <div v-if="genShowStylePicker" class="mt-1.5 border border-gray-200 dark:border-gray-600 rounded-lg p-2 bg-gray-50 dark:bg-gray-700">
+              <div v-if="genPanelStylePicker" class="mt-1.5 border border-gray-200 dark:border-gray-600 rounded-lg p-2 bg-gray-50 dark:bg-gray-700">
                 <input v-model="genStyleSearch" type="text" placeholder="搜索画风..." class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-[11px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 mb-1.5" />
-                <div class="max-h-40 overflow-y-auto space-y-2">
+                <div class="max-h-44 overflow-y-auto space-y-2">
                   <div v-for="g in genStyleGroups" :key="g.category" class="space-y-0.5">
                     <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 px-1 pt-1 first:pt-0 sticky bg-gray-50 dark:bg-gray-700">{{ g.category }} <span class="text-gray-400">({{ g.items.length }})</span></div>
-                    <button v-for="s in g.items" :key="s.name" @click="pickGenStyle(s)" class="block w-full text-left px-2 py-1 rounded text-[11px] cursor-pointer border-0 hover:bg-emerald-50 dark:hover:bg-emerald-900/40" :title="s.tags">{{ s.name }}</button>
+                    <div class="flex flex-wrap gap-1.5">
+                      <div v-for="s in g.items" :key="s.name" class="flex flex-col items-center gap-1 p-1.5 rounded-xl cursor-pointer border-0 hover:bg-emerald-50 dark:hover:bg-emerald-900/40" :class="genConfig.styleName === s.name || genConfig.style === s.tags ? 'bg-emerald-100 dark:bg-emerald-900 ring-1 ring-emerald-300' : ''" :title="s.name" @click="pickGenStyle(s)" :style="{width: (60 * thumbScale / 100 + 12) + 'px'}">
+                        <div class="relative" :style="{width: (60 * thumbScale / 100) + 'px', height: (60 * thumbScale / 100) + 'px'}">
+                          <img v-if="s.image" :src="'/api/style_thumbnail?name=' + encodeURIComponent(s.image)" class="object-cover rounded-lg" :style="{width: (60 * thumbScale / 100) + 'px', height: (60 * thumbScale / 100) + 'px'}" loading="lazy" />
+                          <div v-else class="rounded-lg bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-base" :style="{width: (60 * thumbScale / 100) + 'px', height: (60 * thumbScale / 100) + 'px'}">🖌️</div>
+                          <button @click.stop="copyText(s.tags || s.name)" class="absolute top-0 right-0 w-4 h-4 text-[8px] leading-none rounded-md bg-black/50 text-white hover:bg-black/70 cursor-pointer border-0" title="复制 tag">📋</button>
+                        </div>
+                        <span class="text-[10px] text-gray-600 dark:text-gray-300 line-clamp-2 text-center break-all">{{ s.name }}</span>
+                      </div>
+                    </div>
                   </div>
                   <div v-if="!genStyleGroups.length" class="text-[11px] text-gray-400 text-center py-2">无匹配画风</div>
                 </div>
@@ -2304,6 +2442,30 @@ onMounted(async () => {
               <div class="flex items-center gap-2 mt-2">
                 <span class="text-gray-500 dark:text-gray-400">宽</span><input v-model.number="genConfig.width" type="number" min="512" max="2000" step="8" class="w-20 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-xs outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" />
                 <span class="text-gray-500 dark:text-gray-400">高</span><input v-model.number="genConfig.height" type="number" min="512" max="2000" step="8" class="w-20 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-xs outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" />
+              </div>
+            </div>
+            <div class="text-xs text-gray-600 dark:text-gray-400">
+              高级面板种子模式
+              <div class="flex gap-1.5 mt-1">
+                <button @click="setGenSeedMode('default')" class="flex-1 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 transition-colors" :class="genSeedMode==='default'?'bg-pink-500 text-white':'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-pink-100'">📄 工作流默认</button>
+                <button @click="setGenSeedMode('random')" class="flex-1 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 transition-colors" :class="genSeedMode==='random'?'bg-pink-500 text-white':'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-pink-100'">🎲 随机</button>
+                <button @click="setGenSeedMode('manual')" class="flex-1 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 transition-colors" :class="genSeedMode==='manual'?'bg-pink-500 text-white':'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-pink-100'">🔢 手动固定</button>
+              </div>
+              <div v-if="genSeedMode==='manual'" class="flex items-center gap-2 mt-1.5">
+                <span class="text-gray-500 dark:text-gray-400">种子</span>
+                <input :value="genSeedValue" @input="setGenSeedValue(Number(($event.target as any).value) || 0)" type="number" class="flex-1 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-xs outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" />
+              </div>
+            </div>
+            <div class="text-xs text-gray-600 dark:text-gray-400">
+              生图卡片种子模式
+              <div class="flex gap-1.5 mt-1">
+                <button @click="setCardSeedMode('default')" class="flex-1 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 transition-colors" :class="cardSeedMode==='default'?'bg-pink-500 text-white':'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-pink-100'">📄 工作流默认</button>
+                <button @click="setCardSeedMode('random')" class="flex-1 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 transition-colors" :class="cardSeedMode==='random'?'bg-pink-500 text-white':'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-pink-100'">🎲 随机</button>
+                <button @click="setCardSeedMode('manual')" class="flex-1 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 transition-colors" :class="cardSeedMode==='manual'?'bg-pink-500 text-white':'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-pink-100'">🔢 手动固定</button>
+              </div>
+              <div v-if="cardSeedMode==='manual'" class="flex items-center gap-2 mt-1.5">
+                <span class="text-gray-500 dark:text-gray-400">种子</span>
+                <input :value="cardSeedValue" @input="setCardSeedValue(Number(($event.target as any).value) || 0)" type="number" class="flex-1 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-xs outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" />
               </div>
             </div>
             <div v-if="genStatusText" class="text-xs rounded-lg px-3 py-2" :class="genStatusText.startsWith('❌') || genStatusText.startsWith('⏳') ? 'bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-300' : 'bg-pink-50 dark:bg-gray-700 text-pink-600 dark:text-pink-300'">
