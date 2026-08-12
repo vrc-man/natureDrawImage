@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, nextTick, onMounted, onUnmounted } from 'vue'
 import { api } from './useAdminApi'
 
 defineProps<{ visible: boolean }>()
@@ -20,9 +20,15 @@ const comfyLog = ref<string[]>([])
 const follow = ref(false)
 const busy = ref(false)
 const logStatus = ref('')
+const logBox = ref<HTMLElement | null>(null)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let followTimer: ReturnType<typeof setInterval> | null = null
+
+function scrollToBottom() {
+  const el = logBox.value
+  if (el) el.scrollTop = el.scrollHeight
+}
 
 async function loadStatus() {
   try {
@@ -52,6 +58,8 @@ async function loadLogs(tail = 200, source: 'launcher' | 'comfy' = logTab.value)
     if (source === 'comfy') comfyLog.value = lines
     else launcherLog.value = lines
     logStatus.value = ''
+    await nextTick()
+    scrollToBottom()
   } catch (e: any) {
     logStatus.value = '日志加载失败: ' + e.message
   }
@@ -160,7 +168,7 @@ onUnmounted(() => {
         <button @click="logTab === 'comfy' ? comfyLog = [] : launcherLog = []" class="text-xs text-gray-400 hover:text-pink-500 cursor-pointer bg-transparent border-0">清空</button>
       </div>
     </div>
-    <div class="bg-gray-950 text-gray-100 rounded-lg p-2 h-64 overflow-auto font-mono text-xs">
+    <div ref="logBox" class="bg-gray-950 text-gray-100 rounded-lg p-2 h-64 overflow-auto font-mono text-xs">
       <template v-if="logTab === 'comfy'">
         <div v-for="(line, i) in comfyLog" :key="i" class="whitespace-pre-wrap break-all">{{ line }}</div>
         <div v-if="!comfyLog.length" class="text-gray-500">暂无 ComfyUI 日志（启动后自动刷新）</div>
