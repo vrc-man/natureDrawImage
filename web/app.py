@@ -2888,8 +2888,10 @@ def is_triple_sample_workflow(path: Optional[str]) -> bool:
 def _apply_triple_sample_prompt_refs(prompt: Dict[str, Any], positive_ref, negative_ref):
     """三采样特例：把 positive_ref 提升为共享 Primitive 节点的 value 输入。
 
-    - 找到 PrimitiveStringMultiline/PrimitiveNode，若 ≥2 个 CLIPTextEncode 的
-      text 引用它，则视为共享分发，positive_ref 提升为其 ('<id>', 'value')。
+    - 仅识别 PrimitiveStringMultiline（共享文本输入框）为共享源，忽略
+      PrimitiveNode（ComfyUI 自动生成的控件转接线节点，避免误判）。
+      若 ≥2 个 CLIPTextEncode 的 text 引用它，则视为共享分发，
+      positive_ref 提升为其 ('<id>', 'value')。
     - negative_ref 置 None：该工作流负面走 ConditioningZeroOut（零条件无文本），
       保持工作流默认，注入代码因 negative_ref 为空自动跳过负面注入。
     返回 (positive_ref, negative_ref)。
@@ -2904,7 +2906,7 @@ def _apply_triple_sample_prompt_refs(prompt: Dict[str, Any], positive_ref, negat
         if not isinstance(nd, dict):
             continue
         ct = str(nd.get("class_type", ""))
-        if ct not in ("PrimitiveStringMultiline", "PrimitiveNode"):
+        if ct != "PrimitiveStringMultiline":
             continue
         refs = [
             v for v in prompt.values()
