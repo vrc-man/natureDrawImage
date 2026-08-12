@@ -2875,6 +2875,47 @@ async def download_image(filename: str, subfolder: str, img_type: str) -> Tuple[
 # 文件名关键词：命中则跳过提示词注入（与前端同步，勿单边修改）
 SKIP_PROMPT_KEYWORDS = ("洗图", "高清", "放大", "重绘", "转真人")
 
+# 三采样工作流特例：共享提示词经 PrimitiveStringMultiline 分发到多个 CLIPTextEncode。
+# 命中时正面注入共享 Primitive 节点（所有采样器同步），负面保持工作流默认（不注入）。
+TRIPLE_SAMPLE_KEYWORD = "三采样"
+
+
+def is_triple_sample_workflow(path: Optional[str]) -> bool:
+    """三采样关键词特例：连续「三采样」三字出现在文件名前/中/后任一位置即命中。"""
+    return bool(path) and TRIPLE_SAMPLE_KEYWORD in path
+
+
+def _apply_triple_sample_prompt_refs(prompt: Dict[str, Any], positive_ref, negative_ref):
+    """三采样特例：把 positive_ref 提升为共享 Primitive 节点的 value 输入。
+
+    - 找到 PrimitiveStringMultiline/PrimitiveNode，若 ≥2 个 CLIPTextEncode 的
+      text 引用它，则视为共享分发，positive_ref 提升为其 ('<id>', 'value')。
+    - negative_ref 置 None：该工作流负面走 ConditioningZeroOut（零条件无文本），
+      保持工作流默认，注入代码因 negative_ref 为空自动跳过负面注入。
+    返回 (positive_ref, negative_ref)。
+    """
+    if not prompt:
+        return positive_ref, negative_ref
+    clip_text_types = (
+        "CLIPTextEncode", "CLIPTextEncodeSDXL",
+        "TextEncodeQwenImageEditPlus", "Krea2EditGroundedEncode",
+    )
+    for nid, nd in prompt.items():
+        if not isinstance(nd, dict):
+            continue
+        ct = str(nd.get("class_type", ""))
+        if ct not in ("PrimitiveStringMultiline", "PrimitiveNode"):
+            continue
+        refs = [
+            v for v in prompt.values()
+            if isinstance(v, dict)
+            and v.get("class_type") in clip_text_types
+            and v.get("inputs", {}).get("text") == [nid, 0]
+        ]
+        if len(refs) >= 2:
+            return (str(nid), "value"), None
+    return positive_ref, negative_ref
+
 
 def workflow_needs_skip_prompt(path: Optional[str], data: Dict[str, Any]) -> bool:
     """判断工作流是否需要跳过提示词注入（自带 LLM 或文件名命中关键词）。"""
@@ -6800,6 +6841,12 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
     except Exception:
         pass
     prompt_dict, positive_ref, negative_ref = workflow_to_prompt_api(data)
+    # 三采样工作流特例：正面提升到共享 Primitive 节点，负面保持工作流默认
+    if is_triple_sample_workflow(path):
+        positive_ref, negative_ref = _apply_triple_sample_prompt_refs(
+            prompt_dict, positive_ref, negative_ref
+        )
+        await emit(ws, {"type": "log", "message": "检测到三采样工作流：正面注入共享提示词节点，负面使用工作流默认"})
     # 种子模式处理：default 保留原始 / random 随机 / manual 手动固定
     _apply_seed_mode(prompt_dict, req.seed_mode, req.seed_value)
     # 汇总实际使用的种子（用于日志显示）：遍历所有含 seed/noise_seed 输入的节点
