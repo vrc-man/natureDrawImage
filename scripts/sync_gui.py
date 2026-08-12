@@ -2,10 +2,17 @@
 
 正式图形界面入口。命令行入口见 scripts/sync_sqlite_to_mysql.py。
 同步/预览逻辑统一在 scripts/sync_common.py，避免 GUI 和命令行表清单不一致。
+
+线程模型（UI 与后端完全分离，不阻塞）：
+  - 主线程   : 仅处理 tkinter 事件 + 定时轮询队列（100ms）
+  - 日志     : 后台线程只入队 self._log_queue，主线程 _poll_logs 刷新 Text
+  - 状态检测 : MySQL/Web 探测放入后台线程，结果经 _status_queue 回传
+  - 长任务   : 备份/还原/同步/预览全部在 daemon 线程执行
 """
 from __future__ import annotations
 
 import os
+import queue
 import socket
 import subprocess
 import threading
@@ -81,6 +88,10 @@ class SyncTool:
         root.geometry("700x600")
         root.resizable(True, True)
 
+        # 线程安全队列（UI 与后端解耦）
+        self._log_queue: "queue.Queue[str]" = queue.Queue()
+        self._status_queue: "queue.Queue[tuple]" = queue.Queue()
+
         # ⚠ Web/MySQL 状态栏
         self.warn_frame = Label(root, fg="red")
         self.warn_frame.grid(row=0, column=0, columnspan=4, padx=5, pady=(5, 0))
@@ -152,12 +163,49 @@ class SyncTool:
         root.grid_columnconfigure(1, weight=1)
         self.running = False
 
-        # 启动定时检测（所有控件已创建完成）
+        # 启动主线程轮询（日志队列 + 状态队列），绝不在后台线程触碰 UI
+        self.root.after(100, self._poll_logs)
+        self.root.after(100, self._poll_status)
+        # 状态检测放入后台线程，避免阻塞主线程
         self._update_warnings()
 
+    # ── 线程安全的日志：后台线程只入队，主线程轮询刷新 ──
+    def log(self, msg: str) -> None:
+        self._log_queue.put(msg)
+
+    def _poll_logs(self) -> None:
+        try:
+            while True:
+                msg = self._log_queue.get_nowait()
+                self.log_text.insert(END, msg + "\n")
+                self.log_text.see(END)
+        except queue.Empty:
+            pass
+        self.root.after(100, self._poll_logs)
+
+    # ── 状态检测：后台线程探测，结果经队列回传主线程 ──
     def _update_warnings(self) -> None:
-        web = _check_web_running()
-        mysql = _check_mysql_running()
+        def _probe():
+            try:
+                web = _check_web_running()
+                mysql = _check_mysql_running()
+            except Exception:
+                web, mysql = False, False
+            self._status_queue.put((web, mysql))
+
+        threading.Thread(target=_probe, daemon=True).start()
+        self.root.after(3000, self._update_warnings)
+
+    def _poll_status(self) -> None:
+        try:
+            while True:
+                web, mysql = self._status_queue.get_nowait()
+                self._apply_warning_state(web, mysql)
+        except queue.Empty:
+            pass
+        self.root.after(100, self._poll_status)
+
+    def _apply_warning_state(self, web: bool, mysql: bool) -> None:
         msgs = []
         if web:
             msgs.append(f"⚠ Web 正在运行（端口 {WEB_PORT}）")
@@ -172,12 +220,13 @@ class SyncTool:
         else:
             self.warn_label.config(text="✅ MySQL 已就绪，Web 已关闭", fg="green")
             self.sync_btn.config(state="normal", bg="#4CAF50")
-        self.root.after(3000, self._update_warnings)
 
-    def log(self, msg: str) -> None:
-        self.log_text.insert(END, msg + "\n")
-        self.log_text.see(END)
-        self.root.update()
+    def _set_busy(self, busy: bool) -> None:
+        """任务进行中禁用操作按钮，防止并发误操作。"""
+        self.running = busy
+        state = "disabled" if busy else "normal"
+        for btn in (self.sync_btn, self.restore_btn):
+            btn.config(state=state)
 
     def browse_sqlite(self) -> None:
         path = filedialog.askopenfilename(
@@ -190,6 +239,9 @@ class SyncTool:
 
     # ── 备份 ──
     def backup_mysql(self) -> None:
+        if self.running:
+            messagebox.showinfo("提示", "正在执行任务，请等待完成")
+            return
         if not _check_mysql_running():
             messagebox.showerror("MySQL 未运行", "MySQL 数据库没有启动！\n请先启动 MySQL。")
             return
@@ -203,11 +255,11 @@ class SyncTool:
             return
         self.log_text.delete("1.0", END)
         self.log("=== 开始备份 MySQL ===\n")
+        self._set_busy(True)
         t = threading.Thread(target=self._do_backup, args=(dst,), daemon=True)
         t.start()
 
     def _do_backup(self, dst_path: str) -> None:
-        self.running = True
         tmp_path = dst_path + ".tmp"
         conn = None
         try:
@@ -280,10 +332,13 @@ class SyncTool:
                     conn.close()
                 except Exception:
                     pass
-            self.running = False
+            self._set_busy(False)
 
     # ── 还原 ──
     def restore_mysql(self) -> None:
+        if self.running:
+            messagebox.showinfo("提示", "正在执行任务，请等待完成")
+            return
         if not _check_mysql_running():
             messagebox.showerror("MySQL 未运行", "MySQL 数据库没有启动！\n请先启动 MySQL。")
             return
@@ -302,15 +357,20 @@ class SyncTool:
             return
         self.log_text.delete("1.0", END)
         self.log("=== 开始还原 MySQL ===\n")
+        self._set_busy(True)
         t = threading.Thread(target=self._do_restore, args=(src,), daemon=True)
         t.start()
 
+    # 还原分片大小 / 超时（GB 级 SQL 可能跑很久）
+    _RESTORE_CHUNK = 4 * 1024 * 1024      # 4MB/片，流式写入，不占内存
+    _RESTORE_TIMEOUT = 3600               # 1 小时上限
+    _PROGRESS_LOG_STEP = 32 * 1024 * 1024 # 每 32MB 或到 100% 打一次进度日志
+
     def _do_restore(self, src_path: str) -> None:
-        self.running = True
         try:
-            size = os.path.getsize(src_path) // 1024
-            self.log(f"📦 备份文件: {src_path} ({size} KB)")
-            self.log(f"⏳ 正在还原 {_DB_NAME}...（数据量大可能需要几分钟）")
+            total = os.path.getsize(src_path)
+            self.log(f"📦 备份文件: {src_path} ({total // 1024} KB / {total // 1024 // 1024} MB)")
+            self.log(f"⏳ 正在分片还原 {_DB_NAME}...（GB 级文件请耐心等待）")
             cmd = [
                 _MYSQL_CLIENT_PATH,
                 "-h",
@@ -322,30 +382,74 @@ class SyncTool:
                 *_mysql_password_arg(),
                 _DB_NAME,
             ]
-            with open(src_path, "r", encoding="utf-8") as f:
-                result = subprocess.run(cmd, stdin=f, capture_output=True, text=True, timeout=600)
-            if result.returncode == 0:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            read = 0
+            last_log = 0
+            try:
+                # 分片流式写入 stdin：逐块读取并 flush，避免大文件一次读入内存
+                with open(src_path, "rb") as f:
+                    while True:
+                        chunk = f.read(self._RESTORE_CHUNK)
+                        if not chunk:
+                            break
+                        proc.stdin.write(chunk)
+                        proc.stdin.flush()
+                        read += len(chunk)
+                        # 按固定步长 + 完成点打进度，避免刷屏
+                        if read - last_log >= self._PROGRESS_LOG_STEP or read >= total:
+                            pct = read * 100 // total if total else 100
+                            self.log(
+                                f"  已写入 {read // 1024 // 1024} MB / {total // 1024 // 1024} MB ({pct}%)"
+                            )
+                            last_log = read
+                proc.stdin.close()
+            except (BrokenPipeError, OSError):
+                # mysql 提前退出（如 SQL 语法错误），读一次输出诊断
+                pass
+
+            try:
+                out, err = proc.communicate(timeout=self._RESTORE_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                out, err = proc.communicate()
+                self.log("❌ 还原超时（超过 1 小时），已强制终止")
+                return
+
+            if proc.returncode == 0:
                 self.log("✅ 还原完成！")
             else:
-                err = result.stderr[:500] if result.stderr else "未知错误"
-                self.log(f"❌ 还原失败: {err}")
-        except subprocess.TimeoutExpired:
-            self.log("❌ 还原超时（600秒），可能文件过大")
+                # 优先取 stderr 尾部错误，其次 stdout 尾部
+                diag = (err or out) or ""
+                detail = diag[-1500:] if diag else "未知错误"
+                self.log(f"❌ 还原失败（退出码 {proc.returncode}）: {detail}")
         except FileNotFoundError:
             self.log(f"❌ 找不到 mysql 客户端: {_MYSQL_CLIENT_PATH}")
         except Exception as e:
             self.log(f"❌ 还原失败: {type(e).__name__}: {e}")
         finally:
-            self.running = False
+            self._set_busy(False)
 
-    # ── SQLite 预览 ──
+    # ── SQLite 预览（后台线程执行，避免大库卡死 UI）──
     def preview_only(self) -> None:
+        if self.running:
+            messagebox.showinfo("提示", "正在执行任务，请等待完成")
+            return
         path = self.sqlite_path.get().strip()
         if not os.path.exists(path):
             messagebox.showerror("错误", f"SQLite 数据库不存在:\n{path}")
             return
         self.log_text.delete("1.0", END)
         self.log("=== 预览模式（不写入数据）===\n")
+        self._set_busy(True)
+        t = threading.Thread(target=self._do_preview, args=(path,), daemon=True)
+        t.start()
+
+    def _do_preview(self, path: str) -> None:
         try:
             rows = preview_sqlite(path)
             self.log(f"📋 SQLite 表清单: {len(rows)} 张表\n")
@@ -354,15 +458,17 @@ class SyncTool:
             self.log("\n✅ 预览完成，未写入任何数据")
         except Exception as e:
             self.log(f"❌ 读取失败: {type(e).__name__}: {e}")
+        finally:
+            self._set_busy(False)
 
     # ── SQLite → MySQL 同步 ──
     def start_sync(self) -> None:
+        if self.running:
+            messagebox.showinfo("提示", "正在执行任务，请等待完成")
+            return
         path = self.sqlite_path.get().strip()
         if not os.path.exists(path):
             messagebox.showerror("错误", f"SQLite 数据库不存在:\n{path}")
-            return
-        if self.running:
-            messagebox.showinfo("提示", "正在同步中，请等待完成")
             return
         if _check_web_running():
             messagebox.showerror(
@@ -388,11 +494,11 @@ class SyncTool:
             return
         self.log_text.delete("1.0", END)
         self.log("=== 开始同步 ===\n")
+        self._set_busy(True)
         t = threading.Thread(target=self._do_sync, args=(path,), daemon=True)
         t.start()
 
     def _do_sync(self, path: str) -> None:
-        self.running = True
         try:
             if _check_web_running():
                 self.log("❌ 检测到 Web 仍在运行！同步终止。")
@@ -401,7 +507,7 @@ class SyncTool:
         except Exception as e:
             self.log(f"❌ 同步失败: {type(e).__name__}: {e}")
         finally:
-            self.running = False
+            self._set_busy(False)
 
 
 if __name__ == "__main__":
