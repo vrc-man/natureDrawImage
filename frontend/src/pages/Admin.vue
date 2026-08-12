@@ -28,6 +28,7 @@ import StatsSection from '@/components/admin/StatsSection.vue'
 import LeaderBoardSection from '@/components/admin/LeaderBoardSection.vue'
 import ShareSection from '@/components/admin/ShareSection.vue'
 import AiChatSection from '@/components/admin/AiChatSection.vue'
+import ComfyManagerSection from '@/components/admin/ComfyManagerSection.vue'
 
 const isAdmin = ref(false), loading = ref(true)
 const expanded = ref<Record<string, boolean>>({})
@@ -63,6 +64,7 @@ const groups: GroupDef[] = [
       { key: 'ai-chat', title: '💬 AI 聊天设置', comp: AiChatSection },
       { key: 'limits', title: '⚙️ 限流配置', comp: LimitsSection },
       { key: 'maint', title: '🔧 维护模式', comp: MaintSection },
+      { key: 'comfy-manager', title: '🚀 ComfyUI 管理', comp: ComfyManagerSection },
       { key: 'chead', title: '📎 自定义 Head', comp: CheadSection },
       { key: 'share', title: '🔗 分享链接管理', comp: ShareSection },
     ],
