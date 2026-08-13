@@ -1696,8 +1696,8 @@ onMounted(async () => {
 
 <template>
   <div class="flex flex-col h-full" :class="fullscreen ? 'fixed inset-0 z-[100]' : ''" :style="chatBgColor ? {backgroundColor: chatBgColor} : {}">
-    <!-- 顶部栏 -->
-    <div class="flex items-center justify-between px-3 py-2 border-b border-pink-100 shrink-0 bg-white/80 backdrop-blur">
+    <!-- 顶部栏（不用 backdrop-blur：iOS 上会致文本选择工具栏定位错乱到状态栏） -->
+    <div class="flex items-center justify-between px-3 py-2 border-b border-pink-100 shrink-0 bg-white/95 dark:bg-gray-800/95">
       <div class="flex items-center gap-2 min-w-0 flex-1">
         <button @click="showSessions=true" class="shrink-0 text-xs px-2 py-1 rounded-lg cursor-pointer border-0 bg-transparent hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400" title="会话管理">☰</button>
         <button @click="showSessions=true" class="text-sm font-semibold text-gray-700 dark:text-gray-200 truncate cursor-pointer border-0 bg-transparent hover:text-pink-500 text-left">{{ currentSessionName() }}</button>
@@ -1715,8 +1715,8 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 生图配置条（仿 2x.nz：工作流/角色/画风 可选，不选直接提需求 AI 自主扩写） -->
-    <div class="flex items-center gap-1.5 px-3 py-1.5 border-b border-pink-100 dark:border-gray-700 shrink-0 bg-white/60 dark:bg-gray-800/60 overflow-x-auto">
+    <!-- 生图配置条（仿 2x.nz：工作流/角色/画风 可选，不选直接提需求 AI 自主扩写；不用 backdrop-blur 防 iOS 选择错位） -->
+    <div class="flex items-center gap-1.5 px-3 py-1.5 border-b border-pink-100 dark:border-gray-700 shrink-0 bg-white/95 dark:bg-gray-800/95 overflow-x-auto">
       <span class="shrink-0 text-[10px] font-semibold text-gray-500 dark:text-gray-400">🎨 生图</span>
       <button @click="openWorkflowPicker" class="shrink-0 max-w-[130px] truncate text-[11px] px-2 py-1 rounded-lg cursor-pointer border-0 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 hover:bg-pink-100 dark:hover:bg-pink-900/40" :title="genConfig.workflow_path">
         {{ genWorkflowName() || '选择工作流' }}
@@ -2000,7 +2000,7 @@ onMounted(async () => {
 
       <!-- 批量删除工具栏 -->
       <div v-if="msgEditMode" class="sticky bottom-0 pt-2">
-        <div class="flex items-center justify-between gap-2 px-3 py-2 bg-white/95 dark:bg-gray-800/95 backdrop-blur rounded-xl border border-pink-200 dark:border-gray-600 shadow-lg">
+        <div class="flex items-center justify-between gap-2 px-3 py-2 bg-white/95 dark:bg-gray-800/95 rounded-xl border border-pink-200 dark:border-gray-600 shadow-lg">
           <div class="flex items-center gap-1 text-[11px] text-gray-600 dark:text-gray-300">
             <button @click="selectAllMsgs" class="px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer border-0">全选</button>
             <button @click="clearSelectedMsgs" class="px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer border-0" :disabled="!selectedMsgs.size">取消</button>
