@@ -18,6 +18,7 @@ import CharStylePicker from '@/components/CharStylePicker.vue'
 import Img2ImgUpload from '@/components/Img2ImgUpload.vue'
 import PresetManager from '@/components/PresetManager.vue'
 import TotpSettings from '@/components/TotpSettings.vue'
+import MultiangleCamera3D from '@/components/MultiangleCamera3D.vue'
 
 const userStore = useUserStore()
 const sound = useSound()
@@ -137,6 +138,12 @@ const height = ref(parseInt(localStorage.getItem('formState_h') || '768'))
 const currentWorkflowPath = ref(localStorage.getItem('currentWorkflow') || '')
 const skipPromptInject = ref(false)
 const img2imgUsePreset = ref(false)
+// 多角度 3D 相机模式（QwenMultiangleCameraNode 工作流专用）
+const multiangleMode = ref(false)
+const angleH = ref(0)
+const angleV = ref(0)
+const zoom = ref(5)
+const multiangleImageUrl = ref<string | null>(null)
 
 // Fork
 const forkedWorkflow = ref<any>(null)
@@ -286,6 +293,21 @@ const resolutions = ref([
 
 // Img2Img uploader ref
 const uploadRef = ref<InstanceType<typeof Img2ImgUpload> | null>(null)
+
+// 多角度模式：轮询上传区预览 URL 同步到 3D 场景
+let _multianglePreviewTimer: ReturnType<typeof setInterval> | null = null
+watch(multiangleMode, (on) => {
+  if (_multianglePreviewTimer) { clearInterval(_multianglePreviewTimer); _multianglePreviewTimer = null }
+  if (on) {
+    _multianglePreviewTimer = setInterval(() => {
+      try {
+        const url = uploadRef.value?.getPreviewUrl?.() || null
+        if (url !== multiangleImageUrl.value) multiangleImageUrl.value = url
+      } catch {}
+    }, 800)
+  }
+})
+onUnmounted(() => { if (_multianglePreviewTimer) clearInterval(_multianglePreviewTimer) })
 
 // ===== Lifecycle =====
 let _activePopup: HTMLElement | null = null
@@ -493,6 +515,14 @@ async function onWorkflowSelect(path: string, name?: string) {
       negativePrompt.value = (d.builtin_negative_prompt || '').trim()
       if (d.default_width && d.default_height) { width.value = d.default_width; height.value = d.default_height }
       hasLoadImage.value = !!(d.summary && d.summary.has_loadimage)
+      // 多角度 3D 相机：显示 3D 场景，隐藏提示词区
+      multiangleMode.value = !!d.has_multiangle
+      if (multiangleMode.value) {
+        const md = d.multiangle_defaults || {}
+        angleH.value = md.h ?? 0
+        angleV.value = md.v ?? 0
+        zoom.value = md.z ?? 5
+      }
     }
   } catch {}
   _ensureResolutionInPresets()
@@ -801,6 +831,10 @@ async function actuallyStartRun(g: PendingGen) {
       image1_name, image2_name, image3_name,
       seed_mode: seedMode.value,
       seed_value: seedMode.value === 'manual' ? seedValue.value : undefined,
+      // 多角度 3D 相机：随模式提交角度参数
+      angle_h: multiangleMode.value ? angleH.value : undefined,
+      angle_v: multiangleMode.value ? angleV.value : undefined,
+      zoom: multiangleMode.value ? zoom.value : undefined,
     }
     if (forkedWorkflow.value) payload.inline_workflow = forkedWorkflow.value
     ws.send(JSON.stringify(payload))
@@ -1295,7 +1329,23 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
 
               <!-- Prompt form card -->
               <div class="bg-white/75 backdrop-blur-md border border-pink-200 rounded-3xl shadow-lg shadow-pink-200/40 p-5 sm:p-6 space-y-5">
+                <!-- 多角度 3D 相机模式：隐藏提示词区，显示 3D 相机控制 -->
+                <div v-if="multiangleMode" class="space-y-3">
+                  <div class="flex items-center justify-between">
+                    <span class="text-sm font-semibold text-gray-600">🎥 多角度 3D 相机</span>
+                    <span class="text-[10px] text-gray-400">提示词由相机角度自动生成</span>
+                  </div>
+                  <MultiangleCamera3D
+                    :key="'multiangle-' + currentWorkflowPath"
+                    :initial-h="angleH"
+                    :initial-v="angleV"
+                    :initial-z="zoom"
+                    :image-url="multiangleImageUrl"
+                    @update:angle="(h:number, v:number, z:number) => { angleH = h; angleV = v; zoom = z }"
+                  />
+                </div>
                 <!-- Prompt grid -->
+                <template v-else>
                 <div class="prompt-grid">
                   <div>
                     <div class="flex text-sm font-semibold mb-1.5 text-gray-600 items-center gap-1">
@@ -1361,6 +1411,7 @@ function fillPreset(text: string, target: 'direct' | 'negative_prompt') {
                     </button>
                   </div>
                 </div>
+                </template>
 
                 <!-- Img2img upload -->
                 <div v-if="mode==='img2img' && hasLoadImage">

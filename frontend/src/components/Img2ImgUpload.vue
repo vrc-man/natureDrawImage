@@ -164,7 +164,11 @@ async function waitAllUploads() {
 }
 const getImageNames = () => images.value.filter(i => i.done && i.name).map(i => i.name)
 const hasPendingUploads = () => images.value.some(i => !i.done && !i.error)
-defineExpose({ waitAllUploads, getImageNames, clearAll, hasPendingUploads })
+const getPreviewUrl = () => {
+  const first = images.value.find(i => i.previewUrl)
+  return first?.previewUrl || null
+}
+defineExpose({ waitAllUploads, getImageNames, clearAll, hasPendingUploads, getPreviewUrl })
 </script>
 
 <template>

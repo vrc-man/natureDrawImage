@@ -5204,6 +5204,19 @@ async def api_current(path: Optional[str] = None):
         v = pd.get(nid, {}).get("inputs", {}).get(inp, "")
         if isinstance(v, str):
             builtin_negative_prompt = v.strip()
+    # 多角度 3D 相机：是否存在 QwenMultiangleCameraNode + 默认角度
+    has_multiangle = False
+    multiangle_defaults = {}
+    for _nd in pd.values():
+        if isinstance(_nd, dict) and _nd.get("class_type") == "QwenMultiangleCameraNode":
+            has_multiangle = True
+            _inp = _nd.get("inputs") or {}
+            multiangle_defaults = {
+                "h": int(_inp.get("horizontal_angle", 0) or 0),
+                "v": int(_inp.get("vertical_angle", 0) or 0),
+                "z": float(_inp.get("zoom", 5.0) or 5.0),
+            }
+            break
     return {
         "path": path,
         "summary": summarize_workflow(data),
@@ -5213,6 +5226,8 @@ async def api_current(path: Optional[str] = None):
         "builtin_prompt": builtin_prompt,
         "builtin_negative_prompt": builtin_negative_prompt,
         "skip_prompt_inject": workflow_needs_skip_prompt(path, data),
+        "has_multiangle": has_multiangle,
+        "multiangle_defaults": multiangle_defaults,
         "loras": extract_loras(pd),
         "lora_link": find_lora_link(path),
     }
@@ -5676,6 +5691,10 @@ class RunRequest(BaseModel):
     seed_mode: str = "default"  # "default" | "random" | "manual" 种子模式
     seed_value: Optional[int] = None  # manual 模式下用户指定的种子
     task_type: str = ""  # "" = 正常生图；"reverse" = 图片反推（跳过冷却、不写日志）
+    # 多角度 3D 相机（QwenMultiangleCameraNode）：水平角 0-360 / 垂直角 -30~60 / 缩放 0-10
+    angle_h: Optional[int] = None
+    angle_v: Optional[int] = None
+    zoom: Optional[float] = None
 
     @field_validator("direct_prompt", "nl_prompt", "style_tags", "negative_prompt")
     @classmethod
@@ -6987,6 +7006,17 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
             return
         node_id, input_name = positive_ref
 
+    # 多角度 3D 相机特例（QwenMultiangleCameraNode）：
+    # 提示词由相机节点按角度自动生成，跳过正向/负向提示词注入与分辨率覆盖，
+    # 只把前端角度参数写入相机节点 inputs。
+    _is_multiangle = any(
+        isinstance(nd, dict) and nd.get("class_type") == "QwenMultiangleCameraNode"
+        for nd in prompt_dict.values()
+    )
+    if _is_multiangle:
+        _skip_prompt_inject = True
+        await emit(ws, {"type": "log", "message": "检测到多角度 3D 相机工作流：提示词由角度参数自动生成，跳过提示词注入"})
+
 
     sep = "\n" if req.prompt_mode == "natural" else ", "
 
@@ -7064,6 +7094,27 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
     # 自带 LLM 的工作流：不覆盖 CLIPTextEncode，跳过后续注入流程
     if _skip_prompt_inject:
         sd_prompt = ""
+        # 多角度 3D 相机：把前端角度参数写入 QwenMultiangleCameraNode inputs
+        if _is_multiangle:
+            _cam_node = next(
+                (nd for nd in prompt_dict.values()
+                 if isinstance(nd, dict) and nd.get("class_type") == "QwenMultiangleCameraNode"),
+                None,
+            )
+            if _cam_node is not None:
+                _inp = _cam_node.setdefault("inputs", {})
+                _changed = []
+                if req.angle_h is not None:
+                    _inp["horizontal_angle"] = max(0, min(360, int(req.angle_h)))
+                    _changed.append(f"水平{_inp['horizontal_angle']}°")
+                if req.angle_v is not None:
+                    _inp["vertical_angle"] = max(-30, min(60, int(req.angle_v)))
+                    _changed.append(f"垂直{_inp['vertical_angle']}°")
+                if req.zoom is not None:
+                    _inp["zoom"] = max(0.0, min(10.0, float(req.zoom)))
+                    _changed.append(f"缩放{_inp['zoom']}")
+                if _changed:
+                    await emit(ws, {"type": "log", "message": "多角度相机: " + " ".join(_changed)})
         # 跳过 prompt 注入、负面注入、分辨率覆盖，但继续执行种子随机化和 SaveImage 前缀
     else:
         if not sd_prompt.strip():

@@ -480,6 +480,10 @@ natureDrawImage-env\Scripts\python.exe scripts\sync_sqlite_to_mysql.py
 
 ---
 
+## 致谢
+
+- **多角度 3D 相机控制组件**（图生图「Qwen-Edit_多角度3D单图」工作流的相机预览/参数控制）借鉴自 [ComfyUI-qwenmultiangle](https://github.com/jtydhr88/ComfyUI-qwenmultiangle)（MIT License，作者 jtydhr88），其原始实现基于 [amrrs/qwenmultiangle](https://github.com/amrrs/qwenmultiangle)，提示词输出兼容 [Qwen-Image-Edit-2511-Multiple-Angles-LoRA](https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA)。
+
 ## License
 
 AGPLv3 — 详见 [LICENSE](./LICENSE)
