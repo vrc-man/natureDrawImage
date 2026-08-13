@@ -984,25 +984,25 @@ def _prompt_style_for_workflow(workflow_path: str) -> str:
             return (
                 "【当前工作流是 NoobAIXL 模型】提示词写法：\n"
                 "- 正向提示词：Danbooru 标签风格，逗号分隔，按重要性排序（主体→细节→场景），固定加画质词 'masterpiece, best quality, absurdres, highres, extremely detailed'。\n"
-                "- 反向提示词：'lowres, bad anatomy, bad hands, text, error, missing finger, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry'。"
+                "- 反向提示词：'watermark, trademark, username, artist name, lowres, worst quality, low quality, normal quality, bad anatomy, bad proportions, bad hands, deformed hands, missing fingers, extra fingers, extra limbs, missing limbs, floating limbs, ghosting, disfigured, ugly, blurry, poor composition'。"
             )
         return (
             "【当前工作流是 WAI/Illustrious 动漫模型（含角色/画风 Lora）】提示词写法：\n"
             "- 正向提示词：Danbooru 标签风格，逗号分隔。若模型绑定角色 Lora，先写角色名及触发词，再写 '1girl, (角色特征), 动作/表情/服饰/场景', 固定加画质词 'masterpiece, best quality'。\n"
-            "- 反向提示词：'lowres, bad anatomy, bad hands, text, error, worst quality, low quality, jpeg artifacts, signature, watermark, username, blurry'。"
+            "- 反向提示词：'watermark, trademark, username, artist name, lowres, worst quality, low quality, normal quality, bad anatomy, bad proportions, bad hands, deformed hands, missing fingers, extra fingers, extra limbs, missing limbs, floating limbs, ghosting, disfigured, ugly, blurry, poor composition'。"
         )
     if rule == "anima":
         return (
             "【当前工作流是 Anima 二次元 DiT 模型（含角色 Lora）】提示词写法（官方规范）：\n"
             "- 正向提示词：Danbooru 标签风格，逗号分隔，固定加质量词 'masterpiece, best quality, solo' 开头。先写角色名及 Lora 触发词（若有），再写人物特征/动作/服饰/场景。\n"
             "- 支持 @画师 触发词语法（如 '@某某画师'）指定特定画师风格；权重用法类似 SD 的 (tag:1.1)。\n"
-            "- 反向提示词：仅用 'worst quality, low quality'（极简，屏蔽低清晰度低质量）。本地模型支持宽松内容，不要添加内容限制类负面词。"
+            "- 反向提示词：'watermark, trademark, username, artist name, lowres, worst quality, low quality, normal quality, bad anatomy, bad proportions, bad hands, deformed hands, missing fingers, extra fingers, extra limbs, missing limbs, floating limbs, ghosting, disfigured, ugly, blurry, poor composition'（通用 SD 负面）。"
         )
     # SDXL 通用绘画（IcatTowerCknV12 / VIL-Gembyte / matureritual 等未匹配关键词时）及默认
     return (
         "【当前工作流是 SDXL 通用二次元绘画模型】提示词写法：\n"
         "- 正向提示词：Danbooru 标签风格，逗号分隔，按重要性排序（主体→细节→场景），固定加画质词 'masterpiece, best quality, highres'。\n"
-        "- 反向提示词：'lowres, bad anatomy, bad hands, text, error, worst quality, low quality, jpeg artifacts, signature, watermark, username, blurry'。"
+        "- 反向提示词：'watermark, trademark, username, artist name, lowres, worst quality, low quality, normal quality, bad anatomy, bad proportions, bad hands, deformed hands, missing fingers, extra fingers, extra limbs, missing limbs, floating limbs, ghosting, disfigured, ugly, blurry, poor composition'。"
     )
 
 
@@ -1448,7 +1448,7 @@ async def api_ai_chat_send(request: Request):
                     "   - 区分：**展示提示词**（把完整正向/负面提示词用文字列出，帮助用户确认）可以；**用『| 参数项 | 内容 |』表格拼一张假卡片代替工具调用**不行——必须调用 trigger_generation。\n"
                     "   - 如果你发现自己想输出『| 参数项 | 内容 |』这种表格来呈现卡片，立刻改成调用 trigger_generation 工具。\n"
                     "9. **负面提示词以固定标准模板为基座，再根据本次提示词内容微调**：\n"
-                    "   - 基础模板（动漫标签模型 Anima/WAI/Illustrious/NoobAI/SDXL 系）：`worst quality, low quality, bad anatomy, bad hands, missing fingers, extra digits, text, watermark, signature, blurry`\n"
+                    "   - 基础模板（动漫标签模型 Anima/WAI/Illustrious/NoobAI/SDXL 系——通用 SD 负面）：`watermark, trademark, username, artist name, lowres, worst quality, low quality, normal quality, bad anatomy, bad proportions, bad hands, deformed hands, missing fingers, extra fingers, extra limbs, missing limbs, floating limbs, ghosting, disfigured, ugly, blurry, poor composition`\n"
                     "   - 基础模板（自然语言模型 Krea/FLUX/Z-Image/Wan）：`blurry, low quality, watermark, text, extra limbs, distorted`\n"
                     "   - **微调规则**：以对应基础模板为底，再按本次正向提示词的内容做针对性调整——① 若提示词主要画人物：确保含手部/解剖类负面词（bad hands、extra fingers、deformed hands），画风不写实则去掉过度写实类要求；② 若提示词是风景/场景/产品：手部负面词可去掉，改加透视/构图/材质类（warped perspective、distorted proportions、cheap plastic）；③ 若提示词含文字/海报需求：不要加 text/watermark 负面词（会压制画面文字），改为 no misspelled text、blurry text；④ 若用户明确说了不要某元素（如'不要眼镜''不要文字'），追加对应负面词。微调是增删个别词，不要推翻基础模板。"
                 )
