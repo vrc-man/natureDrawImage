@@ -3115,7 +3115,13 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
     SEED_WIDGETS = {"seed", "noise_seed"}
     COND_PASSTHROUGH_TYPES = {"ReferenceLatent", "ConditioningZeroOut"}
 
-    def _trace_to_text_encoder(nid, seen=None):
+    def _trace_to_text_encoder(nid, seen=None, allow_zero_out=True):
+        """追踪到 CLIPTextEncode 文本引用。
+
+        allow_zero_out=False（负面方向）：遇到 ConditioningZeroOut 视为空负面，
+        直接返回 None，避免把「零化（空）负面」错误解析回正向文本，导致
+        前端正负显示同一份提示词。
+        """
         if seen is None:
             seen = set()
         if nid in seen:
@@ -3128,9 +3134,11 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
         if ct in ("CLIPTextEncode", "CLIPTextEncodeSDXL", "TextEncodeQwenImageEditPlus", "Krea2EditGroundedEncode"):
             return (nid, "prompt" if ("Krea2Edit" in ct or "TextEncodeQwen" in ct) else "text")
         if ct in COND_PASSTHROUGH_TYPES:
+            if ct == "ConditioningZeroOut" and not allow_zero_out:
+                return None
             ref = nd.get("inputs", {}).get("conditioning")
             if isinstance(ref, list) and len(ref) >= 1:
-                return _trace_to_text_encoder(str(ref[0]), seen)
+                return _trace_to_text_encoder(str(ref[0]), seen, allow_zero_out)
         return None
 
     def extract_inputs(node, lmap):
@@ -3177,10 +3185,21 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
 
     NON_EXEC = {"MarkdownNote", "Note", "Reroute", "PrimitiveNode"}
 
+    def _is_comment_node(node) -> bool:
+        """跳过注释/说明类节点：类型名含 注释/Note，或无任何输入输出的孤立节点。
+        这类节点（如自定义的「孤海注释」）没有真实功能，提交会导致 ComfyUI
+        missing_node_type 报错（对应自定义节点未安装）。"""
+        t = str(node.get("type", ""))
+        if "注释" in t or t.lower().endswith("note"):
+            return True
+        if not (node.get("inputs") or []) and not (node.get("outputs") or []):
+            return True
+        return False
+
     for node in top_nodes:
         ntype = node.get("type", "")
         nid = str(node.get("id"))
-        if ntype in NON_EXEC:
+        if ntype in NON_EXEC or _is_comment_node(node):
             continue
         if ntype in subgraphs:
             sg = subgraphs[ntype]
@@ -3258,7 +3277,7 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
                 if negative_ref is None:
                     neg = ndata.get("inputs", {}).get("negative")
                     if isinstance(neg, list) and len(neg) >= 1:
-                        result = _trace_to_text_encoder(str(neg[0]))
+                        result = _trace_to_text_encoder(str(neg[0]), allow_zero_out=False)
                         if result:
                             negative_ref = result
                 if positive_ref and negative_ref:
