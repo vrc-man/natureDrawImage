@@ -3007,6 +3007,34 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
     link_map: Dict[int, Tuple[str, int]] = {}
     top_node_by_id = {n["id"]: n for n in top_nodes}
 
+    # Reroute 反查：link_id -> (origin_id, origin_slot)，供穿透 Reroute 中转节点用。
+    # Reroute 节点本身在 NON_EXEC 中被跳过不进 prompt，若下游节点直接引用它，
+    # 提交时会出现「引用不存在的节点」导致 ComfyUI 400。
+    _raw_src: Dict[int, Tuple[int, int]] = {}
+    for link in top_links:
+        if isinstance(link, list) and len(link) >= 6:
+            _raw_src[link[0]] = (link[1], link[2])
+        elif isinstance(link, dict):
+            _raw_src[link.get("id")] = (link.get("origin_id"), link.get("origin_slot", 0))
+
+    def _resolve_src(oid: int, oslot: int):
+        """沿 Reroute 输入链向上穿透，返回真实执行节点 (id, slot)。防环。"""
+        seen = set()
+        while oid in top_node_by_id and top_node_by_id[oid].get("type") == "Reroute":
+            if oid in seen:
+                break
+            seen.add(oid)
+            node = top_node_by_id[oid]
+            in_link = None
+            for i in node.get("inputs", []) or []:
+                if i.get("link") is not None:
+                    in_link = i["link"]
+                    break
+            if in_link is None or in_link not in _raw_src:
+                break
+            oid, oslot = _raw_src[in_link]
+        return oid, oslot
+
     for link in top_links:
         if isinstance(link, list) and len(link) >= 6:
             lid, oid, oslot = link[0], link[1], link[2]
@@ -3025,6 +3053,8 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
             else:
                 link_map[lid] = (str(oid), oslot)
         else:
+            if src_node and src_node.get("type") == "Reroute":
+                oid, oslot = _resolve_src(oid, oslot)
             link_map[lid] = (str(oid), oslot)
 
     def build_subgraph_link_map(sg, instance_node):
@@ -3036,6 +3066,30 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
             if link_id is not None and link_id in link_map:
                 ext_inputs[inp.get("name")] = link_map[link_id]
         sg_inputs_list = sg.get("inputs", [])
+        sg_nodes = {sn["id"]: sn for sn in sg.get("nodes", [])}
+        sg_raw: Dict[int, Tuple[int, int]] = {}
+        for link in sg.get("links", []):
+            if isinstance(link, dict):
+                sg_raw[link.get("id")] = (link.get("origin_id"), link.get("origin_slot", 0))
+
+        def _sg_resolve(oid: int, oslot: int):
+            """子图内 Reroute 穿透：沿输入链向上，落到子图输入或真实节点。防环。"""
+            seen = set()
+            while oid in sg_nodes and sg_nodes[oid].get("type") == "Reroute":
+                if oid in seen:
+                    break
+                seen.add(oid)
+                node = sg_nodes[oid]
+                in_link = None
+                for i in node.get("inputs", []) or []:
+                    if i.get("link") is not None:
+                        in_link = i["link"]
+                        break
+                if in_link is None or in_link not in sg_raw:
+                    break
+                oid, oslot = sg_raw[in_link]
+            return oid, oslot
+
         for link in sg.get("links", []):
             if not isinstance(link, dict):
                 continue
@@ -3048,6 +3102,13 @@ def workflow_to_prompt_api(workflow: Dict[str, Any]) -> Tuple[Dict[str, Any], Op
                     if ext_name in ext_inputs:
                         m[lid] = ext_inputs[ext_name]
             else:
+                if oid in sg_nodes and sg_nodes[oid].get("type") == "Reroute":
+                    oid, oslot = _sg_resolve(oid, oslot)
+                    if oid < 0 and oslot < len(sg_inputs_list):
+                        ext_name = sg_inputs_list[oslot]["name"]
+                        if ext_name in ext_inputs:
+                            m[lid] = ext_inputs[ext_name]
+                            continue
                 m[lid] = (f"{sg_id}:{oid}", oslot)
         return m
 
