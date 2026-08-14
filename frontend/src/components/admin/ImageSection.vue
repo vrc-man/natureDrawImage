@@ -16,6 +16,8 @@ const lastClickedIndex = ref(-1)
 const rangePicking = ref(false)
 const rangeStartIndex = ref(-1)
 const editMode = ref(false)
+// 请求序号：防止快速翻页/删除回退时旧请求覆盖新结果
+let loadSeq = 0
 
 const shown = computed(() => items.value.length)
 const allSelected = computed(() => items.value.length > 0 && selected.value.size === items.value.length)
@@ -26,12 +28,18 @@ const pageWindow = computed(() => {
   const p = page.value
   const s = Math.max(0, p - 2)
   const e = Math.min(tp - 1, p + 2)
+  const set = new Set<number>()
+  if (p > 0) set.add(p - 1)
+  for (let i = s; i <= e; i++) set.add(i)
+  if (p < tp - 1) set.add(p + 1)
   const items: (number | 'left' | 'right')[] = []
-  if (p > 0) items.push(p - 1)
-  if (s > 0) items.push('left')
-  for (let i = s; i <= e; i++) items.push(i)
-  if (e < tp - 1) items.push('right')
-  if (p < tp - 1) items.push(p + 1)
+  const sorted = Array.from(set).sort((a, b) => a - b)
+  if (!sorted.length) return items
+  items.push(sorted[0])
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] - sorted[i - 1] > 1) items.push('left')
+    items.push(sorted[i])
+  }
   return items
 })
 
@@ -43,19 +51,20 @@ const filtering = ref(false)
 const nameSearch = ref('')
 
 async function loadImages(reset = true) {
-  if (loading.value && !reset) return
+  const seq = ++loadSeq
   loading.value = true
   try {
     if (reset) { items.value = []; selected.value.clear(); page.value = 0; lastClickedIndex.value = -1; rangePicking.value = false; rangeStartIndex.value = -1 }
     let u = `/api/admin/images?limit=${pageSize}&offset=${page.value * pageSize}`
     if (nameSearch.value.trim()) u += '&name=' + encodeURIComponent(nameSearch.value.trim())
     const r = await api('GET', u)
+    if (seq !== loadSeq) return  // 丢弃过期结果
     items.value = r.items || []
     total.value = r.total || 0
     loaded.value = items.value.length
   } catch (e: any) {
     if (reset) items.value = []
-  } finally { loading.value = false }
+  } finally { if (seq === loadSeq) loading.value = false }
 }
 
 function goPage(p: number) {
