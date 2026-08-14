@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { loadGallery } from '@/api/endpoints'
 import { useLightbox, type LbItem } from '@/composables/useLightbox'
 
@@ -8,8 +8,24 @@ const images = ref<any[]>([])
 const total = ref(0)
 const loading = ref(false)
 const pageSize = 30
-const loadedCount = ref(0)
+const page = ref(0)
 const galleryDir = ref('')
+
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const pageWindow = computed(() => {
+  const tp = totalPages.value
+  if (tp <= 1) return []
+  const p = page.value
+  const s = Math.max(0, p - 2)
+  const e = Math.min(tp - 1, p + 2)
+  const items: (number | 'left' | 'right')[] = []
+  if (p > 0) items.push(p - 1)
+  if (s > 0) items.push('left')
+  for (let i = s; i <= e; i++) items.push(i)
+  if (e < tp - 1) items.push('right')
+  if (p < tp - 1) items.push(p + 1)
+  return items
+})
 
 onMounted(async () => {
   try {
@@ -23,14 +39,20 @@ async function load(reset = false) {
   if (loading.value) return
   loading.value = true
   try {
-    if (reset) { images.value = []; loadedCount.value = 0 }
-    const d = await loadGallery({ offset: loadedCount.value, limit: pageSize })
-    images.value.push(...(d.items || []))
+    if (reset) { images.value = []; page.value = 0 }
+    const d = await loadGallery({ offset: page.value * pageSize, limit: pageSize })
+    images.value = d.items || []
     galleryDir.value = d.output_dir || ''
     total.value = d.total || 0
-    loadedCount.value = images.value.length
   } catch {}
   loading.value = false
+}
+
+function goPage(p: number) {
+  if (p < 0 || p >= totalPages.value || p === page.value) return
+  page.value = p
+  load(false)
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 function fmtTime(ts: number) {
@@ -49,7 +71,7 @@ function openLightbox(index: number) {
   open(items, index)
 }
 
-defineExpose({ load, images, total, loadedCount })
+defineExpose({ load, images, total })
 </script>
 
 <template>
@@ -77,8 +99,18 @@ defineExpose({ load, images, total, loadedCount })
       <span class="text-xs text-gray-400">加载中请稍后...</span>
     </div>
     <div v-else class="text-center text-xs text-gray-400 py-8">暂无图片</div>
-    <button v-if="images.length < total" @click="load(false)" class="w-full mt-3 py-2 text-xs text-pink-500 bg-white/75 rounded-xl hover:bg-pink-50 transition-all cursor-pointer border border-pink-100">
-      {{ loading ? '加载中...' : '加载更多' }}
-    </button>
+    <!-- 翻页 -->
+    <div v-if="images.length && totalPages > 1" class="flex items-center justify-center gap-2 mt-3 text-xs">
+      <button @click="goPage(page - 1)" :disabled="page <= 0"
+        class="px-2.5 py-1 bg-white/75 border border-pink-100 rounded-lg text-pink-500 hover:bg-pink-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">上一页</button>
+      <template v-for="item in pageWindow" :key="typeof item === 'number' ? item : item">
+        <span v-if="item === 'left' || item === 'right'" class="text-gray-400 px-1">...</span>
+        <button v-else @click="goPage(item as number)" :disabled="item === page"
+          :class="['px-2.5 py-1 rounded-lg cursor-pointer border', item === page ? 'bg-pink-500 text-white border-pink-500' : 'bg-white/75 border-pink-100 text-gray-600 hover:bg-pink-50']">{{ (item as number) + 1 }}</button>
+      </template>
+      <button @click="goPage(page + 1)" :disabled="page >= totalPages - 1"
+        class="px-2.5 py-1 bg-white/75 border border-pink-100 rounded-lg text-pink-500 hover:bg-pink-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">下一页</button>
+      <span class="text-gray-400 ml-1">{{ page + 1 }} / {{ totalPages }} 页 · 共 {{ total }} 张</span>
+    </div>
   </div>
 </template>

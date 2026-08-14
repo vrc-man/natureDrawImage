@@ -9,6 +9,7 @@ const items = ref<any[]>([])
 const total = ref(0)
 const loaded = ref(0)
 const pageSize = 30
+const page = ref(0)
 const selected = ref<Set<string>>(new Set())
 const loading = ref(false)
 const lastClickedIndex = ref(-1)
@@ -18,6 +19,21 @@ const editMode = ref(false)
 
 const shown = computed(() => items.value.length)
 const allSelected = computed(() => items.value.length > 0 && selected.value.size === items.value.length)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const pageWindow = computed(() => {
+  const tp = totalPages.value
+  if (tp <= 1) return []
+  const p = page.value
+  const s = Math.max(0, p - 2)
+  const e = Math.min(tp - 1, p + 2)
+  const items: (number | 'left' | 'right')[] = []
+  if (p > 0) items.push(p - 1)
+  if (s > 0) items.push('left')
+  for (let i = s; i <= e; i++) items.push(i)
+  if (e < tp - 1) items.push('right')
+  if (p < tp - 1) items.push(p + 1)
+  return items
+})
 
 // Filter
 const filterDateFrom = ref('')
@@ -30,17 +46,22 @@ async function loadImages(reset = true) {
   if (loading.value && !reset) return
   loading.value = true
   try {
-    if (reset) { items.value = []; selected.value.clear(); loaded.value = 0; lastClickedIndex.value = -1; rangePicking.value = false; rangeStartIndex.value = -1 }
-    let u = `/api/admin/images?limit=${pageSize}&offset=${loaded.value}`
+    if (reset) { items.value = []; selected.value.clear(); page.value = 0; lastClickedIndex.value = -1; rangePicking.value = false; rangeStartIndex.value = -1 }
+    let u = `/api/admin/images?limit=${pageSize}&offset=${page.value * pageSize}`
     if (nameSearch.value.trim()) u += '&name=' + encodeURIComponent(nameSearch.value.trim())
     const r = await api('GET', u)
-    const newItems = r.items || []
-    items.value.push(...newItems)
+    items.value = r.items || []
     total.value = r.total || 0
     loaded.value = items.value.length
   } catch (e: any) {
     if (reset) items.value = []
   } finally { loading.value = false }
+}
+
+function goPage(p: number) {
+  if (p < 0 || p >= totalPages.value || p === page.value) return
+  page.value = p
+  loadImages(false)
 }
 
 function searchByName() { loadImages(true) }
@@ -145,7 +166,16 @@ async function deleteSelected() {
     rangeStartIndex.value = -1
     total.value = Math.max(0, total.value - paths.length)
     loaded.value = items.value.length
-    if (!items.value.length && loaded.value < pageSize && loaded.value < total.value && total.value > 0) await loadImages(false)
+    // 翻页后：当前页删空且非第一页则回退一页；否则刷新当前页（页码可能因总数减少超界）
+    if (!items.value.length && page.value > 0) {
+      page.value = Math.min(page.value - 1, Math.max(0, Math.ceil(total.value / pageSize) - 1))
+      await loadImages(false)
+    } else if (page.value >= totalPages.value && page.value > 0) {
+      page.value = totalPages.value - 1
+      await loadImages(false)
+    } else {
+      await loadImages(false)
+    }
     alert(`删除完成：成功标记 ${marked} 张，失败 ${failed} 张`)
   } catch (e: any) { alert('删除失败: ' + e.message) }
 }
@@ -205,11 +235,18 @@ onMounted(() => loadImages(true))
           <div class="text-[8px] text-gray-400" v-if="img.mtime">{{ fmt(img.mtime) }}</div>
         </div>
       </div>
-      <div class="mt-3 text-center">
-        <button v-if="loaded < total" @click="loadImages(false)" :disabled="loading"
-          class="text-sm px-4 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer border-0 disabled:opacity-50">
-          {{ loading ? '加载中...' : '加载更多' }}
-        </button>
+      <!-- 翻页 -->
+      <div v-if="items.length && totalPages > 1 && !editMode" class="flex items-center justify-center gap-2 mt-3 text-xs">
+        <button @click="goPage(page - 1)" :disabled="page <= 0"
+          class="px-2.5 py-1 bg-gray-100 border border-gray-200 rounded text-gray-600 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">上一页</button>
+        <template v-for="item in pageWindow" :key="typeof item === 'number' ? item : item">
+          <span v-if="item === 'left' || item === 'right'" class="text-gray-400 px-1">...</span>
+          <button v-else @click="goPage(item as number)" :disabled="item === page"
+            :class="['px-2.5 py-1 rounded cursor-pointer border', item === page ? 'bg-blue-500 text-white border-blue-500' : 'bg-gray-100 border-gray-200 text-gray-600 hover:bg-gray-200']">{{ (item as number) + 1 }}</button>
+        </template>
+        <button @click="goPage(page + 1)" :disabled="page >= totalPages - 1"
+          class="px-2.5 py-1 bg-gray-100 border border-gray-200 rounded text-gray-600 hover:bg-gray-200 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">下一页</button>
+        <span class="text-gray-400 ml-1">{{ page + 1 }} / {{ totalPages }} 页 · 共 {{ total }} 张</span>
       </div>
     </div>
   </div>

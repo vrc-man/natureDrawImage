@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { loadMyImages, deleteMyImage, deleteMyImages, deleteAllMyImages } from '@/api/endpoints'
 import { useLightbox, type LbItem } from '@/composables/useLightbox'
 
@@ -8,22 +8,46 @@ const items = ref<any[]>([])
 const total = ref(0)
 const loading = ref(false)
 const pageSize = 30
+const page = ref(0)
 const selectMode = ref(false)
 const selected = ref<Set<string>>(new Set())
 const lastClickedIndex = ref(-1)
 const rangePicking = ref(false)
 const rangeStartIndex = ref(-1)
 
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const pageWindow = computed(() => {
+  const tp = totalPages.value
+  if (tp <= 1) return []
+  const p = page.value
+  const s = Math.max(0, p - 2)
+  const e = Math.min(tp - 1, p + 2)
+  const items: (number | 'left' | 'right')[] = []
+  if (p > 0) items.push(p - 1)
+  if (s > 0) items.push('left')
+  for (let i = s; i <= e; i++) items.push(i)
+  if (e < tp - 1) items.push('right')
+  if (p < tp - 1) items.push(p + 1)
+  return items
+})
+
 async function load(reset = false) {
   if (loading.value) return
   loading.value = true
   try {
-    if (reset) { items.value = []; selected.value = new Set() }
-    const d = await loadMyImages({ offset: items.value.length, limit: pageSize })
-    items.value.push(...(d.items || []))
+    if (reset) { items.value = []; page.value = 0; selected.value = new Set() }
+    const d = await loadMyImages({ offset: page.value * pageSize, limit: pageSize })
+    items.value = d.items || []
     total.value = d.total || 0
   } catch {}
   loading.value = false
+}
+
+function goPage(p: number) {
+  if (p < 0 || p >= totalPages.value || p === page.value) return
+  page.value = p
+  load(false)
+  window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 
 async function del(path: string) {
@@ -32,6 +56,11 @@ async function del(path: string) {
     items.value = items.value.filter((i: any) => i.path !== path)
     total.value = Math.max(0, total.value - (r?.deleted ?? 1))
     selected.value.delete(path)
+    // 当前页删空且非第一页 → 回退一页
+    if (!items.value.length && page.value > 0) {
+      page.value = Math.min(page.value - 1, Math.max(0, Math.ceil(total.value / pageSize) - 1))
+      load(false)
+    }
   } catch (e: any) { alert('删除失败: ' + (e?.message || e)) }
 }
 
@@ -98,6 +127,11 @@ async function deleteSelected() {
     total.value = Math.max(0, total.value - deleted)
     selected.value = new Set()
     alert(`删除完成：成功 ${deleted} 张，失败 ${Math.max(0, paths.length - deleted)} 张`)
+    // 翻页后：当前页删空且非第一页 → 回退一页
+    if (!items.value.length && page.value > 0) {
+      page.value = Math.min(page.value - 1, Math.max(0, Math.ceil(total.value / pageSize) - 1))
+      load(false)
+    }
   } catch (e: any) { alert('删除失败: ' + (e?.message || e)) }
 }
 
@@ -186,8 +220,18 @@ defineExpose({ load, items, total })
       <span class="text-xs text-gray-400">加载中请稍后...</span>
     </div>
     <div v-else class="text-center text-xs text-gray-400 py-8">暂无作品</div>
-    <button v-if="items.length < total && !selectMode" @click="load(false)" class="w-full mt-3 py-2 text-xs text-pink-500 bg-white/75 rounded-xl hover:bg-pink-50 transition-all cursor-pointer border border-pink-100">
-      {{ loading ? '加载中...' : '加载更多' }}
-    </button>
+    <!-- 翻页 -->
+    <div v-if="items.length && totalPages > 1 && !selectMode" class="flex items-center justify-center gap-2 mt-3 text-xs">
+      <button @click="goPage(page - 1)" :disabled="page <= 0"
+        class="px-2.5 py-1 bg-white/75 border border-pink-100 rounded-lg text-pink-500 hover:bg-pink-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">上一页</button>
+      <template v-for="item in pageWindow" :key="typeof item === 'number' ? item : item">
+        <span v-if="item === 'left' || item === 'right'" class="text-gray-400 px-1">...</span>
+        <button v-else @click="goPage(item as number)" :disabled="item === page"
+          :class="['px-2.5 py-1 rounded-lg cursor-pointer border', item === page ? 'bg-pink-500 text-white border-pink-500' : 'bg-white/75 border-pink-100 text-gray-600 hover:bg-pink-50']">{{ (item as number) + 1 }}</button>
+      </template>
+      <button @click="goPage(page + 1)" :disabled="page >= totalPages - 1"
+        class="px-2.5 py-1 bg-white/75 border border-pink-100 rounded-lg text-pink-500 hover:bg-pink-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer">下一页</button>
+      <span class="text-gray-400 ml-1">{{ page + 1 }} / {{ totalPages }} 页</span>
+    </div>
   </div>
 </template>
