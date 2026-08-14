@@ -14,6 +14,7 @@ const loading = ref(false)
 const lastClickedIndex = ref(-1)
 const rangePicking = ref(false)
 const rangeStartIndex = ref(-1)
+const editMode = ref(false)
 
 const shown = computed(() => items.value.length)
 const allSelected = computed(() => items.value.length > 0 && selected.value.size === items.value.length)
@@ -65,10 +66,26 @@ async function deleteByFilter() {
   finally { filtering.value = false }
 }
 
+function toggleEdit() {
+  editMode.value = !editMode.value
+  if (!editMode.value) {
+    selected.value.clear()
+    lastClickedIndex.value = -1
+    rangePicking.value = false
+    rangeStartIndex.value = -1
+  }
+}
+
+function onThumbClick(img: any, i: number, e: Event) {
+  // 编辑模式：阻止冒泡，只勾选不开灯箱；非编辑模式：不处理（冒泡触发 AdminLightbox 开灯箱）
+  if (editMode.value) {
+    e.stopPropagation()
+    toggleItem(img.path, i, (e as MouseEvent).shiftKey)
+  }
+}
+
 function toggleItem(path: string, index?: number, shiftKey = false) {
   const s = new Set(selected.value)
-
-  // 区间选择模式
   if (rangePicking.value) {
     if (rangeStartIndex.value < 0) {
       rangeStartIndex.value = index ?? 0
@@ -149,11 +166,12 @@ onMounted(() => loadImages(true))
         <button @click="resetSearch" class="text-xs px-2 py-1 bg-gray-200 text-gray-600 rounded hover:bg-gray-300 cursor-pointer border-0">重置</button>
       </div>
       <div class="flex gap-2">
-        <button @click="toggleAll" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer border-0">{{ allSelected ? '取消全选' : '全选' }}</button>
-        <button v-if="!rangePicking" @click="startRangePick" class="text-xs px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 cursor-pointer border-0">📏 区间选择</button>
-        <button v-else @click="rangePicking=false;rangeStartIndex=-1" class="text-xs px-2 py-1 bg-orange-100 text-orange-600 rounded hover:bg-orange-200 cursor-pointer border-0">✕ 取消区间</button>
-        <button v-if="selected.size > 0" @click="deleteSelected" class="text-xs px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 cursor-pointer border-0">&#x1F5D1; 删除选中 ({{ selected.size }})</button>
-        <button @click="loadImages(true)" class="text-xs px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer border-0">刷新</button>
+        <button @click="toggleEdit" :class="['px-2 py-1 rounded cursor-pointer border-0 text-xs', editMode ? 'bg-orange-500 text-white' : 'bg-gray-200 text-gray-600 hover:bg-gray-300']">{{ editMode ? '✕ 退出编辑' : '☑ 编辑' }}</button>
+        <button v-if="editMode" @click="toggleAll" class="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer border-0 text-xs">{{ allSelected ? '取消全选' : '全选' }}</button>
+        <button v-if="editMode && !rangePicking" @click="startRangePick" class="px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 cursor-pointer border-0 text-xs">📏 区间选择</button>
+        <button v-else-if="editMode && rangePicking" @click="rangePicking=false;rangeStartIndex=-1" class="px-2 py-1 bg-orange-100 text-orange-600 rounded hover:bg-orange-200 cursor-pointer border-0 text-xs">✕ 取消区间</button>
+        <button v-if="editMode && selected.size > 0" @click="deleteSelected" class="px-2 py-1 bg-red-500 text-white rounded hover:bg-red-600 cursor-pointer border-0 text-xs">&#x1F5D1; 删除选中 ({{ selected.size }})</button>
+        <button @click="loadImages(true)" class="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300 cursor-pointer border-0 text-xs">刷新</button>
       </div>
     </div>
 
@@ -176,10 +194,12 @@ onMounted(() => loadImages(true))
       <div v-if="!items.length" class="text-center text-gray-400 text-sm py-8">暂无图片</div>
       <div v-else class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
         <div v-for="(img, i) in items" :key="img.path" class="relative border rounded p-1 bg-gray-50" :class="{'ring-2 ring-blue-400': selected.has(img.path)}">
-          <input type="checkbox" :checked="selected.has(img.path)" @change="toggleItem(img.path, i, ($event as MouseEvent).shiftKey)" class="absolute top-0.5 left-0.5 w-4 h-4 cursor-pointer z-10" />
+          <input v-if="editMode" type="checkbox" :checked="selected.has(img.path)" @change="toggleItem(img.path, i, ($event as MouseEvent).shiftKey)" @click.stop class="absolute top-0.5 left-0.5 w-4 h-4 cursor-pointer z-10" />
           <img :src="'/api/output/thumb?path=' + encodeURIComponent(img.path || '')" loading="lazy" decoding="async"
-            class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer" @click="toggleItem(img.path, i, ($event as MouseEvent).shiftKey)"
-            :data-path="img.path" :data-mtime="img.mtime || ''" :data-ip="img.creator_ip || ''" />
+            class="lb-thumb w-full aspect-square object-cover rounded bg-white cursor-pointer"
+            :class="editMode ? '' : 'cursor-zoom-in'"
+            :data-path="img.path" :data-mtime="img.mtime || ''" :data-ip="img.creator_ip || ''"
+            @click="onThumbClick(img, i, $event)" />
           <div class="text-[9px] text-gray-500 mt-0.5 truncate" :title="img.path">{{ img.path.split('/').pop() }}</div>
           <div class="text-[8px] text-gray-400 truncate">{{ creatorInfo(img) || '\u00A0' }}</div>
           <div class="text-[8px] text-gray-400" v-if="img.mtime">{{ fmt(img.mtime) }}</div>
