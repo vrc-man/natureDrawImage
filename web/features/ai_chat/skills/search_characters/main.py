@@ -127,23 +127,20 @@ async def execute(args: dict, ctx) -> str:
         return "（参数为空）"
     if not db or not os.path.isfile(db):
         return "（角色库数据库未找到，请确认 skill_data.character_db 配置）"
-    # 中文查询：先用 LLM 翻译成英文，合并搜索
-    extra_q = ""
-    if _has_cn(q):
-        extra_q = await _translate_cn(q, ctx)
-        if extra_q:
-            extra_q = extra_q.split("_")[0]  # 取主词匹配（danbooru 作品后缀可能带冒号）
+
     try:
+        # 先中文/原始词直接查库；命中不足时才 LLM 翻译补充（避免中文命中仍浪费翻译）
         hits = _search_db(db, q)
-        if extra_q and not hits:
-            hits = _search_db(db, extra_q)
-        elif extra_q:
-            # 原词命中少时补充翻译结果
-            extra = _search_db(db, extra_q, limit=5)
-            seen = {h["danbooru_tag"] for h in hits}
-            for h in extra:
-                if h["danbooru_tag"] not in seen:
-                    hits.append(h)
+        if len(hits) < 5 and _has_cn(q):
+            extra_q = await _translate_cn(q, ctx)
+            if extra_q:
+                extra_q = extra_q.split("_")[0]  # 取主词匹配
+                extra = _search_db(db, extra_q, limit=5)
+                if extra:
+                    seen = {h["danbooru_tag"] for h in hits}
+                    for h in extra:
+                        if h["danbooru_tag"] not in seen:
+                            hits.append(h)
     except Exception as e:
         return f"（角色库查询失败: {type(e).__name__}）"
     if not hits:

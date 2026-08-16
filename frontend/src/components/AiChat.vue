@@ -901,6 +901,8 @@ const genCharacters = ref<{ name: string; tags: string; category: string }[]>([]
 const genStyles = ref<{ name: string; tags: string; category: string }[]>([])
 const genShowCharPicker = ref(false)
 const genShowStylePicker = ref(false)
+// 数据来源提示：仅首次打开角色弹窗时显示（localStorage 记住）
+const genCharSourceHint = ref(false)
 // 高级面板内角色/画风选择（独立开关，避免触发顶部工具条的全屏弹层）
 const genPanelCharPicker = ref(false)
 const genPanelStylePicker = ref(false)
@@ -909,6 +911,24 @@ const genAllCharSearch = ref('')
 const genAllCharResults = ref<{ name: string; franchise: string; tags: string; image?: string }[]>([])
 const genAllCharSearching = ref(false)
 let genAllCharTimer: any = null
+// 打开角色选择器：首次显示数据来源提示（localStorage 记住，只提示一次）
+function toggleCharPicker() {
+  genShowCharPicker.value = !genShowCharPicker.value
+  if (genShowCharPicker.value && !localStorage.getItem('charSourceHintShown')) {
+    genCharSourceHint.value = true
+    localStorage.setItem('charSourceHintShown', '1')
+  }
+}
+
+// 高级面板内的角色选择器：同样首次提示
+function togglePanelCharPicker() {
+  genPanelCharPicker.value = !genPanelCharPicker.value
+  if (genPanelCharPicker.value && !localStorage.getItem('charSourceHintShown')) {
+    genCharSourceHint.value = true
+    localStorage.setItem('charSourceHintShown', '1')
+  }
+}
+
 // 搜索全部角色库（SQLite 44000+，含花火等内置库没有的）
 function searchAllChars() {
   if (genAllCharTimer) clearTimeout(genAllCharTimer)
@@ -1721,7 +1741,7 @@ onMounted(async () => {
       <button @click="openWorkflowPicker" class="shrink-0 max-w-[130px] truncate text-[11px] px-2 py-1 rounded-lg cursor-pointer border-0 bg-gray-100 dark:bg-gray-700 dark:text-gray-300 hover:bg-pink-100 dark:hover:bg-pink-900/40" :title="genConfig.workflow_path">
         {{ genWorkflowName() || '选择工作流' }}
       </button>
-      <button @click="genShowCharPicker=!genShowCharPicker" class="shrink-0 max-w-[110px] truncate text-[11px] px-2 py-1 rounded-lg cursor-pointer border-0" :class="genConfig.character ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' : 'bg-gray-100 dark:bg-gray-700 dark:text-gray-300 hover:bg-blue-100'" :title="genConfig.character">
+      <button @click="toggleCharPicker" class="shrink-0 max-w-[110px] truncate text-[11px] px-2 py-1 rounded-lg cursor-pointer border-0" :class="genConfig.character ? 'bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300' : 'bg-gray-100 dark:bg-gray-700 dark:text-gray-300 hover:bg-blue-100'" :title="genConfig.character">
         {{ genConfig.characterName || genConfig.character || '🎯 角色' }}
       </button>
       <button @click="genShowStylePicker=!genShowStylePicker" class="shrink-0 max-w-[110px] truncate text-[11px] px-2 py-1 rounded-lg cursor-pointer border-0" :class="genConfig.style ? 'bg-emerald-100 dark:bg-emerald-900 text-emerald-700 dark:text-emerald-300' : 'bg-gray-100 dark:bg-gray-700 dark:text-gray-300 hover:bg-emerald-100'" :title="genConfig.style">
@@ -1750,6 +1770,7 @@ onMounted(async () => {
                   <input v-model="genAllCharSearch" @input="searchAllChars" type="text" placeholder="🔍 搜索全部角色库（40000+，含花火等）..." class="w-full border border-blue-200 dark:border-gray-600 rounded-lg px-2 py-1.5 pr-7 text-[11px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" />
                   <button v-if="genAllCharSearch" @click="genAllCharSearch=''; searchAllChars()" class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer border-0 bg-transparent px-1" title="清空搜索">✕</button>
                 </div>
+                <div v-if="genCharSourceHint" class="text-[9px] text-gray-400 dark:text-gray-500 px-1 mb-1.5 leading-relaxed" title="角色库基于公开的 Danbooru 标签体系构建，缩略图本地缓存">角色库来源：公开动漫角色数据库（Danbooru 标签体系），含 44000+ 角色 · 中文名自动翻译 · 缩略图本地缓存</div>
                 <div v-if="genAllCharSearching" class="flex items-center gap-1.5 text-[10px] text-blue-500 px-1 mb-1.5">
                   <span class="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></span>
                   正在搜索角色库...
@@ -2364,7 +2385,7 @@ onMounted(async () => {
               角色
               <div class="flex gap-1.5 mt-1">
                 <input v-model="genConfig.character" @input="genConfig.characterName = genConfig.character" type="text" class="flex-1 min-w-0 border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1.5 text-xs outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" placeholder="自定义角色 tags（可多个，逗号分隔）" />
-                <button @click="genPanelCharPicker=!genPanelCharPicker" class="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 hover:bg-blue-200">{{ genPanelCharPicker ? '收起' : '🎯 选内置' }}</button>
+                <button @click="togglePanelCharPicker" class="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 hover:bg-blue-200">{{ genPanelCharPicker ? '收起' : '🎯 选内置' }}</button>
                 <button @click="genConfig.character=''; genConfig.characterName=''; genConfig.characterCats=[]" class="shrink-0 px-2 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600" title="清空角色">✕</button>
               </div>
               <div v-if="genPanelCharPicker" class="mt-1.5 border border-gray-200 dark:border-gray-600 rounded-lg p-2 bg-gray-50 dark:bg-gray-700">
@@ -2390,6 +2411,7 @@ onMounted(async () => {
                     <input v-model="genAllCharSearch" @input="searchAllChars" type="text" placeholder="🔍 搜索全部角色库（40000+，含内置以外）..." class="w-full border border-blue-200 dark:border-gray-600 rounded-lg px-2 py-1.5 pr-7 text-[11px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" />
                     <button v-if="genAllCharSearch" @click="genAllCharSearch=''; searchAllChars()" class="absolute right-1.5 top-1/2 -translate-y-1/2 text-[11px] text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 cursor-pointer border-0 bg-transparent px-1" title="清空搜索">✕</button>
                   </div>
+                  <div v-if="genCharSourceHint" class="text-[9px] text-gray-400 dark:text-gray-500 px-1 mb-1.5 leading-relaxed" title="角色库基于公开的 Danbooru 标签体系构建，缩略图本地缓存">角色库来源：公开动漫角色数据库（Danbooru 标签体系），含 44000+ 角色 · 中文名自动翻译 · 缩略图本地缓存</div>
                   <div v-if="genAllCharSearching" class="flex items-center gap-1.5 text-[10px] text-blue-500 px-1 mb-1.5">
                     <span class="inline-block w-3 h-3 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></span>
                     正在搜索角色库...

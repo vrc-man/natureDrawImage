@@ -821,6 +821,13 @@ def _load_char_mem() -> None:
         print(f"[ai-chat] 角色库内存加载失败: {type(e).__name__}: {e}", flush=True)
 
 
+def _thumb_filename(tag: str) -> str:
+    """角色 tag → 缩略图文件名（Windows 非法字符转 _，与导入脚本一致）。"""
+    cleaned = "".join("_" if c in '<>:"/\\|?*' else c for c in tag)
+    cleaned = cleaned.rstrip(" .") or "unnamed"
+    return cleaned + ".webp"
+
+
 def _load_local_thumbs() -> int:
     """加载本地缩略图清单到内存 set（tag 集合）。
 
@@ -842,6 +849,142 @@ def _load_local_thumbs() -> int:
         print(f"[ai-chat] 本地缩略图清单加载失败: {type(e).__name__}: {e}", flush=True)
     _LOCAL_THUMBS = tags
     return len(tags)
+
+
+# ── Zerochan 角色名解析（danbooru_tag → Zerochan 精确角色名）──
+# Zerochan 与 Danbooru 命名规则不同（如 danbooru「kancolle」→ Zerochan「Kantai Collection」），
+# 用 suggest 接口前缀匹配 + 系列变体二次查询 + 角色页 URL 验证，得到精确角色页。
+_ZC_SERIES_ALIASES = {
+    "kancolle": ["kantai collection", "kan"],
+    "ff14": ["final fantasy xiv", "final fantasy 14", "ffxiv"],
+    "fate": ["fate"],
+    "re_zero": ["re:zero", "re zero"],
+    "steins_gate": ["steins;gate", "steins gate"],
+    "persona_5": ["persona 5"],
+    "persona": ["persona"],
+    "honkai_star_rail": ["honkai star rail"],
+    "cyberpunk_edgerunners": ["cyberpunk edgerunners"],
+    "dragon_ball": ["dragon ball"],
+}
+
+
+def _zc_norm(s: str) -> str:
+    """归一化：小写、去下划线、去重音、去标点、压缩空白。"""
+    import re as _re
+    import unicodedata as _ud
+    s = s.lower().replace("_", " ")
+    s = "".join(c for c in _ud.normalize("NFD", s) if _ud.category(c) != "Mn")
+    s = _re.sub(r"[^a-z0-9\s]", " ", s)
+    return _re.sub(r"\s+", " ", s).strip()
+
+
+def _zc_tag_parts(tag: str):
+    import re as _re
+    m = _re.match(r"^(.*?)(?:_\(|$)", tag)
+    main = m.group(1) if m else tag
+    series = _re.findall(r"\(([^)]+)\)", tag)
+    return main, [s.lower() for s in series]
+
+
+async def _resolve_zerochan(client, tag: str) -> str:
+    """danbooru_tag → Zerochan 精确角色名。失败返回空。
+
+    策略：主词高分直接信任 → 带括号系列二次查询（无右括号前缀匹配）
+    → 不带括号系列 → 主词低分 + URL 验证。
+    """
+    import re as _re
+    main, series = _zc_tag_parts(tag)
+    q1 = " ".join(w.capitalize() for w in main.replace("_", " ").split())
+    variants = []
+    for sv in series:
+        variants.append(sv.replace("_", " "))
+        variants += _ZC_SERIES_ALIASES.get(sv, [])
+
+    async def _suggest(q: str):
+        try:
+            r = await client.get("https://www.zerochan.net/suggest?q=" + urllib.parse.quote(q), timeout=10)
+            if r.status_code != 200:
+                return []
+            out = []
+            for line in r.text.split("\n"):
+                parts = line.split("|")
+                if len(parts) >= 3:
+                    out.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
+            return out
+        except Exception:
+            return []
+
+    async def _page_ok(name: str) -> bool:
+        try:
+            url = "https://www.zerochan.net/" + urllib.parse.quote(name, safe="+()/")
+            r = await client.get(url, timeout=10)
+            return r.status_code in (200, 302)
+        except Exception:
+            return False
+
+    def _match(sugs):
+        nmain = _zc_norm(main)
+        chars = [s for s in sugs if s[1] == "Character"]
+        if not chars:
+            return None
+
+        def name_score(s):
+            nl = _zc_norm(s[0])
+            if nl == nmain:
+                return 100
+            if nl.startswith(nmain) or nmain.startswith(nl):
+                return 50 - abs(len(nl) - len(nmain)) * 0.5
+            w = set(w for w in nmain.split() if len(w) > 3)
+            if w and w.issubset(set(nl.split())):
+                return 30
+            return 0
+
+        if series:
+            scored = []
+            for s in chars:
+                nl, np_ = _zc_norm(s[0]), _zc_norm(s[2])
+                for sv in series:
+                    sn = _zc_norm(sv)
+                    if not sn:
+                        continue
+                    parent_hit = sn in np_
+                    name_hit = sn in nl
+                    if parent_hit or name_hit:
+                        sc = name_score(s)
+                        if parent_hit and len(np_) <= 35:
+                            sc += 60
+                        elif parent_hit:
+                            sc += 40
+                        if name_hit:
+                            sc += 30
+                        scored.append((sc, s))
+                        break
+            if scored:
+                scored.sort(key=lambda x: -x[0])
+                return scored[0][1][0], max(int(scored[0][0]), 60)
+        scored = [(name_score(s), s) for s in chars]
+        scored.sort(key=lambda x: -x[0])
+        sc, s = scored[0]
+        if sc >= 45:
+            return s[0], int(sc)
+        return None
+
+    res = _match(await _suggest(q1))
+    if res and res[1] >= 80:
+        return res[0]
+    for v in variants:
+        q2 = q1 + " (" + v.capitalize()
+        chars = [s for s in await _suggest(q2) if s[1] == "Character"]
+        if chars and await _page_ok(chars[0][0]):
+            return chars[0][0]
+    for v in variants:
+        q3 = q1 + " " + " ".join(w.capitalize() for w in v.split())
+        chars = [s for s in await _suggest(q3) if s[1] == "Character"]
+        if chars and await _page_ok(chars[0][0]):
+            return chars[0][0]
+    if res and await _page_ok(res[0]):
+        return res[0]
+    return ""
 
 
 _load_char_mem()
@@ -1830,17 +1973,18 @@ async def api_search_characters(request: Request, q: str = ""):
             return f"ERR:{type(e).__name__}:{e}"
 
     async def _zerochan_thumb(tag: str) -> str:
-        """从 zerochan 拉角色缩略图 URL（零成本预览，转主词标题化查询）。失败返回空。"""
+        """从 zerochan 拉角色缩略图 URL（零成本预览）。
+
+        danbooru_tag → suggest 接口前缀匹配 + 系列变体二次查询 + 角色页 URL 验证，
+        拿精确角色页第一张缩略图。失败返回空。
+        """
         try:
-            main = tag.split("_(")[0]
-            qname = " ".join(w.capitalize() for w in main.replace("_", " ").split())
-            if not qname:
-                return ""
             client = await ctx("get_http_client")()
-            r = await client.get(
-                "https://www.zerochan.net/" + urllib.parse.quote(qname) + "?json",
-                headers={"User-Agent": "Mozilla/5.0"}, timeout=12,
-            )
+            zc_name = await _resolve_zerochan(client, tag)
+            if not zc_name:
+                return ""
+            url = "https://www.zerochan.net/" + urllib.parse.quote(zc_name, safe="+()/") + "?json"
+            r = await client.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
             if r.status_code >= 400:
                 return ""
             d = r.json()
@@ -1898,24 +2042,35 @@ async def api_search_characters(request: Request, q: str = ""):
             return {"characters": []}
         if not _CHAR_MEM:
             _load_char_mem()
+
+        # 先中文/原始词直接内存搜索（快）
         rows = _query_mem(q)
-        if not rows and _has_cn(q):
+        # 中文搜索命中不足时，才用 LLM 翻译成英文补充（避免中文命中仍浪费 LLM 调用）
+        if len(rows) < 5 and _has_cn(q):
             en = await _translate(q)
             if en and not en.startswith("ERR:"):
-                rows = _query_mem(en.split("_")[0])  # 取主词匹配
-
-        # 为缺失缩略图的角色后台补图（不阻塞搜索返回，前端先显示占位，下次搜索出图）
-        pending = [c for c in rows if c["danbooru_tag"] and not c.get("image")]
+                extra = _query_mem(en.split("_")[0])  # 取主词匹配
+                if extra:
+                    seen = {c["danbooru_tag"] for c in rows}
+                    for c in extra:
+                        if c["danbooru_tag"] not in seen:
+                            rows.append(c)
+        rows = rows[:30]
+        # 本地无缩略图的角色：同步 resolve Zerochan 并返回代理 URL（前端一次出图）。
+        # resolve 成功写内存+DB，下次搜索直接命中 image，不再重复 resolve。
+        pending = [c for c in rows if c["danbooru_tag"] and c["danbooru_tag"] not in _LOCAL_THUMBS]
         if pending:
-            async def _fill_thumb():
-                results = await asyncio.gather(*(_zerochan_thumb(c["danbooru_tag"]) for c in pending), return_exceptions=True)
-                for c, res in zip(pending, results):
-                    if isinstance(res, str) and res:
-                        _save_image_mem(db, c["danbooru_tag"], res)
-            try:
-                asyncio.create_task(_fill_thumb())
-            except Exception:
-                pass
+            sem = asyncio.Semaphore(5)
+
+            async def _one(c):
+                async with sem:
+                    return await _zerochan_thumb(c["danbooru_tag"])
+
+            results = await asyncio.gather(*(_one(c) for c in pending), return_exceptions=True)
+            for c, res in zip(pending, results):
+                if isinstance(res, str) and res:
+                    _save_image_mem(db, c["danbooru_tag"], res)
+                    c["image"] = res
 
         chars = []
         for c in rows:
@@ -1968,11 +2123,15 @@ async def api_ai_chat_char_thumb(request: Request, u: str = ""):
 
 @router.get("/api/features/ai-chat/char-thumb-local")
 async def api_ai_chat_char_thumb_local(request: Request, name: str = ""):
-    """AI 聊天角色缩略图本地缓存：读 character_thumbnails/{tag}.webp。不存在返回 404。"""
+    """AI 聊天角色缩略图本地缓存：读 character_thumbnails/ 下 tag 对应文件。不存在返回 404。
+
+    tag 中 Windows 非法字符（: 等）会转成 _ 存盘，此处用同一规则定位文件。
+    """
     name = (name or "").strip()
-    if not name or "/" in name or "\\" in name or ".." in name:
+    if not name or ".." in name:
         raise HTTPException(400, "invalid name")
-    f = CHAR_THUMB_LOCAL_DIR / f"{name}.webp"
+    fname = _thumb_filename(name)  # / \ : 等非法字符已转 _，不会产生路径分隔
+    f = CHAR_THUMB_LOCAL_DIR / fname
     if not f.is_file():
         raise HTTPException(404, "缩略图不存在")
     try:

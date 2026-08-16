@@ -157,3 +157,7 @@ frontend/*.tsbuildinfo
 
 # ── AI 聊天技能说明书（skill.json 需入库，否则新环境技能无法加载） ──
 !web/features/*/skills/**/skill.json
+
+# 角色库缩略图本地缓存（AnimaDex 导入生成，不提交）
+web/features/ai_chat/skills/search_characters/character_thumbnails/
+
