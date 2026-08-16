@@ -28,6 +28,10 @@ let orbitDist = 6.5                               // 默认观察距离
 let orbitDragging = false
 let orbitLastX = 0
 let orbitLastY = 0
+// 观察轨道变更计数（用于模板高亮刷新，orbitAz 是普通变量）
+const orbitTick = ref(0)
+// 仰视/俯视滑条输入（同步到 orbitEl 普通变量）
+const orbitElInput = ref(35)
 
 // ── three.js 场景 ──
 let renderer: THREE.WebGLRenderer | null = null
@@ -35,8 +39,7 @@ let scene: THREE.Scene | null = null
 let camera: THREE.PerspectiveCamera | null = null
 let cameraIndicator: THREE.Mesh | null = null
 let camGlow: THREE.Mesh | null = null
-let imagePlane: THREE.Mesh | null = null
-let imageFrame: THREE.LineSegments | null = null
+let personBody: THREE.Mesh | null = null   // 观察对象（厚长方体，正面贴照片）
 let planeMat: THREE.MeshBasicMaterial | null = null
 let distanceLine: THREE.Line | null = null
 let azimuthRing: THREE.Mesh | null = null
@@ -57,6 +60,12 @@ let dragTarget: string | null = null  // 'azimuth' | 'elevation' | 'distance'
 let hoveredHandle: string | null = null
 let animationId: number | null = null
 let time = 0
+// 右上角小坐标轴（Blender 风格 mini gizmo）
+let gizmoRenderer: THREE.WebGLRenderer | null = null
+let gizmoScene: THREE.Scene | null = null
+let gizmoCamera: THREE.PerspectiveCamera | null = null
+let gizmoAxes: THREE.Group | null = null
+const gizmoRef = ref<HTMLElement | null>(null)
 const CENTER = new THREE.Vector3(0, 0.5, 0)
 const AZIMUTH_RADIUS = 1.8
 const ELEVATION_RADIUS = 1.4
@@ -179,20 +188,41 @@ function initThree() {
   const axes = new THREE.AxesHelper(2.2)
   scene.add(axes)
 
-  // 中央图片卡片
-  const cardGeo = new THREE.BoxGeometry(1.2, 1.2, 0.02)
-  planeMat = new THREE.MeshBasicMaterial({ color: 0x3a3a4a })
-  const backMat = new THREE.MeshBasicMaterial({ color: 0x1a1a2a })
-  const edgeMat = new THREE.MeshBasicMaterial({ color: 0x1a1a2a })
-  imagePlane = new THREE.Mesh(cardGeo, [edgeMat, edgeMat, edgeMat, edgeMat, planeMat, backMat])
-  imagePlane.position.copy(CENTER)
-  scene.add(imagePlane)
-
-  const frameGeo = new THREE.EdgesGeometry(cardGeo)
-  const frameMat = new THREE.LineBasicMaterial({ color: 0xE93D82 })
-  imageFrame = new THREE.LineSegments(frameGeo, frameMat)
-  imageFrame.position.copy(CENTER)
-  scene.add(imageFrame)
+  // 中央观察对象：厚度明显的长方体（正面贴照片；左右前后贴文字标签）
+  const bodyGeo = new THREE.BoxGeometry(0.55, 1.3, 0.35)
+  planeMat = new THREE.MeshBasicMaterial({ color: 0x6a6a8a })   // +Z 正面（照片）
+  const mkTextMat = (text: string, bg: string, fg: string) => {
+    // Canvas 生成文字贴图
+    const cv = document.createElement('canvas')
+    cv.width = 256; cv.height = 256
+    const ctx = cv.getContext('2d')!
+    ctx.fillStyle = bg
+    ctx.fillRect(0, 0, 256, 256)
+    ctx.fillStyle = fg
+    ctx.font = 'bold 64px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(text, 128, 128)
+    const tex = new THREE.CanvasTexture(cv)
+    tex.needsUpdate = true
+    return new THREE.MeshBasicMaterial({ map: tex })
+  }
+  const matRight = mkTextMat('右', '#8a2a2a', '#ffffff')   // +X 右面
+  const matLeft = mkTextMat('左', '#2a6a2a', '#ffffff')    // -X 左面
+  const matFront = mkTextMat('正', '#6a3a8a', '#ffffff')   // +Z 正面（照片覆盖后显示照片）
+  const matBack = mkTextMat('后', '#2a3a7a', '#ffffff')    // -Z 后面
+  const matTop = mkTextMat('上', '#4a4a5a', '#ffffff')     // +Y 顶
+  const matBottom = mkTextMat('下', '#33334a', '#ffffff')  // -Y 底
+  planeMat = matFront   // loadImage 贴照片到正面
+  personBody = new THREE.Mesh(bodyGeo, [matRight, matLeft, matTop, matBottom, planeMat, matBack])
+  personBody.position.set(CENTER.x, 0.65, CENTER.z)   // 底部贴地（y=0），厚 0.35 明显可见
+  scene.add(personBody)
+  // 长方体粉色描边（强化轮廓与朝向）
+  const bodyFrameGeo = new THREE.EdgesGeometry(bodyGeo)
+  const bodyFrameMat = new THREE.LineBasicMaterial({ color: 0xE93D82 })
+  const bodyFrame = new THREE.LineSegments(bodyFrameGeo, bodyFrameMat)
+  bodyFrame.position.copy(personBody.position)
+  scene.add(bodyFrame)
 
   const glowRingGeo = new THREE.RingGeometry(0.55, 0.58, 64)
   const glowRingMat = new THREE.MeshBasicMaterial({ color: 0xE93D82, transparent: true, opacity: 0.4, side: THREE.DoubleSide })
@@ -261,6 +291,43 @@ function initThree() {
   canvas.addEventListener('touchmove', onTouchMove, { passive: false })
   canvas.addEventListener('touchend', onPointerUp)
 
+  // 右上角 mini 坐标轴（Blender 风格：红X/绿Y/蓝Z + 圆锥箭头，跟随观察相机）
+  const gizmoEl = gizmoRef.value
+  if (gizmoEl) {
+    const gw = gizmoEl.clientWidth || 96
+    const gh = gizmoEl.clientHeight || 96
+    gizmoScene = new THREE.Scene()
+    gizmoCamera = new THREE.PerspectiveCamera(35, gw / gh, 0.1, 100)
+    gizmoCamera.position.set(0, 0, 4)
+    gizmoRenderer = new THREE.WebGLRenderer({ antialias: true, alpha: true })
+    gizmoRenderer.setSize(gw, gh, false)
+    gizmoRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    gizmoEl.appendChild(gizmoRenderer.domElement)
+    // 用 Group 装轴线，方便整体跟随旋转
+    gizmoAxes = new THREE.Group()
+    const axisLen = 0.85
+    const mkAxis = (color: number) => {
+      const lineMat = new THREE.LineBasicMaterial({ color, linewidth: 1 })
+      const pts = [new THREE.Vector3(0, 0, 0), new THREE.Vector3(axisLen, 0, 0)]
+      const geo = new THREE.BufferGeometry().setFromPoints(pts)
+      const line = new THREE.Line(geo, lineMat)
+      const coneGeo = new THREE.ConeGeometry(0.05, 0.16, 12)
+      const coneMat = new THREE.MeshBasicMaterial({ color })
+      const cone = new THREE.Mesh(coneGeo, coneMat)
+      cone.position.set(axisLen + 0.08, 0, 0)
+      cone.rotation.z = -Math.PI / 2
+      const grp = new THREE.Group()
+      grp.add(line); grp.add(cone)
+      return grp
+    }
+    const xAx = mkAxis(0xff4d4d); xAx.rotation.z = 0
+    const yAx = mkAxis(0x4dff4d); yAx.rotation.z = Math.PI / 2
+    const zAx = mkAxis(0x4d9fff); zAx.rotation.y = Math.PI / 2
+    gizmoAxes.add(xAx, yAx, zAx)
+    gizmoScene.add(gizmoAxes)
+    gizmoScene.add(new THREE.AmbientLight(0xffffff, 1))
+  }
+
   const resizeObs = new ResizeObserver(() => {
     if (renderer && camera && container) {
       const w = container.clientWidth
@@ -291,6 +358,13 @@ function initThree() {
       )
       camera.lookAt(CENTER.x, CENTER.y, CENTER.z)
       renderer.render(scene, camera)
+      // mini 坐标轴：整体旋转方向与观察相机一致（水平=orbitAz，垂直=orbitEl）
+      if (gizmoAxes && gizmoCamera && gizmoRenderer) {
+        gizmoAxes.rotation.order = 'YXZ'
+        gizmoAxes.rotation.y = orbitAz * Math.PI / 180
+        gizmoAxes.rotation.x = -orbitEl * Math.PI / 180
+        gizmoRenderer.render(gizmoScene!, gizmoCamera)
+      }
     }
   }
   loop()
@@ -409,6 +483,7 @@ function onPointerUp() {
   if (orbitDragging) {
     orbitDragging = false
     if (renderer) renderer.domElement.style.cursor = 'default'
+    orbitTick.value++
     return
   }
   if (isDragging) {
@@ -434,7 +509,7 @@ function onTouchMove(e: TouchEvent) {
 }
 
 function loadImage(url: string) {
-  if (!planeMat || !imagePlane || !imageFrame) return
+  if (!planeMat || !personBody) return
   const img = new Image()
   if (!url.startsWith('data:')) img.crossOrigin = 'anonymous'
   img.onload = () => {
@@ -446,13 +521,6 @@ function loadImage(url: string) {
       planeMat.color.set(0xffffff)
       planeMat.needsUpdate = true
     }
-    const ar = img.width / img.height
-    const maxSize = 1.5
-    let scaleX = 1.2, scaleY = 1.2
-    if (ar > 1) { scaleX = maxSize; scaleY = maxSize / ar }
-    else { scaleY = maxSize; scaleX = maxSize * ar }
-    if (imagePlane) imagePlane.scale.set(scaleX, scaleY, 1)
-    if (imageFrame) imageFrame.scale.set(scaleX, scaleY, 1)
   }
   img.onerror = () => {
     if (planeMat) { planeMat.map = null; planeMat.color.set(0xE93D82); planeMat.needsUpdate = true }
@@ -483,6 +551,28 @@ function reset() {
   orbitAz = Math.atan2(4, 4) * 180 / Math.PI
   orbitEl = 35
   orbitDist = 6.5
+  orbitElInput.value = 35
+  orbitTick.value++
+}
+
+// ── 快捷观察视角（左上角折叠面板，方便手机无右键）──
+const quickPanelOpen = ref(true)
+const QUICK_VIEWS = [
+  { key: 'front', label: '正面', az: 0 },
+  { key: 'back', label: '背面', az: 180 },
+  { key: 'left', label: '左面', az: 270 },
+  { key: 'right', label: '右面', az: 90 },
+]
+function setQuickView(az: number) {
+  // 切换第三人称观察轨道（不改变被调相机的生成角度）
+  orbitAz = ((az % 360) + 360) % 360
+  orbitTick.value++
+}
+
+function setOrbitElevation(v: number) {
+  orbitEl = Math.max(5, Math.min(85, v))
+  orbitElInput.value = orbitEl
+  orbitTick.value++
 }
 
 onMounted(() => {
@@ -498,13 +588,40 @@ onUnmounted(() => {
   window.removeEventListener('mousemove', onPointerMove)
   window.removeEventListener('mouseup', onPointerUp)
   if (renderer) renderer.domElement.removeEventListener('contextmenu', onContextMenu)
+  if (gizmoRenderer && gizmoRenderer.domElement.parentElement) {
+    gizmoRenderer.domElement.parentElement.removeChild(gizmoRenderer.domElement)
+    gizmoRenderer.dispose()
+  }
 })
 </script>
 
 <template>
   <div class="space-y-3">
     <!-- 3D 场景 -->
-    <div ref="wrapRef" class="relative w-full h-72 rounded-2xl overflow-hidden" style="background:#0a0a0f"></div>
+    <div ref="wrapRef" class="relative w-full h-72 rounded-2xl overflow-hidden" style="background:#0a0a0f">
+      <!-- 左上角：第三人称观察视角快捷切换（折叠面板，方便手机） -->
+      <div class="absolute top-2 left-2 z-10 flex flex-col items-start gap-1">
+        <button @click="quickPanelOpen=!quickPanelOpen" class="px-2 py-1 rounded-md text-[10px] font-semibold cursor-pointer border-0 bg-black/60 text-white/90 hover:bg-black/80 backdrop-blur-sm flex items-center gap-1">
+          <span class="inline-block transition-transform" :class="quickPanelOpen ? 'rotate-180' : ''">▾</span>
+          视角
+        </button>
+        <div v-if="quickPanelOpen" class="flex flex-col gap-1 bg-black/60 backdrop-blur-sm rounded-md p-1">
+          <button v-for="v in QUICK_VIEWS" :key="v.key" @click="setQuickView(v.az)"
+            class="px-2 py-1 rounded text-[10px] cursor-pointer border-0 transition-colors"
+            :class="Math.round(orbitAz % 360) === v.az && orbitTick >= 0 ? 'bg-pink-500 text-white' : 'bg-white/10 text-white/85 hover:bg-white/20'"
+            :title="'切到' + v.label + '观察视角'">{{ v.label }}</button>
+          <!-- 仰视/俯视滑条（第三人称观察轨道的垂直角） -->
+          <div class="flex items-center gap-1.5 px-0.5 py-1">
+            <span class="text-[9px] text-white/60 shrink-0">仰视</span>
+            <input type="range" min="5" max="85" step="1" v-model.number="orbitElInput" @input="setOrbitElevation(Number(orbitElInput))"
+              class="flex-1 accent-pink-500 h-1 cursor-pointer" />
+            <span class="text-[9px] text-white/60 shrink-0">俯视</span>
+          </div>
+        </div>
+      </div>
+      <!-- 右上角：Blender 风格 mini 坐标轴（红X/绿Y/蓝Z，跟随观察相机） -->
+      <div ref="gizmoRef" class="absolute top-2 right-2 z-10 w-20 h-20 pointer-events-none opacity-90"></div>
+    </div>
 
     <!-- 提示词预览 -->
     <div class="text-[11px] font-mono text-gray-400 px-2 py-1.5 bg-gray-900/60 rounded-lg truncate" :title="promptText">{{ promptText }}</div>
