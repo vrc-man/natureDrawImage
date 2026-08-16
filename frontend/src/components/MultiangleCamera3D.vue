@@ -167,9 +167,17 @@ function initThree() {
   fillLight.position.set(-5, 5, -5)
   scene.add(fillLight)
 
-  gridHelper = new THREE.GridHelper(5, 20, 0x1a1a2e, 0x12121a)
+  // 大地网格（增强空间感）：大范围 + 亮主线 + 辅助细线 + 坐标轴
+  gridHelper = new THREE.GridHelper(8, 24, 0xE93D82, 0x2a2a44)
   gridHelper.position.y = -0.01
   scene.add(gridHelper)
+  // 外圈更大网格（表现地面延伸感）
+  const bigGrid = new THREE.GridHelper(16, 32, 0x33334d, 0x1c1c30)
+  bigGrid.position.y = -0.02
+  scene.add(bigGrid)
+  // 坐标轴（红=X 绿=Y 蓝=Z），Y 轴竖立增强立体感
+  const axes = new THREE.AxesHelper(2.2)
+  scene.add(axes)
 
   // 中央图片卡片
   const cardGeo = new THREE.BoxGeometry(1.2, 1.2, 0.02)
@@ -336,8 +344,8 @@ function onPointerMove(event: MouseEvent) {
     const dy = event.clientY - orbitLastY
     orbitLastX = event.clientX
     orbitLastY = event.clientY
-    orbitAz = ((orbitAz - dx * 0.4) % 360 + 360) % 360
-    orbitEl = Math.max(5, Math.min(85, orbitEl + dy * 0.3))
+    orbitAz = ((orbitAz - dx * 0.5) % 360 + 360) % 360
+    orbitEl = Math.max(5, Math.min(85, orbitEl + dy * 0.4))
     return
   }
   getMouse(event)

@@ -166,7 +166,7 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
             <!-- Characters -->
             <div class="char-picker-col">
               <h4 class="flex items-center gap-1.5 text-sm font-bold text-gray-700 mb-1.5">🎭 角色</h4>
-              <input v-model="charSearch" placeholder="搜索角色..." class="w-full border border-pink-200 rounded-xl px-2 py-1 text-xs outline-none focus:border-pink-400 box-border" style="font-size:12px;padding:4px 8px" />
+              <input v-model="charSearch" placeholder="🔍 搜索角色..." class="w-full border border-pink-200 rounded-xl px-3 py-2 text-xs outline-none focus:border-pink-400 box-border" style="font-size:12px" />
               <div class="char-picker-grid flex flex-wrap gap-1 mt-2">
                 <template v-for="(items, cat) in charGroups" :key="cat">
                   <div class="wf-cat-title flex items-center gap-1 cursor-pointer select-none text-xs font-semibold text-gray-400 mt-2 mb-1 w-full" @click="charCatExpanded[cat] = !charCatExpanded[cat]">
@@ -188,7 +188,7 @@ function getSelectedCharTags() { return selectedChars.value.join(', ') }
             <!-- Styles -->
             <div class="char-picker-col">
               <h4 class="flex items-center gap-1.5 text-sm font-bold text-gray-700 mb-1.5">🖌️ 画风</h4>
-              <input v-model="styleSearch" placeholder="搜索画风..." class="w-full border border-pink-200 rounded-xl px-2 py-1 text-xs outline-none focus:border-pink-400 box-border" style="font-size:12px;padding:4px 8px" />
+              <input v-model="styleSearch" placeholder="🔍 搜索画风..." class="w-full border border-pink-200 rounded-xl px-3 py-2 text-xs outline-none focus:border-pink-400 box-border" style="font-size:12px" />
               <div class="char-picker-grid flex flex-wrap gap-1 mt-2">
                 <template v-for="(items, cat) in styleGroups" :key="cat">
                   <div class="wf-cat-title flex items-center gap-1 cursor-pointer select-none text-xs font-semibold text-gray-400 mt-2 mb-1 w-full" @click="styleCatExpanded[cat] = !styleCatExpanded[cat]">

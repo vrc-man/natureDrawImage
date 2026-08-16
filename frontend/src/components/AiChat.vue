@@ -1759,13 +1759,11 @@ onMounted(async () => {
       <Teleport to="body">
         <div v-if="genShowCharPicker || genShowStylePicker" class="fixed inset-0 z-[86] bg-black/30 backdrop-blur-sm flex items-start justify-center pt-16 p-4" @click="genShowCharPicker=false; genShowStylePicker=false">
           <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-[min(96rem,calc(100vw_-_2rem))] w-full p-4 max-h-[70vh] flex flex-col" @click.stop>
-            <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2 mb-2 flex-wrap">
               <h3 class="text-sm font-bold text-gray-700 dark:text-gray-200">{{ genShowCharPicker ? '🎯 选择角色' : '🎨 选择画风' }}</h3>
-              <div class="flex items-center gap-2">
-                <input v-if="genShowCharPicker" v-model="genCharSearch" type="text" placeholder="搜索角色..." class="border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-[11px] outline-none w-32 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" />
-                <input v-else v-model="genStyleSearch" type="text" placeholder="搜索画风..." class="border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-[11px] outline-none w-32 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" />
-                <button @click="genShowCharPicker=false; genShowStylePicker=false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
-              </div>
+              <input v-if="genShowCharPicker" v-model="genCharSearch" type="text" placeholder="🔍 搜索角色..." class="flex-1 min-w-[200px] border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-[12px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:border-pink-400" />
+              <input v-else v-model="genStyleSearch" type="text" placeholder="🔍 搜索画风..." class="flex-1 min-w-[200px] border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-[12px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:border-pink-400" />
+              <button @click="genShowCharPicker=false; genShowStylePicker=false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
             </div>
             <div class="flex-1 overflow-y-auto min-h-0 space-y-2">
               <template v-if="genShowCharPicker">
@@ -1835,9 +1833,9 @@ onMounted(async () => {
       <Teleport to="body">
         <div v-if="showWfPicker" class="fixed inset-0 z-[80] bg-black/30 backdrop-blur-sm flex items-start justify-center pt-16 p-4" @click="showWfPicker=false">
           <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-xl max-w-[min(96rem,calc(100vw_-_2rem))] w-full p-4 max-h-[70vh] flex flex-col" @click.stop>
-            <div class="flex items-center justify-between mb-2">
+            <div class="flex items-center gap-2 mb-2 flex-wrap">
               <h3 class="text-sm font-bold text-gray-700 dark:text-gray-200">📋 选择工作流（文生图）</h3>
-              <input v-model="genWfSearch" type="text" placeholder="搜索工作流..." class="border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-[11px] outline-none w-32 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200" />
+              <input v-model="genWfSearch" type="text" placeholder="🔍 搜索工作流（名称/分类）..." class="flex-1 min-w-[200px] border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-[12px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 focus:border-pink-400" />
               <button @click="showWfPicker=false" class="text-gray-400 hover:text-gray-600 text-xl cursor-pointer border-0 bg-transparent">&times;</button>
             </div>
             <div class="flex-1 overflow-y-auto min-h-0 space-y-2">
@@ -2398,7 +2396,7 @@ onMounted(async () => {
                 <button @click="genConfig.character=''; genConfig.characterName=''; genConfig.characterCats=[]" class="shrink-0 px-2 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600" title="清空角色">✕</button>
               </div>
               <div v-if="genPanelCharPicker" class="mt-1.5 border border-gray-200 dark:border-gray-600 rounded-lg p-2 bg-gray-50 dark:bg-gray-700">
-                <input v-model="genCharSearch" type="text" placeholder="搜索角色..." class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-[11px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 mb-1.5" />
+                <input v-model="genCharSearch" type="text" placeholder="🔍 搜索角色..." class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-[12px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 mb-1.5 focus:border-pink-400" />
                 <div class="max-h-44 overflow-y-auto space-y-2">
                   <div v-for="g in genCharGroups" :key="g.category" class="space-y-0.5">
                     <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 px-1 pt-1 first:pt-0 sticky bg-gray-50 dark:bg-gray-700">{{ g.category }} <span class="text-gray-400">({{ g.items.length }})</span></div>
@@ -2446,7 +2444,7 @@ onMounted(async () => {
                 <button @click="genConfig.style=''; genConfig.styleName=''; genConfig.styleCat=''" class="shrink-0 px-2 py-1.5 rounded-lg text-[11px] cursor-pointer border-0 bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600" title="清空画风">✕</button>
               </div>
               <div v-if="genPanelStylePicker" class="mt-1.5 border border-gray-200 dark:border-gray-600 rounded-lg p-2 bg-gray-50 dark:bg-gray-700">
-                <input v-model="genStyleSearch" type="text" placeholder="搜索画风..." class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-2 py-1 text-[11px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 mb-1.5" />
+                <input v-model="genStyleSearch" type="text" placeholder="🔍 搜索画风..." class="w-full border border-gray-200 dark:border-gray-600 rounded-lg px-3 py-2 text-[12px] outline-none bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 mb-1.5 focus:border-pink-400" />
                 <div class="max-h-44 overflow-y-auto space-y-2">
                   <div v-for="g in genStyleGroups" :key="g.category" class="space-y-0.5">
                     <div class="text-[10px] font-semibold text-gray-500 dark:text-gray-400 px-1 pt-1 first:pt-0 sticky bg-gray-50 dark:bg-gray-700">{{ g.category }} <span class="text-gray-400">({{ g.items.length }})</span></div>
