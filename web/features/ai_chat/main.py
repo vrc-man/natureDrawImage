@@ -1670,12 +1670,12 @@ async def api_ai_chat_send(request: Request):
                     if _is_natural_lang:
                         gen_sys_guide += f"\n\n【用户已在顶部选择角色】{selected_characters}。注意：当前工作流是**自然语言模型**（不识别 Danbooru 标签，反斜杠转义也无意义）。不要把｜后面的标签整串原样贴进 prompt，而是**把该角色的外貌特征转化为通顺的自然语言描述**（主体+发型发色+瞳色+服装+气质），融合进画面描述；角色名/作品可保留（如 a girl resembling Ganyu from Genshin Impact）。不要用 multiple girls 这类标签，改用 two girls 等自然描述。"
                     else:
-                        gen_sys_guide += f"\n\n【用户已在顶部选择角色】{selected_characters}。格式为「角色名（分类）｜触发词」：触发词是可直接使用的 Danbooru 标签，生成 prompt 时**直接原样使用｜后面的触发词**（反斜杠转义如 `\\(` `\\)` **必须一字不差保留，绝对不能删除**），不要丢弃、不要改写、不要再用 search_characters 重复搜索；多角色用 multiple girls 等组合（多角色用 multiple girls / 多个角色标签）。"
+                        gen_sys_guide += f"\n\n【用户已在顶部选择角色】{selected_characters}。格式为「角色名（分类）｜触发词」：触发词是可直接使用的 Danbooru 标签，生成 prompt 时**原样使用｜后面的触发词整串**，不丢弃、不删减其中任何标签；**若触发词本身带反斜杠转义（如 `\\(` `\\)`）则必须一字不差保留，但若原始没有反斜杠则绝不自行添加 `\\(` `\\)`**。不要改写、不要再用 search_characters 重复搜索；多角色用 multiple girls 等组合。"
                 if selected_style:
                     if _is_natural_lang:
                         gen_sys_guide += f"\n\n【用户已在顶部选择画风】{selected_style}。注意：当前工作流是**自然语言模型**（不识别 Danbooru 标签）。不要把｜后面的标签原样贴进 prompt，而是**用自然语言描述该画风的效果**（如：精致厚涂质感、细腻光影、柔和色彩），并把画风名/分类名保留在自然描述中。"
                     else:
-                        gen_sys_guide += f"\n\n【用户已在顶部选择画风】{selected_style}。格式为「画风名（分类）｜触发词」：触发词是可直接使用的标签，生成 prompt 时**直接原样使用｜后面的触发词**（反斜杠转义如 `\\(` `\\)` **必须一字不差保留，绝对不能删除**），不要丢弃、不要改写、不要再用 search_styles 重复搜索。"
+                        gen_sys_guide += f"\n\n【用户已在顶部选择画风】{selected_style}。格式为「画风名（分类）｜触发词」：触发词是可直接使用的标签，生成 prompt 时**原样使用｜后面的触发词整串**，不丢弃、不删减、不拆分其中的任何标签（含 masterpiece/best quality/highres 等质量词与画师触发词）；**若触发词本身带反斜杠转义（如 `\\(` `\\)`）则必须一字不差保留，但若触发词原始没有反斜杠则**绝不自行添加** `\\(` `\\)`**。不要改写、不要再用 search_styles 重复搜索。"
                     # 画风 ↔ 工作流关联：顶部同时选了画风和工作流时，声明其匹配关系（用户可能已选用对应画风 lora 的工作流）
                     if workflow_path:
                         _wf_style = str(workflow_path).replace("\\", "/").rsplit("/", 1)[-1].replace(".json", "")
