@@ -149,6 +149,9 @@ function applyCustomStyle() {
 
 const showReasoning = ref(localStorage.getItem('aiChatShowReasoning') !== '0')
 function toggleShowReasoning() { showReasoning.value = !showReasoning.value; localStorage.setItem('aiChatShowReasoning', showReasoning.value ? '1' : '0') }
+// 思考过程默认折叠（开=折叠，关=展开；默认折叠）
+const reasonCollapsedByDefault = ref(localStorage.getItem('aiChatReasonCollapsed') !== '0')
+function toggleReasonCollapsed() { reasonCollapsedByDefault.value = !reasonCollapsedByDefault.value; localStorage.setItem('aiChatReasonCollapsed', reasonCollapsedByDefault.value ? '1' : '0') }
 const autoApprove = ref(localStorage.getItem('aiChatAutoApprove') === '1')
 function toggleAutoApprove() { autoApprove.value = !autoApprove.value; localStorage.setItem('aiChatAutoApprove', autoApprove.value ? '1' : '0') }
 
@@ -1562,6 +1565,30 @@ function genFromReverse(text: string) {
   scrollBottom()
 }
 
+// AI 助手回复 → 生成审核生图参数卡片（用该条回复文本作为正向提示词）
+function genCardFromAssistant(idx: number, text: string) {
+  if (!text || !text.trim()) return
+  const msg = messages.value[idx]
+  if (!msg) return
+  // 从回复文本中剥离标题/表格等，取正向提示词部分；若回复已含 prompt 文本则直接用
+  let prompt = text.trim()
+  const m = text.match(/正向提示词[：:]\s*```?([\s\S]*?)```?/i)
+  if (m && m[1] && m[1].trim()) prompt = m[1].trim()
+  const card: GenCardData = {
+    prompt,
+    negative_prompt: genConfig.value.negative || '',
+    width: genConfig.value.width || 896,
+    height: genConfig.value.height || 1152,
+    character: genConfig.value.character || '',
+    style: genConfig.value.style || '',
+    userReq: '',
+  }
+  msg.genCard = card
+  msg.genCardStatus = 'pending'
+  genTargetIndex.value = idx
+  scrollBottom()
+}
+
 // 复制文本到剪贴板
 async function copyText(text: string) {
   try {
@@ -1901,8 +1928,8 @@ onMounted(async () => {
           <div class="max-w-[85%] rounded-2xl px-3 py-2 overflow-hidden cursor-default" :style="[{backgroundColor:msg.role==='user'?userBubbleColor:aiBubbleColor,color:msg.role==='user'?userBubbleTextColor:aiBubbleTextColor},{fontSize:bubbleFontSize+'px'}]" :class="[msg.role==='user'?'rounded-br-md':'rounded-bl-md', msgEditMode && selectedMsgs.has(i) ? 'ring-2 ring-pink-400' : '']" @click="msgEditMode && toggleSelectMsg(i)">
             <img v-if="msg.image" :src="msg.image" class="max-w-[200px] max-h-[200px] rounded-lg mb-1 cursor-zoom-in" @click.stop="viewImage=msg.image" />
             <div v-if="msg.role==='assistant' && showReasoning && msg.reasoning" class="mb-2">
-              <button @click="msg.reasoningOpen = msg.reasoningOpen === false ? true : false" class="text-[10px] text-gray-500 dark:text-gray-400 cursor-pointer border-0 bg-transparent p-0 mb-0.5 hover:text-pink-500 flex items-center gap-1">🧠 思考过程 <span class="inline-block transition-transform" :class="msg.reasoningOpen === false ? '' : 'rotate-90'">▸</span></button>
-              <div v-show="msg.reasoningOpen !== false" class="text-xs italic whitespace-pre-wrap break-words border-l-2 pl-2 text-gray-500 dark:text-gray-400" style="border-color:currentColor;opacity:0.85;overflow-wrap:anywhere;min-width:0">{{ msg.reasoning }}</div>
+              <button @click="msg.reasoningOpen = !(msg.reasoningOpen === true)" class="text-[10px] text-gray-500 dark:text-gray-400 cursor-pointer border-0 bg-transparent p-0 mb-0.5 hover:text-pink-500 flex items-center gap-1">🧠 思考过程 <span class="inline-block transition-transform" :class="(reasonCollapsedByDefault ? msg.reasoningOpen === true : msg.reasoningOpen !== false) ? 'rotate-90' : ''">▸</span></button>
+              <div v-show="reasonCollapsedByDefault ? msg.reasoningOpen === true : msg.reasoningOpen !== false" class="text-xs italic whitespace-pre-wrap break-words border-l-2 pl-2 text-gray-500 dark:text-gray-400" style="border-color:currentColor;opacity:0.85;overflow-wrap:anywhere;min-width:0">{{ msg.reasoning }}</div>
             </div>
             <div v-if="msg.reverseResult" class="w-full space-y-2">
               <div v-if="msg.reverseResult.sd_tags" class="rounded-xl border border-blue-800 bg-blue-900 dark:bg-blue-950 p-2.5">
@@ -1944,7 +1971,7 @@ onMounted(async () => {
               </div>
             </div>
             <div v-if="msg.role==='assistant' && !msg.genMeta && normalizeText(msg.text).trim() && !msg.image" class="mt-2">
-              <button @click.stop="openGenPanel(i, normalizeText(msg.text))" class="text-[11px] px-2.5 py-1 rounded-lg bg-pink-500 text-white hover:bg-pink-600 cursor-pointer border-0 transition-colors">⚡ 用此提示词生图</button>
+              <button @click.stop="genCardFromAssistant(i, normalizeText(msg.text))" class="text-[11px] px-2.5 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 cursor-pointer border-0 transition-colors">🧩 生成卡片</button>
             </div>
             <!-- AI 生图卡片（仿 2x.nz） -->
             <div v-if="msg.genCard" class="mt-2 w-full rounded-xl border border-pink-200 dark:border-pink-800 bg-pink-50/60 dark:bg-pink-900/20 p-3">
@@ -2279,6 +2306,12 @@ onMounted(async () => {
           <span>🧠 显示思考过程</span>
           <button @click="toggleShowReasoning" class="relative w-10 h-5 rounded-full transition-colors cursor-pointer border-0" :class="showReasoning?'bg-pink-500':'bg-gray-300 dark:bg-gray-600'">
             <span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all" :class="showReasoning?'left-5.5':'left-0.5'"></span>
+          </button>
+        </label>
+        <label class="flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-400 mb-2">
+          <span>🧠 思考过程默认折叠 <span class="text-gray-400">（开=折叠，关=展开）</span></span>
+          <button @click="toggleReasonCollapsed" class="relative w-10 h-5 rounded-full transition-colors cursor-pointer border-0" :class="reasonCollapsedByDefault?'bg-pink-500':'bg-gray-300 dark:bg-gray-600'">
+            <span class="absolute top-0.5 w-4 h-4 bg-white rounded-full transition-all" :class="reasonCollapsedByDefault?'left-5.5':'left-0.5'"></span>
           </button>
         </label>
         <label class="flex items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-400 mb-2">
