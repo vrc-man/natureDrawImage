@@ -32,6 +32,10 @@ _WEB_DIR = Path(__file__).resolve().parent.parent.parent
 CONFIG_DIR = Path(__file__).resolve().parent / "config"
 JSON_PATH = CONFIG_DIR / "ai_chat.json"
 
+# 角色库缩略图本地缓存目录（本机 tkinter 工具爬取落盘 + index.json 清单）
+CHAR_THUMB_LOCAL_DIR = Path(__file__).resolve().parent / "skills" / "search_characters" / "character_thumbnails"
+_LOCAL_THUMBS: set = set()
+
 _lock = threading.Lock()
 
 router = APIRouter(tags=["ai-chat"])
@@ -817,7 +821,31 @@ def _load_char_mem() -> None:
         print(f"[ai-chat] 角色库内存加载失败: {type(e).__name__}: {e}", flush=True)
 
 
+def _load_local_thumbs() -> int:
+    """加载本地缩略图清单到内存 set（tag 集合）。
+
+    优先读 index.json（tkinter 工具每次处理后写入）；文件缺失时扫描目录兜底。
+    返回本地已有缩略图数量。
+    """
+    global _LOCAL_THUMBS
+    idx = CHAR_THUMB_LOCAL_DIR / "index.json"
+    tags: set = set()
+    try:
+        if idx.is_file():
+            data = json.load(open(idx, encoding="utf-8"))
+            thumbs = data.get("thumbs") or {}
+            tags = {str(k) for k, v in thumbs.items() if v}
+        else:
+            if CHAR_THUMB_LOCAL_DIR.is_dir():
+                tags = {p.stem for p in CHAR_THUMB_LOCAL_DIR.glob("*.webp")}
+    except Exception as e:
+        print(f"[ai-chat] 本地缩略图清单加载失败: {type(e).__name__}: {e}", flush=True)
+    _LOCAL_THUMBS = tags
+    return len(tags)
+
+
 _load_char_mem()
+_load_local_thumbs()
 
 
 # 生图助手工具集 = 技能目录里发现的所有工具（仿 2x.nz：AI 自主搜角色/画风/尺寸）
@@ -1892,11 +1920,15 @@ async def api_search_characters(request: Request, q: str = ""):
         chars = []
         for c in rows:
             name = c["name_cn"] or c["danbooru_tag"] or "?"
+            tag = c["danbooru_tag"] or ""
             img = c.get("image") or ""
-            # zerochan 外链有防盗链（Referer 检查），浏览器直连会 403；
-            # 统一走本地代理端点转发，规避防盗链并支持缓存。
-            if img.startswith("http"):
+            # 本地优先：本地已有缩略图缓存 → 读本地；否则走 zerochan 代理兜底
+            if tag and tag in _LOCAL_THUMBS:
+                img = f"/api/features/ai-chat/char-thumb-local?name={urllib.parse.quote(tag, safe='')}"
+            elif img.startswith("http"):
                 img = f"/api/features/ai-chat/char-thumb?u={urllib.parse.quote(img, safe='')}"
+            else:
+                img = ""
             chars.append({"name": name, "franchise": c["franchise"], "tags": c["tags"] or c["danbooru_tag"], "image": img})
         return {"characters": chars}
     except Exception as e:
@@ -1932,6 +1964,41 @@ async def api_ai_chat_char_thumb(request: Request, u: str = ""):
     except Exception as e:
         print(f"[ai-chat] 缩略图代理失败 u={u}: {e}", flush=True)
         raise HTTPException(502, "图片代理失败")
+
+
+@router.get("/api/features/ai-chat/char-thumb-local")
+async def api_ai_chat_char_thumb_local(request: Request, name: str = ""):
+    """AI 聊天角色缩略图本地缓存：读 character_thumbnails/{tag}.webp。不存在返回 404。"""
+    name = (name or "").strip()
+    if not name or "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(400, "invalid name")
+    f = CHAR_THUMB_LOCAL_DIR / f"{name}.webp"
+    if not f.is_file():
+        raise HTTPException(404, "缩略图不存在")
+    try:
+        data = f.read_bytes()
+    except Exception as e:
+        print(f"[ai-chat] 本地缩略图读取失败 name={name}: {e}", flush=True)
+        raise HTTPException(500, "读取失败")
+    return Response(content=data, media_type="image/webp", headers={
+        "Cache-Control": "public, max-age=86400",
+    })
+
+
+@router.post("/api/admin/features/ai-chat/char-thumbs-refresh")
+async def admin_char_thumbs_refresh(request: Request):
+    """刷新角色库缩略图缓存清单（免重启）。tkinter 工具爬取落盘后调用。"""
+    require_admin(request)
+    before = len(_LOCAL_THUMBS)
+    count = _load_local_thumbs()
+    return {"ok": True, "before": before, "count": count, "total": len(_CHAR_MEM), "updated": before != count}
+
+
+@router.get("/api/admin/features/ai-chat/char-thumbs-stats")
+async def admin_char_thumbs_stats(request: Request):
+    """角色库缩略图统计：本地已缓存数 / 总角色数。"""
+    require_admin(request)
+    return {"ok": True, "local_count": len(_LOCAL_THUMBS), "total": len(_CHAR_MEM)}
 
 
 @router.post("/api/features/ai-chat/proxy")

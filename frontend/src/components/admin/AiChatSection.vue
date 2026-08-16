@@ -28,6 +28,28 @@ const genStatus = ref('')
 const genLoading = ref(false)
 const newToken = ref('')
 
+const ctStats = ref<{ local_count: number; total: number } | null>(null)
+const ctStatus = ref('')
+const ctLoading = ref(false)
+
+async function loadCharThumbStats() {
+  try {
+    const d = await api('GET', '/api/admin/features/ai-chat/char-thumbs-stats')
+    ctStats.value = { local_count: d.local_count || 0, total: d.total || 0 }
+  } catch { }
+}
+async function refreshCharThumbs() {
+  ctLoading.value = true
+  ctStatus.value = ''
+  try {
+    const d = await api('POST', '/api/admin/features/ai-chat/char-thumbs-refresh')
+    ctStats.value = { local_count: d.count || 0, total: d.total || 0 }
+    ctStatus.value = d.updated ? `✅ 已更新（${d.before} → ${d.count} 张）` : `✅ 已刷新（${d.count} 张，无变化）`
+    setTimeout(() => { ctStatus.value = '' }, 3000)
+  } catch (e: any) { ctStatus.value = '❌ ' + e.message }
+  ctLoading.value = false
+}
+
 async function loadCfg() {
   try {
     const d = await api('GET', '/api/admin/features/ai-chat/config')
@@ -192,7 +214,7 @@ async function saveExtra() {
   extraLoading.value = false
 }
 
-onMounted(() => { loadCfg(); loadTokens(); loadExtra() })
+onMounted(() => { loadCfg(); loadTokens(); loadExtra(); loadCharThumbStats() })
 </script>
 
 <template>
@@ -390,6 +412,20 @@ onMounted(() => { loadCfg(); loadTokens(); loadExtra() })
         </div>
       </div>
       <div v-else class="text-xs text-gray-400">暂无 Token</div>
+    </div>
+
+    <!-- 角色库缩略图缓存 -->
+    <div class="border border-gray-100 rounded-xl p-3 bg-gray-50/60">
+      <div class="text-sm font-semibold text-gray-700 mb-2">🎭 角色库缩略图缓存</div>
+      <p class="text-[11px] text-gray-400 mb-2">角色搜索弹窗的角色缩略图缓存（本地 WebP）。用本机 tkinter 工具爬取落盘后，点下方按钮刷新缓存清单，缩略图即切换为本地读取（优先本地、无则走 zerochan 代理兜底）。</p>
+      <div class="flex items-center gap-2 mb-2">
+        <button @click="refreshCharThumbs" :disabled="ctLoading" class="px-3 py-1.5 text-xs bg-purple-100 text-purple-700 rounded-xl hover:bg-purple-200 font-semibold cursor-pointer border-0 disabled:opacity-50 flex items-center gap-1">
+          <span v-if="ctLoading" class="inline-block w-3 h-3 border-2 border-purple-400 border-t-purple-700 rounded-full animate-spin"></span>
+          {{ ctLoading ? '刷新中...' : '🔄 更新缩略图缓存' }}
+        </button>
+        <span v-if="ctStats" class="text-xs text-gray-500">本地 <b class="text-purple-600">{{ ctStats.local_count }}</b> / {{ ctStats.total }} 张</span>
+      </div>
+      <div v-if="ctStatus" class="text-xs px-2 py-1.5 rounded-lg" :class="ctStatus.startsWith('✅')?'bg-green-50 text-green-700':'bg-red-50 text-red-600'">{{ ctStatus }}</div>
     </div>
 
   </div>
