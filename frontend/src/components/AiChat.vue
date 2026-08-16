@@ -1565,30 +1565,6 @@ function genFromReverse(text: string) {
   scrollBottom()
 }
 
-// AI 助手回复 → 生成审核生图参数卡片（用该条回复文本作为正向提示词）
-function genCardFromAssistant(idx: number, text: string) {
-  if (!text || !text.trim()) return
-  const msg = messages.value[idx]
-  if (!msg) return
-  // 从回复文本中剥离标题/表格等，取正向提示词部分；若回复已含 prompt 文本则直接用
-  let prompt = text.trim()
-  const m = text.match(/正向提示词[：:]\s*```?([\s\S]*?)```?/i)
-  if (m && m[1] && m[1].trim()) prompt = m[1].trim()
-  const card: GenCardData = {
-    prompt,
-    negative_prompt: genConfig.value.negative || '',
-    width: genConfig.value.width || 896,
-    height: genConfig.value.height || 1152,
-    character: genConfig.value.character || '',
-    style: genConfig.value.style || '',
-    userReq: '',
-  }
-  msg.genCard = card
-  msg.genCardStatus = 'pending'
-  genTargetIndex.value = idx
-  scrollBottom()
-}
-
 // 复制文本到剪贴板
 async function copyText(text: string) {
   try {
@@ -1971,7 +1947,7 @@ onMounted(async () => {
               </div>
             </div>
             <div v-if="msg.role==='assistant' && !msg.genMeta && normalizeText(msg.text).trim() && !msg.image" class="mt-2">
-              <button @click.stop="genCardFromAssistant(i, normalizeText(msg.text))" class="text-[11px] px-2.5 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 cursor-pointer border-0 transition-colors">🧩 生成卡片</button>
+              <button @click.stop="forceGenCard()" class="text-[11px] px-2.5 py-1 rounded-lg bg-purple-500 text-white hover:bg-purple-600 cursor-pointer border-0 transition-colors">🧩 生成卡片</button>
             </div>
             <!-- AI 生图卡片（仿 2x.nz） -->
             <div v-if="msg.genCard" class="mt-2 w-full rounded-xl border border-pink-200 dark:border-pink-800 bg-pink-50/60 dark:bg-pink-900/20 p-3">
