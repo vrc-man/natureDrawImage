@@ -828,6 +828,43 @@ def _thumb_filename(tag: str) -> str:
     return cleaned + ".webp"
 
 
+# 通用负面提示词模板（与 AI 系统提示词规则一致）
+_SD_NEGATIVE = ("watermark, trademark, username, artist name, lowres, worst quality, low quality, "
+                "normal quality, bad anatomy, bad proportions, bad hands, deformed hands, missing fingers, "
+                "extra fingers, extra limbs, missing limbs, floating limbs, ghosting, disfigured, ugly, "
+                "blurry, poor composition")
+_NL_NEGATIVE = "blurry, low quality, watermark, text, extra limbs, distorted"
+# 判定负面是否「过简」：缺解剖/质量类关键词即视为 LLM 偷懒没写全
+_NEGATIVE_PROBE = ("bad hands", "deformed", "extra fingers", "bad anatomy", "worst quality")
+
+
+def _ensure_negative(negative: str, workflow_path: str) -> str:
+    """负面提示词兜底：LLM 给出的过简时，按工作流类型补全为通用模板。
+
+    规则：若 LLM 负面缺少解剖/质量负面关键词，或词数过少（<4 个），视为过简——
+    标签模型补全完整 SD 负面，自然语言模型补全轻量负面。已有足够内容则不覆盖。
+    """
+    neg = (negative or "").strip()
+    if neg:
+        n_words = [w for w in neg.split(",") if w.strip()]
+        has_probe = any(p in neg.lower() for p in _NEGATIVE_PROBE)
+        if has_probe and len(n_words) >= 4:
+            return neg  # 已含关键负面词且足够详细，信任 LLM
+    rule = _workflow_rule_name(workflow_path or "")
+    base = _NL_NEGATIVE if rule in ("flux", "krea", "zimage") else _SD_NEGATIVE
+    if neg:
+        # 合并：保留 LLM 给的部分词 + 补全基础模板（去重）
+        parts = [p.strip() for p in base.split(",") if p.strip()]
+        seen = set(p.lower() for p in parts)
+        for p in neg.split(","):
+            p = p.strip()
+            if p and p.lower() not in seen:
+                parts.append(p)
+                seen.add(p.lower())
+        return ", ".join(parts)
+    return base
+
+
 def _load_local_thumbs() -> int:
     """加载本地缩略图清单到内存 set（tag 集合）。
 
@@ -1439,7 +1476,10 @@ async def _agentic_search(messages: List[dict], temperature: float, max_tokens: 
                     args = {}
                 gen_card = {
                     "prompt": str(args.get("prompt", "")).strip(),
-                    "negative_prompt": str(args.get("negative_prompt", "")).strip(),
+                    "negative_prompt": _ensure_negative(
+                        str(args.get("negative_prompt", "")).strip(),
+                        str(args.get("workflow_path", "")).strip(),
+                    ),
                     "width": int(args.get("width", 896) or 896),
                     "height": int(args.get("height", 1152) or 1152),
                     "character": str(args.get("character", "")).strip(),
