@@ -725,7 +725,7 @@ function prepareGen() {
   if (mode.value === 'txt2img') {
     try { char = JSON.parse(localStorage.getItem('currentCharacters') || '[]').join(', '); } catch {}
   }
-  if (!direct && !nl && !skipPromptInject.value) { showErrorToast('请输入提示词'); return null }
+  if (!direct && !nl && !skipPromptInject.value && !multiangleMode.value) { showErrorToast('请输入提示词'); return null }
   // 检查分辨率是否在预设中，不在就自动用第一个
   if (!resolutions.value.some(r => r.w === width.value && r.h === height.value) && resolutions.value.length) {
     width.value = resolutions.value[0].w

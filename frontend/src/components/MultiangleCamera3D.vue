@@ -21,6 +21,14 @@ const distance = ref(props.initialZ ?? 5)
 const promptText = ref('')
 const wrapRef = ref<HTMLElement | null>(null)
 
+// ── 观察相机轨道（第三人称视角，右键拖动旋转；不影响被调相机/手柄）──
+let orbitAz = Math.atan2(4, 4) * 180 / Math.PI   // 默认相机方位 ≈45°
+let orbitEl = 35                                  // 默认俯仰 ≈35°
+let orbitDist = 6.5                               // 默认观察距离
+let orbitDragging = false
+let orbitLastX = 0
+let orbitLastY = 0
+
 // ── three.js 场景 ──
 let renderer: THREE.WebGLRenderer | null = null
 let scene: THREE.Scene | null = null
@@ -240,6 +248,7 @@ function initThree() {
   canvas.addEventListener('mousedown', onPointerDown)
   window.addEventListener('mousemove', onPointerMove)
   window.addEventListener('mouseup', onPointerUp)
+  canvas.addEventListener('contextmenu', onContextMenu)
   canvas.addEventListener('touchstart', onTouchStart, { passive: false })
   canvas.addEventListener('touchmove', onTouchMove, { passive: false })
   canvas.addEventListener('touchend', onPointerUp)
@@ -263,7 +272,18 @@ function initThree() {
     const pulse = 1 + Math.sin(time * 2) * 0.03
     if (camGlow) camGlow.scale.setScalar(pulse)
     if (glowRing) glowRing.rotation.z += 0.003
-    if (renderer && scene && camera) renderer.render(scene, camera)
+    if (renderer && scene && camera) {
+      // 观察相机跟随轨道（右键拖动可旋转第三人称视角）
+      const azRad = orbitAz * Math.PI / 180
+      const elRad = orbitEl * Math.PI / 180
+      camera.position.set(
+        CENTER.x + orbitDist * Math.sin(azRad) * Math.cos(elRad),
+        CENTER.y + orbitDist * Math.sin(elRad),
+        CENTER.z + orbitDist * Math.cos(azRad) * Math.cos(elRad),
+      )
+      camera.lookAt(CENTER.x, CENTER.y, CENTER.z)
+      renderer.render(scene, camera)
+    }
   }
   loop()
 
@@ -277,8 +297,19 @@ function getMouse(event: { clientX: number; clientY: number }) {
   mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
 }
 
+function onContextMenu(e: Event) { e.preventDefault() }
+
 function onPointerDown(event: MouseEvent) {
   if (!renderer || !camera) return
+  // 右键：轨道旋转第三人称视角
+  if (event.button === 2) {
+    orbitDragging = true
+    orbitLastX = event.clientX
+    orbitLastY = event.clientY
+    renderer.domElement.style.cursor = 'grabbing'
+    event.preventDefault()
+    return
+  }
   getMouse(event)
   raycaster.setFromCamera(mouse, camera)
   const handles = [
@@ -299,6 +330,16 @@ function onPointerDown(event: MouseEvent) {
 
 function onPointerMove(event: MouseEvent) {
   if (!renderer || !camera) return
+  // 右键轨道旋转：绕场景中心水平+垂直转
+  if (orbitDragging) {
+    const dx = event.clientX - orbitLastX
+    const dy = event.clientY - orbitLastY
+    orbitLastX = event.clientX
+    orbitLastY = event.clientY
+    orbitAz = ((orbitAz - dx * 0.4) % 360 + 360) % 360
+    orbitEl = Math.max(5, Math.min(85, orbitEl + dy * 0.3))
+    return
+  }
   getMouse(event)
   raycaster.setFromCamera(mouse, camera)
 
@@ -357,6 +398,11 @@ function onPointerMove(event: MouseEvent) {
 }
 
 function onPointerUp() {
+  if (orbitDragging) {
+    orbitDragging = false
+    if (renderer) renderer.domElement.style.cursor = 'default'
+    return
+  }
   if (isDragging) {
     isDragging = false
     dragTarget = null
@@ -425,6 +471,10 @@ function reset() {
   azimuth.value = 0
   elevation.value = 0
   distance.value = 5
+  // 重置观察相机轨道
+  orbitAz = Math.atan2(4, 4) * 180 / Math.PI
+  orbitEl = 35
+  orbitDist = 6.5
 }
 
 onMounted(() => {
@@ -439,6 +489,7 @@ onUnmounted(() => {
   }
   window.removeEventListener('mousemove', onPointerMove)
   window.removeEventListener('mouseup', onPointerUp)
+  if (renderer) renderer.domElement.removeEventListener('contextmenu', onContextMenu)
 })
 </script>
 
@@ -470,7 +521,7 @@ onUnmounted(() => {
     </div>
 
     <div class="flex justify-between items-center px-1">
-      <span class="text-[10px] text-gray-500">拖拽相机调整角度（PC）；或拖动下方滑条精确微调</span>
+      <span class="text-[10px] text-gray-500">拖拽相机调整角度（PC）；右键拖动旋转视角；或滑动条精确微调</span>
       <button @click="reset" class="text-[11px] px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 cursor-pointer border-0 dark:text-gray-300">重置</button>
     </div>
   </div>

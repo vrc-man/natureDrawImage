@@ -6978,6 +6978,7 @@ async def _run_task(ws: WebSocket, req: RunRequest, *, client_ip: str = "unknown
         await emit(ws, {"type": "log", "message": f"🎲 种子模式: {_mode_label} | {_show}"})
 
     # 自动检测：是否洗图/高清放大/纯处理类工作流（按文件名关键词）或自带 LLM → 跳过提示词注入
+    neg_text = ""  # 兜底初始化：多角度/自带LLM等跳过注入路径也会在日志处引用
     _is_cleanup_workflow = bool(path and any(
         kw in path.lower() for kw in SKIP_PROMPT_KEYWORDS
     ))
