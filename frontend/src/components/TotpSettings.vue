@@ -6,6 +6,7 @@ const emit = defineEmits<{ back: [] }>()
 const enabled = ref(false)
 const secret = ref('')
 const verifyCode = ref('')
+const disableCode = ref('')
 const statusMsg = ref('')
 const loading = ref(true)
 
@@ -47,11 +48,14 @@ async function doEnable() {
 }
 
 async function doDisable() {
+  if (disableCode.value.length !== 6) { statusMsg.value = '请输入6位验证码以关闭'; return }
+  statusMsg.value = ''
   try {
-    await totpDisable()
+    await totpDisable(disableCode.value)
     enabled.value = false
+    disableCode.value = ''
     await load()
-  } catch {}
+  } catch (e: any) { statusMsg.value = '关闭失败: ' + e.message }
 }
 </script>
 
@@ -65,7 +69,10 @@ async function doDisable() {
     <div v-else-if="enabled" class="pt-4 space-y-3">
       <p class="text-sm text-green-600">✅ 两步验证已启用</p>
       <p class="text-xs text-gray-500">每次登录时需要输入 6 位验证码。</p>
-      <button @click="doDisable" class="w-full py-2.5 bg-red-100 text-red-500 rounded-xl hover:bg-red-200 text-sm font-medium transition-all cursor-pointer border-0">关闭 2FA</button>
+      <label class="text-sm text-gray-600">输入当前 6 位验证码以关闭两步验证：</label>
+      <input v-model="disableCode" type="text" inputmode="numeric" maxlength="6" placeholder="000000" class="w-full border border-pink-200 rounded-xl px-4 py-3 text-sm text-center tracking-widest bg-white focus:border-pink-400 focus:ring-2 focus:ring-pink-200 outline-none transition-all box-border" />
+      <button @click="doDisable" class="w-full py-2.5 bg-red-100 text-red-500 rounded-xl hover:bg-red-200 text-sm font-medium transition-all cursor-pointer border-0">验证并关闭 2FA</button>
+      <span class="text-xs text-red-400 block min-h-[18px]">{{ statusMsg }}</span>
     </div>
     <div v-else class="pt-4 space-y-3">
       <p class="text-sm text-gray-600">请在 Google Authenticator / Microsoft Authenticator 等 App 中手动输入以下密钥：</p>

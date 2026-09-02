@@ -807,7 +807,7 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         return {"ok": True}
 
     @app.post("/api/auth/totp-disable")
-    async def api_totp_disable(request: Request):
+    async def api_totp_disable(request: Request, payload: Dict[str, Any] = {}):
         from web.app import _get_user_from_session
         user = _get_user_from_session(request)
         if not user:
@@ -815,10 +815,14 @@ document.getElementById('btn-reset').addEventListener('click', async function() 
         email = user.get("github_id", "").replace("email:", "")
         if not email:
             raise HTTPException(400)
+        code = str(payload.get("code", "")).strip()
         async with _email_users_lock:
             email_users = _load_email_users()
             eu = email_users.get(email)
-            if eu:
+            if eu and eu.get("totp_enabled"):
+                # 安全要求：关闭双因素必须再次验证当前验证码，防止登录态被滥用时被直接关闭
+                if not code or not _verify_totp(eu.get("totp_secret", ""), code):
+                    raise HTTPException(400, "验证码错误，无法关闭两步验证")
                 eu["totp_enabled"] = False
                 eu["totp_secret"] = ""
                 _save_email_users(email_users)

@@ -59,7 +59,7 @@ export const submitReport = (data: { path: string; reason?: string }) =>
 export const totpStatus = () => api<{ totp_enabled: boolean }>('GET', '/api/auth/totp-status')
 export const totpSetup = () => api<{ secret: string; enabled?: boolean }>('POST', '/api/auth/totp-setup')
 export const totpEnable = (code: string) => api('POST', '/api/auth/totp-enable', { code })
-export const totpDisable = () => api('POST', '/api/auth/totp-disable')
+export const totpDisable = (code: string) => api('POST', '/api/auth/totp-disable', { code })
 
 // === Fork ===
 export const forkWorkflow = (data: { path: string; inline_workflow?: any }) =>
